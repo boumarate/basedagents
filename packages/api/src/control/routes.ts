@@ -407,13 +407,24 @@ app.post('/register/begin', async (c) => {
     }
   }
 
+  // PROOF-OF-ABSENCE gate (the registration mirror of /link's
+  // proof-of-possession): this endpoint is unauthenticated and the vault
+  // public key is derivable from the PUBLIC owner id, so it may only mint an
+  // account's FIRST passkey. Without this check, anyone who learned an owner
+  // id could enroll their own passkey on the account and pass every ceremony.
+  // Replacing a live passkey requires recovery (mailbox factor + offline
+  // code), never a bare id. /register/finish re-enforces this atomically.
+  const existing = await store.listCredentials(ownerId);
+  if (existing.length > 0) {
+    return err(c, 409, 'conflict', 'this account already has a passkey — sign in with it, or replace it through account recovery');
+  }
+
   const { challenge } = await store.createChallenge({
     ownerId,
     purpose: 'register',
     ttlSeconds: CHALLENGE_TTL_SECONDS,
   });
 
-  const existing = await store.listCredentials(ownerId);
   const name = parsed.data.email || ownerId;
   const { rpId, rpName } = rpConfig(c.env);
 
@@ -470,8 +481,13 @@ app.post('/register/finish', async (c) => {
     return err(c, 401, 'unauthorized', 'registration verification failed');
   }
 
+  // First-enrollment ONLY, enforced atomically (see /register/begin): the
+  // guarded insert loses when an active credential exists, however the
+  // challenge was armed. Recovery replaces a live passkey via its own
+  // verified endpoints, never this one.
+  let stored;
   try {
-    await store.addCredential({
+    stored = await store.addFirstCredential({
       ownerId,
       credentialId: reg.credentialId,
       publicKey: reg.cosePublicKey,
@@ -483,6 +499,9 @@ app.post('/register/finish', async (c) => {
   } catch (e) {
     if (isUniqueViolation(e)) return err(c, 409, 'conflict', 'credential already registered');
     throw e;
+  }
+  if (!stored) {
+    return err(c, 409, 'conflict', 'this account already has a passkey — replace it through account recovery');
   }
 
   return c.json({ owner_id: ownerId, credential_id: reg.credentialId });
