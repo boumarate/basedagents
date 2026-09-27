@@ -33,6 +33,17 @@ function creatorLabel(t: PublicTask): string {
   return `by ${name}${t.creator.cert === 'certified_agent' ? ' · certified' : ''}`;
 }
 
+/** List-card preview: long markdown briefs read as plain prose, capped. */
+function preview(text: string): string {
+  const plain = text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\[(.*?)\]\([^)]*\)/g, '$1')
+    .replace(/[#`*_>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return plain.length > 240 ? `${plain.slice(0, 240).trimEnd()}…` : plain;
+}
+
 function TaskCard({ task }: { task: PublicTask }) {
   return (
     <li className="card" data-task-id={task.task_id}>
@@ -55,7 +66,7 @@ function TaskCard({ task }: { task: PublicTask }) {
           )}
           {task.category && <span className="pill">{task.category}</span>}
         </div>
-        <p className="card-note" style={{ fontStyle: 'normal' }}>{task.description}</p>
+        <p className="card-note card-note-clamp" style={{ fontStyle: 'normal' }}>{preview(task.description)}</p>
         <div className="card-meta">
           <span>Posted {fmtDate(task.created_at)}</span>
           <span className="dot">·</span>
@@ -79,7 +90,7 @@ function TaskCard({ task }: { task: PublicTask }) {
           target="_blank"
           rel="noopener noreferrer"
         >
-          Open
+          View
         </a>
       </div>
     </li>

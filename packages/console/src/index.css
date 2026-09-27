@@ -439,3 +439,7 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .review-consequence-cancel { border-left-color: var(--danger); }
 .review-consequence-none { color: var(--muted); }
 .draft-findings { margin: 0.3rem 0 0; padding-left: 1.2rem; display: grid; gap: 0.35rem; }
+
+/* Task-board cards: previews clamp to three lines; the full brief lives on
+   the task page. */
+.card-note-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
