@@ -12,7 +12,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  makeHarness, sampleIntake, sessionCookieOf, setupOperator, signupBuyer, type Harness,
+  approveQuoteParams, makeHarness, operatorSign, sampleIntake, sampleScope, sessionCookieOf,
+  setupOperator, signupBuyer, type Harness,
 } from './test-harness.js';
 import { TestingStore } from './store.js';
 
@@ -151,6 +152,27 @@ describe('public intake (no account)', () => {
     const buyer = await signupBuyer(h, EMAIL);
     const list = (await (await h.get('/v1/owner/testing/requests', buyer.cookie)).json()) as { requests: unknown[] };
     expect(list.requests).toHaveLength(0);
+  });
+
+  it('quote-ready email deep-links the request page (never the routeless /testing/orders)', async () => {
+    const buyer = await signupBuyer(h);
+    const created = await h.post('/v1/owner/testing/requests', sampleIntake(), buyer.cookie);
+    const request = ((await created.json()) as { request: { id: string; version: number } }).request;
+    expect((await h.post(`/v1/owner/testing/requests/${request.id}/submit`, { expected_version: request.version }, buyer.cookie)).status).toBe(200);
+
+    const op = await setupOperator(h);
+    const scope = sampleScope();
+    const deliveryTarget = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    const signed = await operatorSign(h, op, 'testing.approve_quote', approveQuoteParams(request.id, 1, scope, deliveryTarget));
+    expect((await h.post(`/v1/owner/admin/testing/requests/${request.id}/approve-quote`, {
+      request_version: 1, scope, delivery_target_at: deliveryTarget, checklist_confirmed: true, ...signed,
+    }, op.cookie)).status).toBe(200);
+
+    const note = await h.db.get<{ body: string }>(
+      `SELECT body FROM testing_notifications WHERE kind = 'quote_ready'`,
+    );
+    expect(note?.body).toContain(`/testing/requests/${request.id}`);
+    expect(note?.body).not.toMatch(/\/testing\/orders(\s|$)/m);
   });
 
   it('alerts the operator on authenticated submissions too', async () => {

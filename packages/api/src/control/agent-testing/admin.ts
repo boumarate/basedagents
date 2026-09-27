@@ -305,6 +305,7 @@ app.post('/requests/:id/approve-quote', async (c) => {
     ownerId: request.owner_id,
     subject: 'Your audit scope is ready to review',
     body: 'We confirmed coverage for your requested audit. Review the exact scope, delivery target and price, then pay to start. No payment has been taken.',
+    path: `/testing/requests/${request.id}`,
   });
   return c.json({ quote: { ...quote, scope: JSON.parse(quote.scope_json) } });
 });

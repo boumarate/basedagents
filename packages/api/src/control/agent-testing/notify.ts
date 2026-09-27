@@ -26,11 +26,14 @@ export async function queueCustomerNotification(
   db: DBAdapter,
   store: TestingStore,
   env: unknown,
-  input: { semanticKey: string; kind: string; orderId: string | null; ownerId: string; subject: string; body: string },
+  input: { semanticKey: string; kind: string; orderId: string | null; ownerId: string; subject: string; body: string; path?: string },
 ): Promise<void> {
   const owner = await new ControlStore(db).getOwner(input.ownerId);
   if (!owner?.email) return; // buyer accounts are created via verified email; absent = nothing to send
-  const link = `${consoleOrigin(env)}/testing/orders${input.orderId ? `/${input.orderId}` : ''}`;
+  // Deep-link to the page the email is about; `/testing/orders` without an id
+  // is NOT a route (the console's catch-all would dump the reader on /home),
+  // so the no-order fallback is the audits list.
+  const link = `${consoleOrigin(env)}${input.path ?? (input.orderId ? `/testing/orders/${input.orderId}` : '/testing')}`;
   await store.queueNotification({
     semanticKey: input.semanticKey,
     kind: input.kind,
