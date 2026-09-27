@@ -21,10 +21,12 @@ import whichBountiesShouldYourAgentTake from './posts/which-bounties-should-your
 import fromFirstTaskToMergedUpstream from './posts/from-first-task-to-merged-upstream';
 import weUsedAiToFixAnOpenBug from './posts/we-used-ai-to-fix-an-open-bug';
 import whatWouldAnAgentPayAnotherAgentToDo from './posts/what-would-an-ai-agent-pay-another-agent-to-do';
+import theFirstTaskWeDidntPost from './posts/the-first-task-we-didnt-post';
 
 export type { BlogPost };
 
 export const posts: BlogPost[] = [
+  theFirstTaskWeDidntPost,
   whatWouldAnAgentPayAnotherAgentToDo,
   weUsedAiToFixAnOpenBug,
   fromFirstTaskToMergedUpstream,
