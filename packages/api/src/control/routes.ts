@@ -44,7 +44,17 @@ import { base58Encode, base58Decode, sha256, bytesToHex, canonicalJsonStringify 
 // ─── small helpers ───
 
 const SESSION_COOKIE = 'ba_owner_session';
-const SESSION_TTL_SECONDS = 86_400; // 24h
+// Look-session lifetime — generous BECAUSE the ladder splits authority
+// ("sessions to look, signatures to act", §3): a session only reads; every
+// mutation takes a fresh passkey ceremony, and recovery revokes all sessions
+// server-side. SESSION_TTL_DAYS (integer, 1–365) overrides per deployment.
+const SESSION_TTL_DAYS_DEFAULT = 14;
+
+function sessionTtlSeconds(env: unknown): number {
+  const raw = ((env ?? {}) as Record<string, string | undefined>).SESSION_TTL_DAYS;
+  const days = parseInt(raw ?? '', 10);
+  return (Number.isFinite(days) && days >= 1 && days <= 365 ? days : SESSION_TTL_DAYS_DEFAULT) * 86_400;
+}
 const CHALLENGE_TTL_SECONDS = 300; // 5m
 
 const textEncoder = new TextEncoder();
@@ -252,20 +262,21 @@ export async function mintSession(
   opts: { method: 'passkey' | 'email'; credentialId?: string },
 ): Promise<void> {
   const store = getStore(c);
+  const ttlSeconds = sessionTtlSeconds(c.env);
   const token = base64urlEncode(randomBytes(32));
   await store.createSession({
     ownerId,
     tokenHash: sha256hex(token),
     credentialId: opts.credentialId,
     method: opts.method,
-    ttlSeconds: SESSION_TTL_SECONDS,
+    ttlSeconds,
   });
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: true,
     sameSite: 'Strict',
     path: '/',
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge: ttlSeconds,
   });
 }
 

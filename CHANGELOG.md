@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed — look-sessions last 14 days (api)
+
+Sessions granted by sign-in (passkey or email link) now last 14 days instead of 24 hours, tunable per deployment via `SESSION_TTL_DAYS`. Safe under the authority ladder: a session only reads; every mutation still demands a fresh action-bound passkey assertion, and recovery revokes all sessions. Existing sessions keep their original expiry; the new lifetime applies from the next sign-in.
+
 ### Security — passkey registration is first-enrollment only (api)
 
 `/v1/owner/register/begin` and `/register/finish` are unauthenticated, and the vault public key they take is derivable from the **public** owner id. They previously accepted a registration for any owner, so anyone who learned an owner id could enroll their own passkey on that account and pass every ceremony. Both endpoints now refuse when the account already holds an active passkey — `begin` up front, `finish` atomically via a guarded insert that closes the armed-challenge race — with a pointer to account recovery, which remains the only way to replace a live passkey (mailbox factor + offline code, enroll-then-revoke with no passkey-less gap). First-time flows are unchanged: fresh registrations, ladder-born accounts, and the first-approval passkey mint all happen at zero credentials, and a revoked credential reopens enrollment (the operator's lost-passkey break-glass). No exploitation found: every account's credentials predate this fix and are singletons.
