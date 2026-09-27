@@ -78,7 +78,16 @@ export default function TestingAdminOrder() {
   if (!view || !owner) return <div className="page"><p className="muted">Loading…</p></div>;
   const { order, quote, runs } = view;
 
-  const publishable = runs.filter((r) => r.kind !== 'baseline' && !r.attempts.some((a) => a.active));
+  // A run whose publish operation is queued/running is spoken for — showing
+  // its checkbox re-armed right after the ceremony reads as "did nothing
+  // happen?" (field report). Semantic keys are `publish:<runId>:a<attempt>`.
+  const queuedPublishRunIds = new Set(
+    view.operations
+      .filter((o) => o.kind === 'publish_task' && o.state !== 'succeeded')
+      .map((o) => o.semantic_key.split(':')[1])
+      .filter(Boolean),
+  );
+  const publishable = runs.filter((r) => r.kind !== 'baseline' && !r.attempts.some((a) => a.active) && !queuedPublishRunIds.has(r.id));
   const totalSelected = selectedRuns.size;
 
   async function publishSelected(): Promise<void> {
@@ -171,6 +180,13 @@ export default function TestingAdminOrder() {
 
       <section className="panel">
         <h2>Runs</h2>
+        {queuedPublishRunIds.size > 0 && (
+          <div className="banner banner-ok" role="status">
+            {queuedPublishRunIds.size === 1 ? 'One publication is' : `${queuedPublishRunIds.size} publications are`} queued —
+            the job runner (within ~5 minutes) creates and escrow-funds the task; it then appears on the
+            run card below with its task id. Re-approving cannot double-publish.
+          </div>
+        )}
         {publishable.length > 0 && quote && order.payment_state === 'succeeded' && (
           <div className="panel-note">
             <strong>Publish assignments</strong> — select runs, then approve with your passkey. Commitment for this batch:{' '}
