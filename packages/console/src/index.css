@@ -40,6 +40,11 @@ code { font-family: var(--mono); font-size: 0.9em; }
 
 /* ── buttons ── */
 .btn {
+  /* Also used on <a> (router Links): inline-block so the padding takes up
+     line height instead of overlapping the line above, and no link underline. */
+  display: inline-block;
+  text-align: center;
+  text-decoration: none;
   font: inherit;
   font-weight: 600;
   border-radius: 10px;
@@ -124,6 +129,7 @@ code { font-family: var(--mono); font-size: 0.9em; }
 /* ── empty state ── */
 .empty { margin-top: 2.5rem; text-align: center; color: var(--text); }
 .empty p { margin: 0.3rem 0; }
+.empty .btn { margin-top: 0.75rem; }
 
 /* ── decided rows ── */
 .decided { margin-top: 3rem; }
