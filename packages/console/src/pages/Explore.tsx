@@ -151,7 +151,7 @@ export default function Explore() {
 
       {error && <div className="banner banner-error">{error}</div>}
 
-      {tasks === null ? (
+      {error ? null : tasks === null ? (
         <div className="empty"><p className="muted">Loading…</p></div>
       ) : filtered.length === 0 ? (
         <div className="empty">
