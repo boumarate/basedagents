@@ -47,11 +47,15 @@ ADMIN_OWNER_IDS = "ow_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV"
 # value typed into the Cloudflare dashboard would be clobbered by the next CI
 # deploy. The one testing SECRET (TESTING_TREASURY_PRIVATE_KEY) goes through
 # scripts/put-secrets.sh, never this file. All flags deliberately off.
-TESTING_PRODUCT_ENABLED = "false"
+# Product pages + intake are LIVE; checkout/fulfillment stay off until the
+# operator completes the runbook §3 items (email, service agent, treasury).
+TESTING_PRODUCT_ENABLED = "true"
 TESTING_CHECKOUT_ENABLED = "false"
 TESTING_FULFILLMENT_ENABLED = "false"
 TESTING_PRODUCT_LIVE_APPROVED = "false"
-STRIPE_PRICE_TESTING_AUDIT = ""
+# Sandbox (test-mode) one-time $200 price — recreate + replace when moving
+# to live keys.
+STRIPE_PRICE_TESTING_AUDIT = "price_1UK60jEHXx0SqvxponhWkGg1"
 TESTING_PLATFORM_AGENT_ID = ""
 TESTING_SUPPORT_EMAIL = ""
 TESTING_OPERATOR_EMAIL = ""

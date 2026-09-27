@@ -121,7 +121,7 @@ export function checkoutDisabledReason(
   const flags = testingFlags(env);
   const e = testingEnv(env);
   if (!flags.productEnabled) return 'The testing product is not enabled on this deployment.';
-  if (!flags.checkoutEnabled) return 'Checkout is currently paused. Existing orders continue to be processed.';
+  if (!flags.checkoutEnabled) return 'Checkout is not open yet. You can submit a request — we confirm coverage before any payment is taken.';
   if (!opts.stripeConfigured) return 'Payments are not configured yet.';
   if (!e.STRIPE_PRICE_TESTING_AUDIT) return 'The audit package price is not configured yet.';
   if (!opts.emailConfigured) return 'Transactional email is not configured; purchases would be undeliverable.';
