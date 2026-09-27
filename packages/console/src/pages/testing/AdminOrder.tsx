@@ -7,7 +7,7 @@
  *
  * PROPRIETARY console code — see ../../../LICENSE.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { testingAdmin, type AdminOrderView, type AdminRun } from '../../api/testing.js';
 import { useOwner } from '../../state/session.js';
@@ -101,8 +101,8 @@ export default function TestingAdminOrder() {
 
   async function submitReview(run: AdminRun): Promise<void> {
     const f = review[run.id] ?? EMPTY_REVIEW;
-    if (!f.note.trim()) { setError('A review note is required.'); return; }
-    if (f.evidence === 'valid' && !f.outcome) { setError('A valid-evidence review must state the product outcome.'); return; }
+    if (!f.note.trim()) { setError('A review note is required.'); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    if (f.evidence === 'valid' && !f.outcome) { setError('A valid-evidence review must state the product outcome.'); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     await act(async () => {
       const ceremony = await runAction(owner!.owner_id, 'testing.review_run', {
         run_id: run.id,
@@ -158,11 +158,14 @@ export default function TestingAdminOrder() {
         <div className="btn-row">
           <button className="btn btn-sm" disabled={busy} onClick={() => void act(() => testingAdmin.plan(order.id), 'Plan ensured.')}>Ensure plan</button>
           <button className="btn btn-sm" disabled={busy} onClick={() => void act(() => testingAdmin.reconcile(order.id), 'Checkout attempts reconciled.')}>Reconcile payments</button>
-          <button className="btn btn-sm" disabled={busy} onClick={() => void act(() => testingAdmin.pause(order.id), 'Paused.')}>Pause</button>
-          <button className="btn btn-sm" disabled={busy}
-            onClick={() => void act(async () => testingAdmin.resume(order.id, await runAction(owner.owner_id, 'testing.resume_order', { order_id: order.id })), 'Resumed.')}>
-            Resume (passkey)
-          </button>
+          {order.fulfillment_state === 'paused' ? (
+            <button className="btn btn-sm" disabled={busy}
+              onClick={() => void act(async () => testingAdmin.resume(order.id, await runAction(owner.owner_id, 'testing.resume_order', { order_id: order.id })), 'Resumed.')}>
+              Resume (passkey)
+            </button>
+          ) : (
+            <button className="btn btn-sm" disabled={busy} onClick={() => void act(() => testingAdmin.pause(order.id), 'Paused.')}>Pause</button>
+          )}
         </div>
       </section>
 
@@ -187,6 +190,7 @@ export default function TestingAdminOrder() {
                 Approve publication (passkey)
               </button>
             </div>
+            {totalSelected === 0 && <p className="field-hint">Tick at least one run above — the button arms once a batch is selected.</p>}
           </div>
         )}
 
@@ -195,7 +199,13 @@ export default function TestingAdminOrder() {
           const setF = (patch: Partial<ReviewForm>) => setReview({ ...review, [run.id]: { ...f, ...patch } });
           const active = run.attempts.find((a) => a.active);
           const result = active?.result_json ? tryParse(active.result_json) : null;
-          const reviewable = ['evidence_submitted', 'evidence_invalid', 'executing', 'pending'].includes(run.result_state);
+          // External runs are reviewable once evidence exists — a form on an
+          // undelivered run is noise. The BASELINE is different: the operator
+          // executes it internally and RECORDS the result here, so its
+          // recorder is available before any delivery, folded with context.
+          const reviewable = run.kind === 'baseline'
+            ? ['pending', 'executing', 'evidence_submitted', 'evidence_invalid'].includes(run.result_state)
+            : !!active && ['evidence_submitted', 'evidence_invalid'].includes(run.result_state);
           return (
             <article key={run.id} className="card testing-stack">
               <div className="card-title">
@@ -217,7 +227,17 @@ export default function TestingAdminOrder() {
                   <pre className="code-block prewrap">{(JSON.stringify(result, null, 2) ?? '').slice(0, 20000)}</pre>
                 </details>
               )}
-              {reviewable && (run.kind === 'baseline' || active) && (
+              {reviewable && ((form: ReactElement) => run.kind === 'baseline' ? (
+                <details className="review-fold">
+                  <summary>Record internal baseline result</summary>
+                  <p className="field-hint">
+                    Run the purchased workflow yourself in the internal environment first; what you
+                    record here becomes the report&rsquo;s baseline row. No marketplace task and no
+                    payout are involved.
+                  </p>
+                  {form}
+                </details>
+              ) : form)(
                 <div className="review-actions">
                   <div className="form-inline">
                     <label>Evidence{' '}
@@ -249,13 +269,16 @@ export default function TestingAdminOrder() {
                       </label>
                     </div>
                   )}
-                  <p className="field-hint">{financialPreview(run.kind === 'baseline' ? { ...f, marketplace_action: 'none' } : f)}</p>
-                  <textarea aria-label={`Review note for ${run.id}`} rows={2} maxLength={4000} placeholder="Review note (required; recorded in the audit trail)"
-                    value={f.note} onChange={(e) => setF({ note: e.target.value })} />
+                  {run.kind !== 'baseline' && <p className="field-hint">{financialPreview(f)}</p>}
+                  <div className="field">
+                    <label className="field-label" htmlFor={`note-${run.id}`}>Review note — required, recorded in the audit trail</label>
+                    <textarea id={`note-${run.id}`} rows={2} maxLength={4000}
+                      value={f.note} onChange={(e) => setF({ note: e.target.value })} />
+                  </div>
                   <div className="btn-row">
                     <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void submitReview(run)}>Record review (passkey)</button>
                   </div>
-                </div>
+                </div>,
               )}
               {run.kind !== 'baseline' && !active && run.attempts.length > 0 && !['product_success', 'product_failure'].includes(run.result_state) && (
                 <div className="form-inline">
