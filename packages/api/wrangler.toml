@@ -58,7 +58,7 @@ TESTING_PRODUCT_LIVE_APPROVED = "false"
 # Sandbox (test-mode) one-time $200 price — recreate + replace when moving
 # to live keys.
 STRIPE_PRICE_TESTING_AUDIT = "price_1UK60jEHXx0SqvxponhWkGg1"
-TESTING_PLATFORM_AGENT_ID = ""
+TESTING_PLATFORM_AGENT_ID = "ag_58FCNp9N6FNdsMis845K4zHF1MC1D1p1ec6kF9VbsEQR"
 TESTING_SUPPORT_EMAIL = ""
 TESTING_OPERATOR_EMAIL = ""
 
