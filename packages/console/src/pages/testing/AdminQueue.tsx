@@ -150,6 +150,10 @@ export default function TestingAdminQueue() {
       <section className="panel"><h2>Evidence review ({queue.evidence_review.length})</h2><OrderRows rows={queue.evidence_review} /></section>
       <section className="panel"><h2>Paused / blocked ({queue.paused_or_blocked.length})</h2><OrderRows rows={queue.paused_or_blocked} /></section>
       <section className="panel"><h2>Cancellation requested ({queue.cancel_requested.length})</h2><OrderRows rows={queue.cancel_requested} /></section>
+      <section className="panel"><h2>Delivered ({(queue.delivered ?? []).length} recent)</h2><OrderRows rows={queue.delivered ?? []} /></section>
+      {(queue.cancelled ?? []).length > 0 && (
+        <section className="panel"><h2>Cancelled ({(queue.cancelled ?? []).length} recent)</h2><OrderRows rows={queue.cancelled ?? []} /></section>
+      )}
 
       <section className="panel">
         <h2>Worker eligibility</h2>

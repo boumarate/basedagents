@@ -92,6 +92,10 @@ app.get('/queue', async (c) => {
   const running = await store.listOrdersByFulfillment(['running']);
   const reviewing = await store.listOrdersByFulfillment(['reviewing']);
   const paused = await store.listOrdersByFulfillment(['paused', 'cannot_fulfill']);
+  // Completed work must stay reachable — a published order previously fell
+  // out of every bucket (field report: "the audit disappeared").
+  const delivered = (await store.listOrdersByFulfillment(['delivered'], 25)).reverse();
+  const cancelled = (await store.listOrdersByFulfillment(['cancelled'], 25)).reverse();
   const attention = await store.listOperationsByState(['manual_review']);
   const overdue = [...running, ...reviewing].filter((o) => o.cancel_requested_at !== null);
   const shape = (o: { id: string; owner_id: string; payment_state: string; fulfillment_state: string; risk_hold: number; cancel_requested_at: string | null; updated_at: string }) => ({
@@ -121,6 +125,8 @@ app.get('/queue', async (c) => {
     evidence_review: reviewing.map(shape),
     paused_or_blocked: paused.map(shape),
     cancel_requested: overdue.map(shape),
+    delivered: delivered.map(shape),
+    cancelled: cancelled.map(shape),
     operations_needing_attention: attention.map((op) => ({ id: op.id, kind: op.kind, order_id: op.order_id, last_error: op.last_error, updated_at: op.updated_at })),
   });
 });

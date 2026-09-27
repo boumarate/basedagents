@@ -233,6 +233,8 @@ export interface AdminQueue {
   evidence_review: AdminOrderRow[];
   paused_or_blocked: AdminOrderRow[];
   cancel_requested: AdminOrderRow[];
+  delivered?: AdminOrderRow[];
+  cancelled?: AdminOrderRow[];
   operations_needing_attention: Array<{ id: string; kind: string; order_id: string | null; last_error: string | null; updated_at: string }>;
 }
 
