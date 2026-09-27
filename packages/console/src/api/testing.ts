@@ -161,6 +161,10 @@ export const testing = {
   catalog(): Promise<TestingCatalog> {
     return req('GET', `${PUBLIC}/catalog`);
   },
+  /** No-account intake: the server emails a sign-in link; the request attaches on sign-in. */
+  publicIntake(email: string, intake: TestingIntake): Promise<{ ok: true; message: string }> {
+    return req('POST', `${PUBLIC}/intake`, { email, intake });
+  },
   createRequest(intake: TestingIntake): Promise<{ request: TestingRequest }> {
     return req('POST', `${OWNER}/requests`, intake);
   },
@@ -221,6 +225,7 @@ export const testing = {
 export interface AdminQueue {
   now: string;
   intake_review: Array<{ id: string; owner_id: string; version: number; updated_at: string; source: string }>;
+  awaiting_email_verification?: number;
   needs_changes: Array<{ id: string; version: number; updated_at: string }>;
   awaiting_payment: AdminOrderRow[];
   awaiting_task_approval: AdminOrderRow[];

@@ -14,7 +14,13 @@ produces a success-looking demo in production.
 
 ## 1. What the system does (one paragraph)
 
-A signed-in buyer submits ONE workflow for audit. You review the intake,
+A buyer submits ONE workflow for audit — no account needed: the public
+intake (`app.basedagents.ai/testing/request`) takes the form plus an email
+address, parks the payload in a pre-auth inbox, and emails a sign-in link;
+the request attaches to the account (created on the spot for a new address)
+the moment that email signs in, which is also when you get the
+submission alert. Unverified submissions expire after 14 days and are never
+reviewable. From there: you review the intake,
 approve a versioned quote (passkey ceremony) with an exact scope, price and
 delivery target. The buyer pays a one-time Stripe Checkout. The verified
 webhook creates a fixed run plan (internal baseline B0 + external runs
@@ -69,7 +75,11 @@ most of them.
    - A live key additionally requires `TESTING_PRODUCT_LIVE_APPROVED=1`.
 3. **Email**: `RESEND_API_KEY` + verified sender. The log-only sender fails
    the checkout readiness gate (`TESTING_ALLOW_LOG_EMAIL=1` exists for dev
-   only — never set it in production).
+   only — never set it in production). Set `TESTING_OPERATOR_EMAIL` as a
+   **wrangler secret** (`scripts/put-secrets.sh`, never wrangler.toml — a
+   personal address stays out of the public repo) to receive submission,
+   payment, dispute and review alerts; unset, alerts stay in the console
+   queue only.
 4. **Service principal**: register a dedicated agent named
    "BasedAgents Testing" (normal registration; keep its Ed25519 key in the
    platform secret store). Set `TESTING_PLATFORM_AGENT_ID=<ag_…>`.
@@ -111,7 +121,10 @@ Console → **Testing ops** (`/testing/admin`). Work top to bottom:
   (funding unavailable, no eligible workers, repeated failures). Fix the
   cause; re-approve publication if needed (operations are idempotent by
   semantic key — re-running never double-publishes or double-spends).
-- **Intake review** — open the request. The §9.1 checklist is in the
+- **Intake review** — open the request. A counter above the list shows
+  public submissions still awaiting email sign-in: coming demand, not yet
+  reviewable (each appears as a normal row the moment its submitter signs
+  in). The §9.1 checklist is in the
   approve form; "other" category and credential-requiring workflows cannot
   be quoted — send back with a note instead. Set a REALISTIC delivery
   target (it shows to the buyer pre-payment and is recorded; never call it

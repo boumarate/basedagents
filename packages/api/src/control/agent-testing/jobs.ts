@@ -35,6 +35,7 @@ export interface TestingJobSummary {
   quotes_expired: number;
   drafts_deleted: number;
   evidence_redacted: number;
+  intake_inbox_expired: number;
 }
 
 export async function runTestingJobs(db: DBAdapter, deps: TestingJobDeps, nowIso: string): Promise<TestingJobSummary> {
@@ -80,7 +81,9 @@ export async function runTestingJobs(db: DBAdapter, deps: TestingJobDeps, nowIso
   const evidenceCutoff = new Date(Date.parse(nowIso) - retain.evidence * 86_400_000).toISOString();
   const evidenceRedacted = await store.redactExpiredEvidence(evidenceCutoff);
 
-  return { inbox, operations, sync, notifications, quotes_expired: quotesExpired, drafts_deleted: draftsDeleted, evidence_redacted: evidenceRedacted };
+  const intakeInboxExpired = await store.expireInboxRows(nowIso);
+
+  return { inbox, operations, sync, notifications, quotes_expired: quotesExpired, drafts_deleted: draftsDeleted, evidence_redacted: evidenceRedacted, intake_inbox_expired: intakeInboxExpired };
 }
 
 async function executeOperation(db: DBAdapter, deps: TestingJobDeps, op: OperationRow): Promise<void> {

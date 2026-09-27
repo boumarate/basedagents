@@ -81,6 +81,10 @@ export default function App() {
           <Route path="/link" element={<LinkPage />} />
           <Route path="/claim" element={<Claim />} />
           <Route path="/invited" element={<Invited />} />
+          {/* Public audit intake: no account — every request is operator-
+              reviewed, so submission needs only an email (signed-in visitors
+              are redirected to the in-app form). */}
+          <Route path="/testing/request" element={<TestingIntake />} />
           <Route element={<Protected />}>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<Home />} />

@@ -2643,6 +2643,50 @@
         }
       }
     },
+    "/v1/testing/intake": {
+      "post": {
+        "summary": "Public audit intake (no account)",
+        "description": "Submit an audit request with an email address instead of a session. The payload waits in a pre-authentication inbox and a sign-in magic link is emailed; the request attaches to the account (created on first sign-in) the moment that address signs in. Rate-limited per address and globally; secret-looking material is rejected; unverified submissions expire.",
+        "tags": [
+          "testing"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "intake"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "intake": {
+                    "type": "object",
+                    "description": "Same shape as the authenticated intake (see POST /v1/owner/testing/requests)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted; a sign-in link was emailed. Uniform response — reveals nothing about whether the address has an account."
+          },
+          "422": {
+            "description": "Validation failed or secret-looking material detected."
+          },
+          "429": {
+            "description": "Rate limited, or too many submissions awaiting sign-in for this address."
+          }
+        }
+      }
+    },
     "/v1/testing/schemas/worker-result-1.0.json": {
       "get": {
         "summary": "Worker result contract (JSON Schema)",

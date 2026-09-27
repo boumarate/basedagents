@@ -117,6 +117,12 @@ export default function TestingAdminQueue() {
 
       <section className="panel">
         <h2>Intake review ({queue.intake_review.length})</h2>
+        {(queue.awaiting_email_verification ?? 0) > 0 && (
+          <p className="muted">
+            {queue.awaiting_email_verification} public submission{queue.awaiting_email_verification === 1 ? '' : 's'} awaiting
+            email sign-in — each appears here the moment its submitter signs in.
+          </p>
+        )}
         {queue.intake_review.length === 0 ? <p className="empty">No submitted requests.</p> : (
           <div className="rows">
             {queue.intake_review.map((r) => (

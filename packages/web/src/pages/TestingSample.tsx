@@ -121,7 +121,7 @@ export default function TestingSample(): React.ReactElement {
 
       <div style={{ ...S.card, textAlign: 'center', marginTop: 40 }}>
         <p style={{ ...S.p, fontWeight: 600, color: 'var(--text-primary)' }}>Want this for your own product’s key workflow?</p>
-        <a href={`${CONSOLE_URL}/testing/new`} style={{ display: 'inline-block', padding: '12px 22px', borderRadius: 10, background: 'var(--accent)', color: '#fff', fontWeight: 600, textDecoration: 'none' }}>
+        <a href={`${CONSOLE_URL}/testing/request`} style={{ display: 'inline-block', padding: '12px 22px', borderRadius: 10, background: 'var(--accent)', color: '#fff', fontWeight: 600, textDecoration: 'none' }}>
           Request a scoped agent compatibility audit
         </a>
         <p style={{ ...S.p, fontSize: 13, marginTop: 8, color: 'var(--text-tertiary)' }}>

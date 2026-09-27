@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed — Agent Testing: public intake and buyer deep-linking (api, console, web)
+
+Every audit request is operator-reviewed before any quote or payment, so the intake no longer sits behind sign-in — and the sign-in email now lands buyers back on the testing pages instead of the agent-setup command.
+
+- **Public intake** (`app.basedagents.ai/testing/request`, `POST /v1/testing/intake`): the audit form plus an email field, no account. The payload waits in a pre-auth inbox (migration 0043) and a sign-in magic link is emailed; the request attaches to the account — created on the spot for a new address — the moment that email signs in, then enters intake review as usual. Unverified submissions are invisible to review (the operator queue shows only a count), expire after 14 days, and are capped per address; secret-looking material is rejected exactly like the authenticated route; responses reveal nothing about whether an address has an account. The `basedagents.ai/testing` CTAs point here, so the funnel has zero friction before review.
+- **Deep-linking on `/start`**: the magic-link finish now honors a `r=` return path and the remembered intent — a returning account lands where it was headed, and a first-time email arriving from the testing funnel gets its email-only buyer account minted automatically and lands on its audit status page with the full nav, never the paste-to-your-agent screen (spec §2.1 step 4). Sign-in failures on that path now surface as errors instead of dead-ending.
+- **Operator alerts**: every submission (authenticated or adopted-from-public) queues a `[testing-ops]` email under a semantic key. `TESTING_OPERATOR_EMAIL` moved out of `wrangler.toml` [vars] to a wrangler secret (`scripts/put-secrets.sh`) so a personal address never sits in the public repo.
+
 ### Fixed — three findings from the compatibility pilot (api, sdk 0.9.1, skill 1.1.1)
 
 Reported by the pilot's Windows and payment-discovery testers (ba-compat-pilot-v1-04, -06, -09).

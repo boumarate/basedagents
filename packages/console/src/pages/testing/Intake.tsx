@@ -3,12 +3,19 @@
  * (spec §4.3). Drafts are saved SERVER-SIDE only: nothing here touches
  * localStorage, and the form never asks for credentials.
  *
+ * /testing/request is the same form WITHOUT an account: every request is
+ * operator-reviewed before any payment, so submission needs only an email —
+ * the server stores the payload, emails a sign-in link, and the request
+ * attaches to the account the moment that address signs in.
+ *
  * PROPRIETARY console code — see ../../../LICENSE.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { testing, type TestingIntake } from '../../api/testing.js';
 import { ControlApiError } from '../../api/control.js';
+import { useOwner } from '../../state/session.js';
+import { AuthNav } from '../../components/AuthNav.js';
 
 const EMPTY: TestingIntake = {
   product_name: '',
@@ -37,6 +44,15 @@ function errText(err: unknown): string {
 export default function TestingIntake() {
   const { requestId } = useParams();
   const navigate = useNavigate();
+  const { owner, loading: sessionLoading } = useOwner();
+  const location = useLocation();
+  // The public (no-session) door. Signed-in visitors are bounced to the
+  // account form so they keep the app shell, drafts, and their history.
+  const onPublicRoute = location.pathname === '/testing/request';
+  const publicMode = onPublicRoute && !owner;
+  const [publicEmail, setPublicEmail] = useState('');
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [sentNote, setSentNote] = useState('');
   const [intake, setIntake] = useState<TestingIntake>(EMPTY);
   const [version, setVersion] = useState<number | null>(null);
   const [authority, setAuthority] = useState(false);
@@ -61,6 +77,9 @@ export default function TestingIntake() {
 
   const problems = useMemo(() => {
     const out: string[] = [];
+    if (publicMode && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(publicEmail.trim())) {
+      out.push('Enter the email address for sign-in and status updates.');
+    }
     if (!intake.product_name.trim()) out.push('Product name is required.');
     if (!/^https:\/\//.test(intake.product_url)) out.push('Product URL must be https://.');
     if (!/^https:\/\//.test(intake.documentation_url)) out.push('Documentation URL must be https://.');
@@ -71,7 +90,7 @@ export default function TestingIntake() {
     if (!authority) out.push('Confirm you are authorized to commission these tests.');
     if (!disclosure) out.push('Acknowledge what approved independent operators receive.');
     return out;
-  }, [intake, authority, disclosure]);
+  }, [intake, authority, disclosure, publicMode, publicEmail]);
 
   async function save(submit: boolean): Promise<void> {
     setBusy(true);
@@ -83,6 +102,14 @@ export default function TestingIntake() {
         authority_declaration: true,
         worker_disclosure_acknowledged: true,
       };
+      if (publicMode) {
+        const { message } = await testing.publicIntake(publicEmail.trim().toLowerCase(), body);
+        setSentTo(publicEmail.trim());
+        setSentNote(message);
+        setBusy(false);
+        window.scrollTo({ top: 0 });
+        return;
+      }
       let id = requestId ?? null;
       let v = version ?? 1;
       if (id && version !== null) {
@@ -101,10 +128,34 @@ export default function TestingIntake() {
     }
   }
 
-  if (loading) return <div className="page"><p className="muted">Loading…</p></div>;
+  if (loading || (onPublicRoute && sessionLoading)) return <div className="page"><p className="muted">Loading…</p></div>;
+  if (onPublicRoute && owner) return <Navigate to="/testing/new" replace />;
 
-  return (
-    <div className="page">
+  if (publicMode && sentTo) {
+    return (
+      <>
+        <AuthNav />
+        <div className="auth-wrap auth-wrap-nav">
+          <div className="auth-card auth-card-wide">
+            <h1 className="auth-title">Check your email</h1>
+            <p className="auth-lede">
+              We sent a sign-in link to <strong>{sentTo}</strong>. Click it within 15 minutes to sign
+              in and see your request&rsquo;s status — it attaches to your account automatically.
+            </p>
+            {sentNote && <p className="field-hint">{sentNote}</p>}
+            <p className="field-hint">
+              Didn&rsquo;t get it, or the link expired? Request a fresh one any time from{' '}
+              <a className="link" href="/start">the sign-in page</a> with the same email — your
+              request will be waiting.
+            </p>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  const page = (
+    <div className={publicMode ? 'page page-standalone' : 'page'}>
       <div className="page-head"><h1>{requestId ? 'Edit audit request' : 'Request an agent compatibility audit'}</h1></div>
       <p className="page-lede">
         Describe ONE important workflow. We review your request, confirm coverage, and send an exact
@@ -112,6 +163,12 @@ export default function TestingIntake() {
         passwords, production data, or private customer information — tests run only against public
         docs and safe synthetic fixtures.
       </p>
+      {publicMode && (
+        <p className="page-lede">
+          No account needed — enter your email below and we send a sign-in link when you submit, so
+          you can follow the review.
+        </p>
+      )}
       {error && <div className="banner banner-error" role="alert">{error}</div>}
 
       <form className="form" onSubmit={(e) => { e.preventDefault(); void save(true); }}>
@@ -205,7 +262,18 @@ export default function TestingIntake() {
         </section>
 
         <section className="panel">
-          <h2>Authorization</h2>
+          <h2>{publicMode ? 'Your email and authorization' : 'Authorization'}</h2>
+          {publicMode && (
+            <div className="field">
+              <label className="field-label" htmlFor="t-email">Email — for sign-in and status updates</label>
+              <input id="t-email" type="email" autoComplete="email" maxLength={320} value={publicEmail}
+                onChange={(e) => setPublicEmail(e.target.value)} placeholder="you@company.com" required />
+              <p className="field-hint">
+                We email you a sign-in link; your request attaches to that address. No password, no
+                separate signup form.
+              </p>
+            </div>
+          )}
           <div className="field">
             <label className="field-label">
               <input type="checkbox" checked={authority} onChange={(e) => setAuthority(e.target.checked)} required />{' '}
@@ -229,14 +297,23 @@ export default function TestingIntake() {
         )}
 
         <div className="btn-row">
-          <button type="button" className="btn" disabled={busy} onClick={() => void save(false)}>Save draft</button>
+          {!publicMode && (
+            <button type="button" className="btn" disabled={busy} onClick={() => void save(false)}>Save draft</button>
+          )}
           <button type="submit" className="btn btn-primary" disabled={busy || problems.length > 0}>
             {busy ? 'Saving…' : 'Submit for scope review'}
           </button>
-          <Link className="btn btn-ghost" to="/testing">Cancel</Link>
+          {publicMode
+            ? <a className="btn btn-ghost" href="https://basedagents.ai/testing">Cancel</a>
+            : <Link className="btn btn-ghost" to="/testing">Cancel</Link>}
         </div>
-        <p className="muted">Submitting sends the request for review. No payment has been taken — we confirm coverage before you pay.</p>
+        <p className="muted">
+          {publicMode
+            ? 'Submitting sends the request for review and emails you a sign-in link. No payment has been taken — we confirm coverage and the exact price before you pay.'
+            : 'Submitting sends the request for review. No payment has been taken — we confirm coverage before you pay.'}
+        </p>
       </form>
     </div>
   );
+  return publicMode ? <><AuthNav />{page}</> : page;
 }

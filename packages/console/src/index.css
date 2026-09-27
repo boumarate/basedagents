@@ -402,3 +402,8 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
   .page { max-width: none; }
   .panel { break-inside: avoid; border-color: #bbb; }
 }
+
+/* ─── Public (no-session) testing intake ───────────────────────────────────
+   The app Layout is absent on /testing/request, so the page carries its own
+   width and gutter under the AuthNav. */
+.page-standalone { max-width: 900px; margin: 0 auto; padding: 1.5rem 16px 4rem; }

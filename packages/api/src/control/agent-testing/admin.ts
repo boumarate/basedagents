@@ -111,6 +111,9 @@ app.get('/queue', async (c) => {
       min_operator_groups: pkg.minimum_distinct_operator_groups,
     },
     intake_review: submitted.map((r) => ({ id: r.id, owner_id: r.owner_id, version: r.version, updated_at: r.updated_at, source: r.source })),
+    // Public submissions whose email hasn't signed in yet — demand that is
+    // coming but not reviewable until verified (they adopt on sign-in).
+    awaiting_email_verification: await store.countPendingInbox(now),
     needs_changes: needsChanges.map((r) => ({ id: r.id, version: r.version, updated_at: r.updated_at })),
     awaiting_payment: awaitingPayment.map(shape),
     awaiting_task_approval: ready.map(shape),

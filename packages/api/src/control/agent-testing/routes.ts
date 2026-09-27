@@ -19,9 +19,12 @@ import { ControlStore } from '../store.js';
 import { agentAuth } from '../../middleware/auth.js';
 import { checkRateLimit } from '../../lib/rate-limiter.js';
 import { rpConfig } from '../config.js';
+import { consoleOrigin, emailSenderFromEnv, type EmailSender } from '../email.js';
+import { base64urlEncode } from '../webauthn.js';
+import { queueOperatorNotification } from './notify.js';
 import { TestingStore, type OrderRow, type QuoteRow, type RequestRow } from './store.js';
 import {
-  IntakeSchema, intakeSecretFindings, QuoteScopeSchema, WORKER_RESULT_JSON_SCHEMA, WorkerBriefSchema,
+  IntakeSchema, intakeSecretFindings, QuoteScopeSchema, sha256hex, WORKER_RESULT_JSON_SCHEMA, WorkerBriefSchema,
 } from './schemas.js';
 import { activePackage, checkoutDisabledReason, retentionDays, supportEmail, testingFlags } from './catalog.js';
 import { startCheckout, testingStripeFor } from './checkout.js';
@@ -159,6 +162,98 @@ app.get('/catalog', async (c) => {
 app.get('/schemas/worker-result-1.0.json', (c) =>
   c.json(WORKER_RESULT_JSON_SCHEMA, 200, { 'Cache-Control': 'public, max-age=3600' }));
 
+// ─── public intake (no account; every request is operator-reviewed) ───
+//
+// The form asks for an email instead of a sign-in: the payload lands in the
+// pre-auth inbox (migration 0043) and a sign-in magic link goes to that
+// address — the same 'start' token the /start door mints, landing on
+// /start#t=…&r=/testing so the console returns the verified visitor straight
+// to their audit status page. Adoption into a real owned request happens the
+// moment that owner loads their testing pages (adoptPublicIntake below). An
+// unverified email never creates an account or a reviewable request.
+
+/** Same resolution order as the ladder: injected → E2E outbox → env. */
+function publicEmailSender(c: Ctx): EmailSender {
+  const injected = (c.get as (k: string) => EmailSender | undefined)('emailSender');
+  if (injected) return injected;
+  if (((c.env ?? {}) as Record<string, string | undefined>).E2E === '1') {
+    const store = new ControlStore(c.get('db'));
+    return { send: async (m) => store.appendTestOutbox(m.to, m.subject, m.text) };
+  }
+  return emailSenderFromEnv(c.env);
+}
+
+const PublicIntakeBody = z.object({ email: z.string().email().max(320), intake: IntakeSchema }).strict();
+const INBOX_TTL_DAYS = 14;
+const INBOX_PENDING_PER_EMAIL_MAX = 3;
+const START_LINK_TTL_SECONDS = 900; // matches the ladder's magic-link TTL
+
+app.post('/intake', async (c) => {
+  if (!productEnabled(c)) return err(c, 404, 'not_found', 'Not found');
+  if (!originAllowed(c)) return err(c, 403, 'forbidden', 'Cross-origin request refused');
+  const db = c.get('db');
+  const json = await readJson(c);
+  if (!json.ok) return err(c, 400, 'bad_request', 'invalid JSON body');
+  const parsed = PublicIntakeBody.safeParse(json.body);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return err(c, 422, 'validation_failed', `Intake invalid at ${first?.path.join('.') || 'root'}: ${first?.message ?? 'invalid'}`, { details: parsed.error.flatten() });
+  }
+  const secrets = intakeSecretFindings(parsed.data.intake);
+  if (secrets.length > 0) {
+    return err(c, 422, 'secret_material_rejected',
+      `The intake appears to contain secret material (${secrets.join(', ')}). Remove all credentials — tests never use customer secrets.`);
+  }
+  const email = parsed.data.email.trim().toLowerCase();
+
+  // Abuse brakes on an unauthenticated write that also sends email: a global
+  // cap, a per-address cap, and a ceiling on unclaimed submissions per
+  // address. Responses stay uniform about ACCOUNTS (nothing here reveals
+  // whether an address has one); the 429s only describe the caller's own volume.
+  const global = await checkRateLimit(db, 'testing:pubintake:global', 200, 3_600_000);
+  if (!global.allowed) return err(c, 429, 'rate_limited', 'Too many requests right now — please try again in a little while.');
+  const per = await checkRateLimit(db, `testing:pubintake:${sha256hex(email)}`, 5, 3_600_000);
+  if (!per.allowed) return err(c, 429, 'rate_limited', 'Too many submissions for this email this hour. Use the sign-in link we already sent.');
+
+  const store = getStore(c);
+  const now = new Date().toISOString();
+  if ((await store.countPendingInboxByEmail(email, now)) >= INBOX_PENDING_PER_EMAIL_MAX) {
+    return err(c, 429, 'rate_limited', 'You already have submissions awaiting sign-in. Click the link we emailed you — they attach to your account the moment you sign in.');
+  }
+
+  const row = await store.createInboxSubmission({ email, intakeJson: JSON.stringify(parsed.data.intake), ttlDays: INBOX_TTL_DAYS });
+
+  const controlStore = new ControlStore(db);
+  const owner = await controlStore.getOwnerByEmail(email);
+  const tokenBytes = new Uint8Array(32);
+  crypto.getRandomValues(tokenBytes);
+  const token = base64urlEncode(tokenBytes);
+  await controlStore.createMagicLinkToken({
+    tokenHash: sha256hex(token),
+    purpose: 'start',
+    email,
+    ownerId: owner?.id, // resolved at finish for a first-time address
+    ttlSeconds: START_LINK_TTL_SECONDS,
+  });
+  await publicEmailSender(c).send({
+    to: email,
+    subject: 'Your audit request was received — sign in to track it',
+    text:
+      `We received your agent compatibility audit request. An operator reviews every request ` +
+      `and confirms coverage and an exact price before any payment is requested — nothing has been charged.\n\n` +
+      `Click within 15 minutes to sign in and see its status:\n\n` +
+      `${consoleOrigin(c.env)}/start#t=${token}&r=%2Ftesting\n\n` +
+      `Your request attaches to your account the moment you sign in with this address. ` +
+      `Link expired? Request a fresh one at ${consoleOrigin(c.env)}/start using the same email.\n\n` +
+      `If you didn't submit this, ignore this email — nothing happens without this link.`,
+  });
+  await store.metricEvent('public_intake_submitted', { requestId: row.requestId });
+  return c.json({
+    ok: true,
+    message: 'Check your email — we sent a sign-in link. Your request is attached to your account the moment you sign in; an operator reviews it and confirms coverage before any payment.',
+  });
+});
+
 // ─── worker private brief (agent-authenticated; spec §7.3, §5.4) ───
 
 app.get('/assignments/:taskId/brief', agentAuth, async (c) => {
@@ -243,8 +338,36 @@ customer.post('/requests', async (c) => {
   return c.json({ request: shapeRequest(row) });
 });
 
+/**
+ * Attach any verified-email public submissions to this owner (idempotent;
+ * safe under races via the pre-minted request id). Runs on the list the
+ * testing pages land on, so a fresh sign-in from the intake email sees the
+ * request immediately — and it must never break the list itself.
+ */
+async function adoptPublicIntake(c: Ctx, store: TestingStore, ownerId: string): Promise<void> {
+  try {
+    const owner = await new ControlStore(c.get('db')).getOwner(ownerId);
+    if (!owner?.email) return;
+    const now = new Date().toISOString();
+    for (const row of await store.listPendingInboxByEmail(owner.email, now)) {
+      if (!(await store.adoptInboxRow(row, ownerId, now))) continue;
+      await store.metricEvent('intake_submitted', { requestId: row.request_id });
+      await queueOperatorNotification(store, c.env, {
+        semanticKey: `op:submitted:${row.request_id}:v1`,
+        kind: 'request_submitted',
+        orderId: null,
+        subject: 'New audit request submitted',
+        body: `Request ${row.request_id} was submitted for scope review (email-verified public intake).`,
+      });
+    }
+  } catch {
+    // adoption is a convenience pass — pending rows stay for the next load
+  }
+}
+
 customer.get('/requests', async (c) => {
   const store = getStore(c);
+  await adoptPublicIntake(c, store, getOwnerId(c));
   const rows = await store.listRequestsByOwner(getOwnerId(c));
   const out = [];
   for (const row of rows) {
@@ -302,6 +425,13 @@ customer.post('/requests/:id/submit', async (c) => {
     return err(c, 409, 'version_conflict', 'The request changed or is not in a submittable state.');
   }
   await store.metricEvent('intake_submitted', { requestId: row.id });
+  await queueOperatorNotification(store, c.env, {
+    semanticKey: `op:submitted:${row.id}:v${body.data.expected_version}`,
+    kind: 'request_submitted',
+    orderId: null,
+    subject: 'New audit request submitted',
+    body: `Request ${row.id} was submitted for scope review.`,
+  });
   return c.json({
     request: shapeRequest((await store.getRequest(row.id))!),
     acknowledgment: 'No payment has been taken. We will confirm coverage before you pay.',

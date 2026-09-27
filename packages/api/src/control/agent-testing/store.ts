@@ -32,6 +32,11 @@ export interface RequestRow {
   created_at: string; updated_at: string;
 }
 
+export interface IntakeInboxRow {
+  id: string; email: string; request_id: string; intake_json: string; status: string;
+  claimed_owner_id: string | null; created_at: string; updated_at: string; expires_at: string;
+}
+
 export interface QuoteRow {
   id: string; request_id: string; request_version: number; scope_json: string; scope_hash: string;
   package_key: string; package_version: number; stripe_price_id: string | null;
@@ -218,6 +223,76 @@ export class TestingStore {
   async setRequestSource(id: string, source: 'external_customer' | 'founder_sample' | 'test_fixture'): Promise<boolean> {
     const res = await this.db.run('UPDATE testing_requests SET source = ?, updated_at = ? WHERE id = ?', source, nowIso(), id);
     return res.changes === 1;
+  }
+
+  // ─── public intake inbox (migration 0043) ───
+  //
+  // Pre-authentication submissions. A row here is owned by nobody: it becomes
+  // a real request only at ADOPTION, after the submitter's email is verified
+  // by a sign-in. The request id is pre-minted at submission so adoption is
+  // idempotent (INSERT OR IGNORE) under concurrent list calls and retries.
+
+  async createInboxSubmission(input: { email: string; intakeJson: string; ttlDays: number }): Promise<{ id: string; requestId: string }> {
+    const id = generatePublicId('tinb');
+    const requestId = generatePublicId('treq');
+    const now = new Date();
+    await this.db.run(
+      `INSERT INTO testing_intake_inbox (id, email, request_id, intake_json, status, claimed_owner_id, created_at, updated_at, expires_at)
+       VALUES (?, ?, ?, ?, 'pending', NULL, ?, ?, ?)`,
+      id, input.email, requestId, input.intakeJson, now.toISOString(), now.toISOString(),
+      new Date(now.getTime() + input.ttlDays * 86_400_000).toISOString(),
+    );
+    return { id, requestId };
+  }
+
+  async countPendingInboxByEmail(email: string, now: string): Promise<number> {
+    const row = await this.db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM testing_intake_inbox WHERE email = ? AND status = 'pending' AND expires_at > ?`,
+      email, now,
+    );
+    return row?.n ?? 0;
+  }
+
+  async countPendingInbox(now: string): Promise<number> {
+    const row = await this.db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM testing_intake_inbox WHERE status = 'pending' AND expires_at > ?`, now,
+    );
+    return row?.n ?? 0;
+  }
+
+  async listPendingInboxByEmail(email: string, now: string): Promise<IntakeInboxRow[]> {
+    return this.db.all<IntakeInboxRow>(
+      `SELECT * FROM testing_intake_inbox WHERE email = ? AND status = 'pending' AND expires_at > ? ORDER BY created_at ASC LIMIT 10`,
+      email, now,
+    );
+  }
+
+  /**
+   * Adopt one verified inbox row into a real 'submitted' request owned by
+   * `ownerId`. Returns true when THIS call created the request (drives the
+   * one-time operator alert); the claim UPDATE afterwards is idempotent, and
+   * a crash between the two heals on the next adoption pass.
+   */
+  async adoptInboxRow(row: IntakeInboxRow, ownerId: string, now: string): Promise<boolean> {
+    const ins = await this.db.run(
+      `INSERT OR IGNORE INTO testing_requests (id, owner_id, intake_json, status, version, source, previous_order_id, created_at, updated_at)
+       VALUES (?, ?, ?, 'submitted', 1, 'external_customer', NULL, ?, ?)`,
+      row.request_id, ownerId, row.intake_json, row.created_at, now,
+    );
+    await this.db.run(
+      `UPDATE testing_intake_inbox SET status = 'claimed', claimed_owner_id = ?, updated_at = ? WHERE id = ? AND status = 'pending'`,
+      ownerId, now, row.id,
+    );
+    return ins.changes === 1;
+  }
+
+  /** Jobs sweep: pending rows past their TTL flip to 'expired' (never adopted). */
+  async expireInboxRows(now: string): Promise<number> {
+    const res = await this.db.run(
+      `UPDATE testing_intake_inbox SET status = 'expired', updated_at = ? WHERE status = 'pending' AND expires_at <= ?`,
+      now, now,
+    );
+    return res.changes;
   }
 
   // ─── quotes ───

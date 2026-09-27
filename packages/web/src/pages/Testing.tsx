@@ -93,7 +93,7 @@ export default function Testing(): React.ReactElement {
           : 'Request a scoped agent compatibility audit: one important workflow, executed for real and reviewed by us, delivered as one private evidence-backed report. We confirm coverage before you pay.'}
       </p>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '20px 0 8px' }}>
-        <a href={`${CONSOLE_URL}/testing/new`} className="btn btn-primary"
+        <a href={`${CONSOLE_URL}/testing/request`} className="btn btn-primary"
           style={{ padding: '12px 22px', borderRadius: 10, background: 'var(--accent)', color: '#fff', fontWeight: 600, textDecoration: 'none' }}>
           {primaryCta}
         </a>
