@@ -48,16 +48,19 @@ export default function TestingAdminOrder() {
   const [replaceReason, setReplaceReason] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<{ id: string; source_hash?: string; version: number } | null>(null);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     if (!orderId) return;
-    testingAdmin.getOrder(orderId).then((v) => {
+    try {
+      const v = await testingAdmin.getOrder(orderId);
       setView(v);
       const d = v.reports.find((r) => r.status === 'draft');
       setDraft(d ? { id: d.id, version: d.version } : null);
-    }).catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }, [orderId]);
 
-  useEffect(load, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   async function act(fn: () => Promise<unknown>, done: string): Promise<void> {
     setBusy(true);
@@ -66,7 +69,9 @@ export default function TestingAdminOrder() {
     try {
       await fn();
       if (done) setNotice(done);
-      load();
+      // Stay busy until the refreshed view is IN — a button must never
+      // re-arm against a stale view right after its action succeeded.
+      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
