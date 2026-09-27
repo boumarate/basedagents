@@ -1159,6 +1159,14 @@ export class TestingStore {
     return res.changes === 1;
   }
 
+  /** Void a queued-but-unsent alert whose condition no longer holds. */
+  async dropPendingNotification(semanticKey: string): Promise<boolean> {
+    const res = await this.db.run(
+      `DELETE FROM testing_notifications WHERE semantic_key = ? AND state = 'pending'`, semanticKey,
+    );
+    return res.changes === 1;
+  }
+
   async notificationsDue(now: string, limit = 25): Promise<NotificationRow[]> {
     return this.db.all<NotificationRow>(
       `SELECT * FROM testing_notifications WHERE state = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY created_at ASC LIMIT ?`,

@@ -474,3 +474,16 @@ describe('durable operations: manual_review revives on re-enqueue (operator retr
     expect(again.state).toBe('succeeded'); // idempotency: success is never re-run
   });
 });
+
+describe('stale no-coverage alerts are voided by a later successful publication', () => {
+  it('drops a PENDING op:no-coverage alert and leaves sent ones alone', async () => {
+    const store = new TestingStore(h.db);
+    await store.queueNotification({ semanticKey: 'op:no-coverage:trun_stale', kind: 'missing_coverage', recipient: 'ops@example.com', subject: 's', body: 'b' });
+    expect(await store.dropPendingNotification('op:no-coverage:trun_stale')).toBe(true);
+    expect(await store.notificationsDue(h.now())).toHaveLength(0);
+
+    await store.queueNotification({ semanticKey: 'op:no-coverage:trun_sent', kind: 'missing_coverage', recipient: 'ops@example.com', subject: 's', body: 'b' });
+    await store.notificationSent('op:no-coverage:trun_sent');
+    expect(await store.dropPendingNotification('op:no-coverage:trun_sent')).toBe(false);
+  });
+});

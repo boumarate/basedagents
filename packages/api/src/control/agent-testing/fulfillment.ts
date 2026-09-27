@@ -435,6 +435,10 @@ export async function executePublishOperation(db: DBAdapter, env: unknown, op: O
   }
   const reservation = payload.reservation_ref ? await store.getReservationByRef(payload.reservation_ref) : null;
   if (reservation) await store.reservationGate(reservation.id, ['reserved'], 'committed', { attemptId: attempt.id });
+  // A publication that succeeds supersedes any still-queued "no coverage"
+  // alert from an earlier failed try — a stale alert delivered after the fix
+  // reads as a live problem (field report). Already-sent alerts stand.
+  await store.dropPendingNotification(`op:no-coverage:${run.id}`);
   await store.metricEvent('initial_run_started', { orderId: order.id, requestId: order.request_id });
   await store.audit({ actor: 'system:fulfillment', action: 'task_published', objectKind: 'run', objectId: run.id, reason: `task ${taskId}` });
 }
