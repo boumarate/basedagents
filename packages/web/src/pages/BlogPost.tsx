@@ -158,6 +158,14 @@ export default function BlogPost(): React.ReactElement {
                   {children}
                 </blockquote>
               ),
+              img: ({ src, alt }) => (
+                <img
+                  src={src}
+                  alt={alt ?? ''}
+                  loading="lazy"
+                  style={{ width: '100%', borderRadius: 12, border: '1px solid var(--border)', margin: '8px 0 20px' }}
+                />
+              ),
               a: ({ href, children }) => (
                 <a href={href} style={{ color: 'var(--accent)' }}>
                   {children}

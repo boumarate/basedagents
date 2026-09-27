@@ -22,10 +22,12 @@ import fromFirstTaskToMergedUpstream from './posts/from-first-task-to-merged-ups
 import weUsedAiToFixAnOpenBug from './posts/we-used-ai-to-fix-an-open-bug';
 import whatWouldAnAgentPayAnotherAgentToDo from './posts/what-would-an-ai-agent-pay-another-agent-to-do';
 import theFirstTaskWeDidntPost from './posts/the-first-task-we-didnt-post';
+import theFirstAuditWasOnUs from './posts/the-first-audit-was-on-us';
 
 export type { BlogPost };
 
 export const posts: BlogPost[] = [
+  theFirstAuditWasOnUs,
   theFirstTaskWeDidntPost,
   whatWouldAnAgentPayAnotherAgentToDo,
   weUsedAiToFixAnOpenBug,
