@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { testingAdmin, type AdminOrderView, type AdminRun } from '../../api/testing.js';
+import { testingAdmin, type AdminOrderView, type AdminRun, type TestingReportDoc } from '../../api/testing.js';
 import { useOwner } from '../../state/session.js';
 import { runAction } from '../../lib/ceremony.js';
 import { sha256hex } from '../../lib/action.js';
@@ -47,6 +47,7 @@ export default function TestingAdminOrder() {
   const [cancelReason, setCancelReason] = useState('');
   const [replaceReason, setReplaceReason] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<{ id: string; source_hash?: string; version: number } | null>(null);
+  const [draftDoc, setDraftDoc] = useState<TestingReportDoc | null>(null);
 
   const load = useCallback(async () => {
     if (!orderId) return;
@@ -55,12 +56,25 @@ export default function TestingAdminOrder() {
       setView(v);
       const d = v.reports.find((r) => r.status === 'draft');
       setDraft(d ? { id: d.id, version: d.version } : null);
+      if (!d) setDraftDoc(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, [orderId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // A draft exists but its content is not on screen → fetch it, so the
+  // operator always READS what the publish signature will cover. The draft
+  // endpoint regenerates deterministically from reviewed records, so this
+  // also keeps the preview honest after new reviews.
+  useEffect(() => {
+    if (!orderId || !draft || draftDoc) return;
+    testingAdmin.reportDraft(orderId).then((r) => {
+      setDraft({ id: r.report.id, source_hash: r.report.source_hash, version: r.report.version });
+      setDraftDoc(r.report.document);
+    }).catch(() => { /* the Generate button remains the explicit path */ });
+  }, [orderId, draft, draftDoc]);
 
   async function act(fn: () => Promise<unknown>, done: string): Promise<void> {
     setBusy(true);
@@ -293,7 +307,11 @@ export default function TestingAdminOrder() {
                       </label>
                     </div>
                   )}
-                  {run.kind !== 'baseline' && <p className="field-hint">{financialPreview(f)}</p>}
+                  {run.kind !== 'baseline' && (
+                    <div className={`review-consequence review-consequence-${f.marketplace_action}`} role="note">
+                      <strong>Money consequence</strong> — {financialPreview(f)}
+                    </div>
+                  )}
                   <div className="field">
                     <label className="field-label" htmlFor={`note-${run.id}`}>Review note — required, recorded in the audit trail</label>
                     <textarea id={`note-${run.id}`} rows={2} maxLength={4000}
@@ -333,6 +351,7 @@ export default function TestingAdminOrder() {
           <button className="btn" disabled={busy} onClick={() => void act(async () => {
             const res = await testingAdmin.reportDraft(order.id);
             setDraft({ id: res.report.id, source_hash: res.report.source_hash, version: res.report.version });
+            setDraftDoc(res.report.document);
           }, 'Draft generated from reviewed records.')}>
             Generate / refresh draft
           </button>
@@ -350,6 +369,44 @@ export default function TestingAdminOrder() {
             </button>
           )}
         </div>
+        {draftDoc && (
+          <article className="card testing-stack">
+            <div className="card-title">Draft v{draftDoc.version} — read before publishing (the passkey signs exactly this)</div>
+            <p className="prewrap">{draftDoc.executive_summary}</p>
+            <div className="kv"><span className="kv-key">Coverage</span>
+              <span>{draftDoc.coverage.external_runs_valid}/{draftDoc.coverage.external_runs_planned} valid external runs ·{' '}
+                {draftDoc.coverage.distinct_environments} distinct environment{draftDoc.coverage.distinct_environments === 1 ? '' : 's'} ·{' '}
+                {draftDoc.coverage.reviewed_operator_groups} reviewed operator group{draftDoc.coverage.reviewed_operator_groups === 1 ? '' : 's'}
+                {draftDoc.coverage.unknowns.length > 0 && <> · unknowns: {draftDoc.coverage.unknowns.join('; ')}</>}
+              </span></div>
+            <div className="kv"><span className="kv-key">Baseline</span>
+              <span>{draftDoc.baseline.ran ? draftDoc.baseline.result.replace(/_/g, ' ') : 'not run'}{draftDoc.baseline.note ? ` — ${draftDoc.baseline.note}` : ''}</span></div>
+            <div className="kv"><span className="kv-key">Execution</span>
+              <span>{draftDoc.execution_matrix.map((r) => `${r.kind}${r.kind === 'baseline' ? '' : ` slot ${r.slot}`}: ${r.result.replace(/_/g, ' ')}`).join(' · ')}</span></div>
+            <div>
+              <span className="field-label">Findings ({draftDoc.findings.length})</span>
+              {draftDoc.findings.length === 0 ? <p className="muted">None recorded.</p> : (
+                <ul className="draft-findings">
+                  {draftDoc.findings.map((f) => (
+                    <li key={f.finding_id}>
+                      <strong>{f.finding_id}</strong> · {f.severity} · {f.category} · {f.statement_type}: {f.summary}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {draftDoc.limitations.length > 0 && (
+              <div>
+                <span className="field-label">Limitations</span>
+                <ul className="draft-findings">{draftDoc.limitations.map((l) => <li key={l}>{l}</li>)}</ul>
+              </div>
+            )}
+            <details>
+              <summary>Full draft JSON (byte-exact content the publish signature covers)</summary>
+              <pre className="code-block prewrap">{JSON.stringify(draftDoc, null, 2).slice(0, 40000)}</pre>
+            </details>
+          </article>
+        )}
         <div className="rows">
           {view.reports.map((r) => (
             <div key={r.id} className="row">
