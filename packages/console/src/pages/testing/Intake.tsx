@@ -75,22 +75,48 @@ export default function TestingIntake() {
   const set = <K extends keyof TestingIntake>(key: K, value: TestingIntake[K]) =>
     setIntake((prev) => ({ ...prev, [key]: value }));
 
+  // Each problem names the field it lives in, so a failed submit attempt can
+  // outline the field, jump to it, and offer a clickable list — a disabled
+  // button that silently swallows the click is how forms feel broken.
   const problems = useMemo(() => {
-    const out: string[] = [];
+    const out: Array<{ field: string; text: string }> = [];
     if (publicMode && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(publicEmail.trim())) {
-      out.push('Enter the email address for sign-in and status updates.');
+      out.push({ field: 't-email', text: 'Enter the email address for sign-in and status updates.' });
     }
-    if (!intake.product_name.trim()) out.push('Product name is required.');
-    if (!/^https:\/\//.test(intake.product_url)) out.push('Product URL must be https://.');
-    if (!/^https:\/\//.test(intake.documentation_url)) out.push('Documentation URL must be https://.');
-    if (!intake.workflow_objective.trim()) out.push('Describe the one workflow to test.');
-    if (!intake.expected_result.trim()) out.push('State what establishes a correct result.');
-    if (!intake.target_environment.trim()) out.push('Name the test target and its release/version (or observation date).');
-    if (!intake.fixture.inline?.trim() && !intake.fixture.url) out.push('Provide a synthetic fixture (inline data or a public https URL).');
-    if (!authority) out.push('Confirm you are authorized to commission these tests.');
-    if (!disclosure) out.push('Acknowledge what approved independent operators receive.');
+    if (!intake.product_name.trim()) out.push({ field: 't-name', text: 'Product name is required.' });
+    if (!/^https:\/\//.test(intake.product_url)) out.push({ field: 't-url', text: 'Product URL must be https://.' });
+    if (!/^https:\/\//.test(intake.documentation_url)) out.push({ field: 't-docs', text: 'Documentation URL must be https://.' });
+    if (!intake.workflow_objective.trim()) out.push({ field: 't-objective', text: 'Describe the one workflow to test.' });
+    if (!intake.expected_result.trim()) out.push({ field: 't-expected', text: 'State what establishes a correct result.' });
+    if (!intake.target_environment.trim()) out.push({ field: 't-target', text: 'Name the test target and its release/version (or observation date).' });
+    if (!intake.fixture.inline?.trim() && !intake.fixture.url) out.push({ field: 't-fixture', text: 'Provide a synthetic fixture (inline data or a public https URL).' });
+    if (!authority) out.push({ field: 't-authority', text: 'Confirm you are authorized to commission these tests.' });
+    if (!disclosure) out.push({ field: 't-disclosure', text: 'Acknowledge what approved independent operators receive.' });
     return out;
   }, [intake, authority, disclosure, publicMode, publicEmail]);
+
+  const invalidFields = useMemo(() => new Set(problems.map((p) => p.field)), [problems]);
+  const [attempted, setAttempted] = useState(false);
+
+  /** Red outlines and the fix-list appear only once a submit was attempted. */
+  const fieldClass = (id: string) => `field${attempted && invalidFields.has(id) ? ' field-invalid' : ''}`;
+
+  function focusField(id: string): void {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.focus({ preventScroll: true });
+  }
+
+  function onSubmitAttempt(e: React.FormEvent): void {
+    e.preventDefault();
+    if (problems.length > 0) {
+      setAttempted(true);
+      focusField(problems[0].field);
+      return;
+    }
+    void save(true);
+  }
 
   async function save(submit: boolean): Promise<void> {
     setBusy(true);
@@ -125,6 +151,7 @@ export default function TestingIntake() {
     } catch (err) {
       setError(errText(err));
       setBusy(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }
 
@@ -171,10 +198,10 @@ export default function TestingIntake() {
       )}
       {error && <div className="banner banner-error" role="alert">{error}</div>}
 
-      <form className="form" onSubmit={(e) => { e.preventDefault(); void save(true); }}>
+      <form className="form" noValidate onSubmit={onSubmitAttempt}>
         <section className="panel">
           <h2>Product</h2>
-          <div className="field">
+          <div className={fieldClass('t-name')}>
             <label className="field-label" htmlFor="t-name">Product name</label>
             <input id="t-name" maxLength={120} value={intake.product_name} onChange={(e) => set('product_name', e.target.value)} required />
           </div>
@@ -186,11 +213,11 @@ export default function TestingIntake() {
               <option value="other">Other (manual review; not eligible for the standard package until supported)</option>
             </select>
           </div>
-          <div className="field">
+          <div className={fieldClass('t-url')}>
             <label className="field-label" htmlFor="t-url">Product URL (https)</label>
             <input id="t-url" type="url" value={intake.product_url} onChange={(e) => set('product_url', e.target.value)} placeholder="https://sandbox.yourproduct.example" required />
           </div>
-          <div className="field">
+          <div className={fieldClass('t-docs')}>
             <label className="field-label" htmlFor="t-docs">Public documentation URL (https)</label>
             <input id="t-docs" type="url" value={intake.documentation_url} onChange={(e) => set('documentation_url', e.target.value)} placeholder="https://docs.yourproduct.example/quickstart" required />
             <p className="field-hint">Workers start from these public instructions only — exactly like a new agent user.</p>
@@ -199,15 +226,15 @@ export default function TestingIntake() {
 
         <section className="panel">
           <h2>The workflow</h2>
-          <div className="field">
+          <div className={fieldClass('t-objective')}>
             <label className="field-label" htmlFor="t-objective">Workflow objective (one observable end-to-end result)</label>
             <textarea id="t-objective" rows={4} maxLength={2000} value={intake.workflow_objective} onChange={(e) => set('workflow_objective', e.target.value)} required />
           </div>
-          <div className="field">
+          <div className={fieldClass('t-expected')}>
             <label className="field-label" htmlFor="t-expected">Expected result / oracle — what establishes correctness?</label>
             <textarea id="t-expected" rows={4} maxLength={4000} value={intake.expected_result} onChange={(e) => set('expected_result', e.target.value)} required />
           </div>
-          <div className="field">
+          <div className={fieldClass('t-fixture')}>
             <label className="field-label" htmlFor="t-fixture">Safe synthetic fixture (inline JSON/text, no real data, no secrets)</label>
             <textarea id="t-fixture" rows={4} maxLength={8000} value={intake.fixture.inline ?? ''} onChange={(e) => set('fixture', { classification: 'synthetic', inline: e.target.value })} />
             <p className="field-hint">Or a public https fixture URL:</p>
@@ -217,7 +244,7 @@ export default function TestingIntake() {
 
         <section className="panel">
           <h2>Target and limits</h2>
-          <div className="field">
+          <div className={fieldClass('t-target')}>
             <label className="field-label" htmlFor="t-target">Test target and release/version</label>
             <input id="t-target" maxLength={500} value={intake.target_environment} onChange={(e) => set('target_environment', e.target.value)} placeholder="https://sandbox.yourproduct.example — release 2026-09" required />
           </div>
@@ -264,7 +291,7 @@ export default function TestingIntake() {
         <section className="panel">
           <h2>{publicMode ? 'Your email and authorization' : 'Authorization'}</h2>
           {publicMode && (
-            <div className="field">
+            <div className={fieldClass('t-email')}>
               <label className="field-label" htmlFor="t-email">Email — for sign-in and status updates</label>
               <input id="t-email" type="email" autoComplete="email" maxLength={320} value={publicEmail}
                 onChange={(e) => setPublicEmail(e.target.value)} placeholder="you@company.com" required />
@@ -274,25 +301,31 @@ export default function TestingIntake() {
               </p>
             </div>
           )}
-          <div className="field">
+          <div className={fieldClass('t-authority')}>
             <label className="field-label">
-              <input type="checkbox" checked={authority} onChange={(e) => setAuthority(e.target.checked)} required />{' '}
+              <input id="t-authority" type="checkbox" checked={authority} onChange={(e) => setAuthority(e.target.checked)} required />{' '}
               I am authorized to commission these specific tests against this target.
             </label>
           </div>
-          <div className="field">
+          <div className={fieldClass('t-disclosure')}>
             <label className="field-label">
-              <input type="checkbox" checked={disclosure} onChange={(e) => setDisclosure(e.target.checked)} required />{' '}
+              <input id="t-disclosure" type="checkbox" checked={disclosure} onChange={(e) => setDisclosure(e.target.checked)} required />{' '}
               I understand that approved independent operators receive the test materials above
               (workflow, documentation links, synthetic fixture) to execute the audit.
             </label>
           </div>
         </section>
 
-        {problems.length > 0 && (
-          <div className="banner banner-warn" role="status">
-            <strong>Before you submit:</strong>
-            <ul>{problems.map((p) => <li key={p}>{p}</li>)}</ul>
+        {attempted && problems.length > 0 && (
+          <div className="banner banner-warn" role="alert">
+            <strong>Not submitted yet — {problems.length === 1 ? 'one field needs' : `${problems.length} fields need`} attention:</strong>
+            <ul>
+              {problems.map((p) => (
+                <li key={p.field + p.text}>
+                  <button type="button" className="link" onClick={() => focusField(p.field)}>{p.text}</button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -300,7 +333,7 @@ export default function TestingIntake() {
           {!publicMode && (
             <button type="button" className="btn" disabled={busy} onClick={() => void save(false)}>Save draft</button>
           )}
-          <button type="submit" className="btn btn-primary" disabled={busy || problems.length > 0}>
+          <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? 'Saving…' : 'Submit for scope review'}
           </button>
           {publicMode

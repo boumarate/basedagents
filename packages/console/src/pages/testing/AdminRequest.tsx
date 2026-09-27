@@ -90,6 +90,30 @@ export default function TestingAdminRequest() {
     }
   }
 
+  // Why the approve button is not available yet — always visible next to the
+  // button, so a blocked approval is never a click that silently does nothing.
+  const approveBlockers = useMemo(() => {
+    const out: string[] = [];
+    if (request && request.status !== 'submitted') out.push(`the request is ${request.status}, and only a submitted request can be quoted`);
+    if (!scope || scope.environment_slots.length < 1) out.push('at least one environment slot needs a client + transport (e.g. claude-code / mcp)');
+    if (!checklist) out.push('the scope checklist above is not confirmed');
+    return out;
+  }, [request, scope, checklist]);
+
+  async function tag(source: 'founder_sample' | 'test_fixture'): Promise<void> {
+    if (!request) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await testingAdmin.setSource(request.id, source);
+      setRequest({ ...request, source });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function approve(): Promise<void> {
     if (!request || !scope || !pkg || !owner) return;
     setBusy(true);
@@ -191,8 +215,13 @@ export default function TestingAdminRequest() {
             plausible internal baseline.
           </label>
         </div>
+        {approveBlockers.length > 0 && (
+          <div className="banner banner-warn" role="status">
+            <strong>Before you can approve:</strong> {approveBlockers.join('; ')}.
+          </div>
+        )}
         <div className="btn-row">
-          <button className="btn btn-primary" disabled={busy || !checklist || request.status !== 'submitted' || !scope || scope.environment_slots.length < 1}
+          <button className="btn btn-primary" disabled={busy || approveBlockers.length > 0}
             onClick={() => void approve()}>
             {busy ? 'Waiting for passkey…' : 'Approve quote (passkey)'}
           </button>
@@ -210,10 +239,10 @@ export default function TestingAdminRequest() {
           <button className="btn btn-danger" disabled={busy} onClick={() => void decide('decline')}>Decline</button>
         </div>
         <div className="form-row">
-          <span className="field-label">Demand accounting</span>
+          <span className="field-label">Demand accounting — currently: {request.source ?? 'external_customer'}</span>
           <div className="btn-row">
-            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void testingAdmin.setSource(request.id, 'founder_sample')}>Tag founder sample</button>
-            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void testingAdmin.setSource(request.id, 'test_fixture')}>Tag test fixture</button>
+            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void tag('founder_sample')}>Tag founder sample</button>
+            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void tag('test_fixture')}>Tag test fixture</button>
           </div>
         </div>
       </section>
