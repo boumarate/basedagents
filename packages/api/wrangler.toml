@@ -47,13 +47,13 @@ ADMIN_OWNER_IDS = "ow_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV"
 # value typed into the Cloudflare dashboard would be clobbered by the next CI
 # deploy. The one testing SECRET (TESTING_TREASURY_PRIVATE_KEY) goes through
 # scripts/put-secrets.sh, never this file. All flags deliberately off.
-# Product pages, intake and (test-mode) checkout are LIVE. Nothing is payable
-# until the operator approves a quote, and quote approval is where capacity is
-# confirmed (spec §1.4). Fulfillment stays off until the service agent +
-# treasury exist (runbook §3.4–3.5).
+# Product pages, intake, (test-mode) checkout and fulfillment are LIVE.
+# Nothing is payable until the operator approves a quote (spec §1.4), and
+# nothing publishes without the operator's publish-tasks passkey ceremony.
+# Service agent + treasury are configured (runbook §3.4–3.5 done 2026-09-27).
 TESTING_PRODUCT_ENABLED = "true"
 TESTING_CHECKOUT_ENABLED = "true"
-TESTING_FULFILLMENT_ENABLED = "false"
+TESTING_FULFILLMENT_ENABLED = "true"
 TESTING_PRODUCT_LIVE_APPROVED = "false"
 # Sandbox (test-mode) one-time $200 price — recreate + replace when moving
 # to live keys.
