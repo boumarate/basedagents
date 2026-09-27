@@ -41,6 +41,20 @@ HOUSE_ACCOUNT_IDS = "ag_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV,ag_95W5FkDc
 # Feedback notifications go to the FEEDBACK_NOTIFY_EMAIL / FEEDBACK_SLACK_WEBHOOK_URL
 # secrets (wrangler secret put …); with neither set, reports are stored silently.
 ADMIN_OWNER_IDS = "ow_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV"
+# ─── Agent Testing (docs/AGENT_TESTING_RUNBOOK.md §3) ───
+# Plain config, like the Keyring price ids above. Set values HERE and deploy —
+# wrangler replaces the Worker's plain vars wholesale on every deploy, so a
+# value typed into the Cloudflare dashboard would be clobbered by the next CI
+# deploy. The one testing SECRET (TESTING_TREASURY_PRIVATE_KEY) goes through
+# scripts/put-secrets.sh, never this file. All flags deliberately off.
+TESTING_PRODUCT_ENABLED = "false"
+TESTING_CHECKOUT_ENABLED = "false"
+TESTING_FULFILLMENT_ENABLED = "false"
+TESTING_PRODUCT_LIVE_APPROVED = "false"
+STRIPE_PRICE_TESTING_AUDIT = ""
+TESTING_PLATFORM_AGENT_ID = ""
+TESTING_SUPPORT_EMAIL = ""
+TESTING_OPERATOR_EMAIL = ""
 
 # Custom domain route
 [[routes]]
@@ -77,6 +91,16 @@ ENVIRONMENT = "staging"
 # staging secrets exist: CDP_API_KEY_ID, CDP_API_KEY_SECRET, PAYMENT_ENCRYPTION_KEY
 # (payments) and ESCROW_WALLET_PRIVATE_KEY (escrow) — see scripts/bootstrap-deploy.md §6–7.
 TASK_PAYMENTS_ENABLED = "1"
+# Agent Testing on staging: same shape as production above; rehearse the flag
+# flips + test-mode Stripe price here first (runbook §7).
+TESTING_PRODUCT_ENABLED = "false"
+TESTING_CHECKOUT_ENABLED = "false"
+TESTING_FULFILLMENT_ENABLED = "false"
+TESTING_PRODUCT_LIVE_APPROVED = "false"
+STRIPE_PRICE_TESTING_AUDIT = ""
+TESTING_PLATFORM_AGENT_ID = ""
+TESTING_SUPPORT_EMAIL = ""
+TESTING_OPERATOR_EMAIL = ""
 
 [env.staging.triggers]
 crons = []
