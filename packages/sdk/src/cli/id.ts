@@ -82,9 +82,13 @@ export async function id(args: string[]): Promise<void> {
     }
   }
 
+  // After the lookup, set the exit code and return instead of process.exit():
+  // on Windows, exiting while libuv is still closing fetch's socket prints
+  // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" (src\win\async.c).
   if (jsonMode) {
     console.log(JSON.stringify(out, null, 2));
-    process.exit(code);
+    process.exitCode = code;
+    return;
   }
   console.log('');
   console.log(`  ${dim('Agent ID')}    ${cyan(agentId)}`);
@@ -100,5 +104,5 @@ export async function id(args: string[]): Promise<void> {
     console.log(red(`  Could not look up the profile: ${out.message}`));
   }
   console.log('');
-  process.exit(code);
+  process.exitCode = code;
 }

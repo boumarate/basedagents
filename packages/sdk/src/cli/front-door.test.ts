@@ -69,7 +69,21 @@ afterEach(() => {
 });
 
 const stdout = () => logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
-const exits = async (p: Promise<unknown>) => { try { await p; return null; } catch (e) { if (e instanceof ExitSignal) return e.code; throw e; } };
+// A command either calls process.exit (thrown as ExitSignal here) or returns and
+// leaves process.exitCode set; null when it did neither. exitCode is always reset
+// so it can't leak into the test runner's own exit status.
+const exits = async (p: Promise<unknown>) => {
+  process.exitCode = undefined;
+  try {
+    await p;
+    return process.exitCode === undefined ? null : Number(process.exitCode);
+  } catch (e) {
+    if (e instanceof ExitSignal) return e.code;
+    throw e;
+  } finally {
+    process.exitCode = undefined;
+  }
+};
 
 describe('basedagents id', () => {
   it('prints the registered identity as JSON, never the private key', async () => {
@@ -78,6 +92,15 @@ describe('basedagents id', () => {
     const out = JSON.parse(stdout());
     expect(out).toMatchObject({ registered: true, agent_id: agentId, name: 'Scout', status: 'active', keypair_path: keypairPath });
     expect(String(fetchMock.mock.calls[0][0])).toContain(`/v1/agents/${agentId}`);
+  });
+
+  it('returns with exitCode after the lookup instead of calling process.exit (Windows libuv assertion)', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ agent_id: agentId, name: 'Scout', status: 'active' }));
+    expect(await exits(id(['--keypair', keypairPath, '--json']))).toBe(0);
+    expect(await exits(id(['--keypair', keypairPath]))).toBe(0);
+    fetchMock.mockResolvedValue(mockResponse({ error: 'not_found', message: 'Agent not found' }, 404));
+    expect(await exits(id(['--keypair', keypairPath, '--json']))).toBe(2);
+    expect(process.exit).not.toHaveBeenCalled();
   });
 
   it('exits 2 when the key is not registered on this API', async () => {

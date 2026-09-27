@@ -216,3 +216,21 @@ describe('Pages front door (site + console `/`)', () => {
     expect(res.headers.get('X-Robots-Tag')).toBe('noindex');
   });
 });
+
+describe('GET /.well-known/x402 networks', () => {
+  const discover = (env: Record<string, string>) =>
+    worker.fetch(new Request(`${BASE}/.well-known/x402`), env as never, { waitUntil() {}, passThroughOnException() {} } as never);
+
+  it('production advertises only Base mainnet, matching the manifest', async () => {
+    const res = await discover({ ENVIRONMENT: 'production' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { accepts: Array<{ network: string; asset: string }> };
+    expect(body.accepts.map((a) => a.network)).toEqual(['eip155:8453']);
+    expect(body.accepts[0].asset).toBe((buildDescriptor({ version: '0' }) as { payments: { contract: string } }).payments.contract);
+  });
+
+  it('other environments also advertise Base Sepolia for testing', async () => {
+    const body = await (await discover({ ENVIRONMENT: 'staging' })).json() as { accepts: Array<{ network: string }> };
+    expect(body.accepts.map((a) => a.network).sort()).toEqual(['eip155:8453', 'eip155:84532']);
+  });
+});

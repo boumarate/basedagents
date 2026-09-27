@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed — three findings from the compatibility pilot (api, sdk 0.9.1, skill 1.1.1)
+
+Reported by the pilot's Windows and payment-discovery testers (ba-compat-pilot-v1-04, -06, -09).
+
+- **Windows PowerShell can refuse to run `npx`.** The default execution policy blocks `npx.ps1` before the CLI starts; `npx.cmd` works. The skill (1.1.1) now says to use `npx.cmd basedagents@latest <command>` there, and not to change the policy.
+- **`basedagents id` printed a libuv assertion on Windows** (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`, `src\win\async.c`) after its output. It called `process.exit()` right after its registry lookup, while the HTTP connection was still closing. It now sets the exit code and returns; the codes (0, 1, 2) are unchanged. CLI 0.9.1.
+- **Payment discovery advertised Base Sepolia in production.** `GET /.well-known/x402` listed every configured network, while the service manifest lists Base mainnet only and production bounties can't use Sepolia. `accepts` now follows the same rule as task creation (`allowedBountyNetworks`): Base mainnet in production, plus Base Sepolia elsewhere.
+
 ### Added — Agent Testing: managed compatibility audits (api, console, web)
 
 A human buys a scoped agent-compatibility audit with a card; BasedAgents commissions real execution through the existing marketplace under a dedicated service principal, reviews the evidence, and delivers one private report. **Feature-flagged off by default** (`TESTING_PRODUCT_ENABLED` / `TESTING_CHECKOUT_ENABLED` / `TESTING_FULFILLMENT_ENABLED`); nothing sells, charges, publishes or emails until an operator enables it, and a missing readiness item disables checkout with customer-readable copy.
