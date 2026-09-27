@@ -172,11 +172,11 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .field { display: grid; gap: 0.35rem; }
 .field-label { font-size: 0.85rem; font-weight: 500; }
 .field-hint { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
-.field input {
+.field input, .form-inline input {
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 9px; padding: 0.6rem 0.7rem;
 }
-.field input:focus { outline: none; border-color: var(--accent-strong); }
+.field input:focus, .form-inline input:focus { outline: none; border-color: var(--accent-strong); }
 .form .btn-primary { margin-top: 0.25rem; }
 .input-affix { display: flex; align-items: center; gap: 0.55rem; }
 .input-affix input { flex: 1 1 auto; }
@@ -335,11 +335,11 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .empty-guide > p:first-child { text-align: center; font-weight: 600; margin-bottom: 1rem; }
 
 /* ── tasks (/tasks, /tasks/new, /tasks/:taskId) ── */
-.field textarea, .field select {
+.field textarea, .field select, .form-inline select {
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 9px; padding: 0.6rem 0.7rem;
 }
-.field textarea:focus, .field select:focus { outline: none; border-color: var(--accent-strong); }
+.field textarea:focus, .field select:focus, .form-inline select:focus { outline: none; border-color: var(--accent-strong); }
 .status-review { color: var(--warn); background: var(--warn-bg); }
 /* Task lifecycle statuses on the browse board. */
 .status-open { color: var(--ok); background: #10241a; }
@@ -420,3 +420,7 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .field-invalid input, .field-invalid textarea, .field-invalid select { border-color: var(--danger); }
 .banner-warn ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
 .banner-warn .link { color: inherit; text-decoration: underline; text-align: left; }
+
+/* Secondary "request a change" block under the pay button: its own quiet
+   section, never an inline cram next to the primary action. */
+.change-request { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); max-width: 640px; display: grid; gap: 0.75rem; }

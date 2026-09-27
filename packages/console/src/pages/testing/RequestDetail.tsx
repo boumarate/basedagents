@@ -144,9 +144,16 @@ export default function TestingRequestDetail() {
                   {busy ? 'Starting secure checkout…' : `Approve scope and pay ${money(quote.subtotal_cents, quote.currency)}`}
                 </button>
               </div>
-              <div className="form-row">
-                <label className="field-label" htmlFor="chg">Or request a change</label>
-                <textarea id="chg" rows={2} maxLength={2000} value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="What should be different about the scope?" />
+              <div className="change-request">
+                <div className="field">
+                  <label className="field-label" htmlFor="chg">Not quite right? Request a change instead</label>
+                  <textarea id="chg" rows={3} maxLength={2000} value={changeNote} onChange={(e) => setChangeNote(e.target.value)}
+                    placeholder="Tell us what should be different about the scope…" />
+                  <p className="field-hint">
+                    Sends the scope back to review — this quote is withdrawn, nothing is charged, and we
+                    follow up with a revised one.
+                  </p>
+                </div>
                 <div className="btn-row">
                   <button className="btn" disabled={busy || !changeNote.trim()} onClick={() => void requestChange()}>Request a change</button>
                 </div>
