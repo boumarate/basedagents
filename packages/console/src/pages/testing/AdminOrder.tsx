@@ -86,9 +86,12 @@ export default function TestingAdminOrder() {
   // A run whose publish operation is queued/running is spoken for — showing
   // its checkbox re-armed right after the ceremony reads as "did nothing
   // happen?" (field report). Semantic keys are `publish:<runId>:a<attempt>`.
+  // Only LIVE operations park a run ("queued"); a manual_review publication
+  // must re-arm its checkbox — re-approving is exactly how the operator
+  // retries it after fixing the cause (enqueue revives the operation).
   const queuedPublishRunIds = new Set(
     view.operations
-      .filter((o) => o.kind === 'publish_task' && o.state !== 'succeeded')
+      .filter((o) => o.kind === 'publish_task' && ['pending', 'processing'].includes(o.state))
       .map((o) => o.semantic_key.split(':')[1])
       .filter(Boolean),
   );

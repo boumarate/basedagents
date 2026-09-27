@@ -9,11 +9,19 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { testingAdmin, type AdminQueue as Queue, type AdminOrderRow } from '../../api/testing.js';
 
-/** "client/transport, client/transport" → env objects; invalid pairs dropped. */
+/**
+ * "client/transport, client/transport" → env objects; invalid pairs dropped.
+ * Split on the FIRST slash only — transports can legally carry URLs or
+ * paths (field-hit: "claude/http://claude.com" stored transport "http:",
+ * which could never match the frozen scope).
+ */
 function parseEnvs(text: string): Array<{ client: string; transport: string }> {
   return text.split(',').map((pair) => {
-    const [client, transport] = pair.split('/').map((s) => s.trim());
-    return { client: client ?? '', transport: transport ?? '' };
+    const trimmed = pair.trim();
+    const i = trimmed.indexOf('/');
+    const client = (i === -1 ? trimmed : trimmed.slice(0, i)).trim();
+    const transport = i === -1 ? '' : trimmed.slice(i + 1).trim();
+    return { client, transport };
   }).filter((e) => e.client && e.transport);
 }
 

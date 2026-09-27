@@ -1068,6 +1068,15 @@ export class TestingStore {
        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       id, input.kind, input.semanticKey, input.orderId ?? null, input.payloadJson, now, now, now,
     );
+    // Re-enqueueing a semantic key whose operation parked in manual_review is
+    // the operator's RETRY (runbook: "fix the cause; re-approve") — revive it
+    // for the next runner pass. Pending/processing/succeeded rows are left
+    // untouched, so idempotency and never-double-spend are preserved.
+    await this.db.run(
+      `UPDATE testing_operations SET state = 'pending', next_attempt_at = ?, last_error = NULL, lease_expires_at = NULL, updated_at = ?
+        WHERE semantic_key = ? AND state = 'manual_review'`,
+      now, now, input.semanticKey,
+    );
     return (await this.getOperationByKey(input.semanticKey))!;
   }
 

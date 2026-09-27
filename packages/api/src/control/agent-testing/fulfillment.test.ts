@@ -454,3 +454,23 @@ describe('evidence intake + review + settlement (spec §11.3, §12, §20.3)', ()
     expect(remaining >= 0n).toBe(true);
   });
 });
+
+describe('durable operations: manual_review revives on re-enqueue (operator retry)', () => {
+  it('re-enqueueing the same semantic key retries a manual_review operation but never resets a succeeded one', async () => {
+    const store = new TestingStore(h.db);
+    const op = await store.enqueueOperation({ kind: 'publish_task', semanticKey: 'publish:trun_revive:a1', payloadJson: '{}' });
+    expect(await store.operationClaim(op.id, h.now())).toBe(true);
+    await store.operationFailed(op.id, 'no eligible workers for this environment', { manual: true });
+    expect((await store.getOperationByKey('publish:trun_revive:a1'))!.state).toBe('manual_review');
+
+    // The operator fixes the cause and re-approves → same semantic key.
+    const revived = await store.enqueueOperation({ kind: 'publish_task', semanticKey: 'publish:trun_revive:a1', payloadJson: '{}' });
+    expect(revived.state).toBe('pending');
+    expect(revived.last_error).toBeNull();
+
+    expect(await store.operationClaim(revived.id, h.now())).toBe(true);
+    await store.operationSucceeded(revived.id, null);
+    const again = await store.enqueueOperation({ kind: 'publish_task', semanticKey: 'publish:trun_revive:a1', payloadJson: '{}' });
+    expect(again.state).toBe('succeeded'); // idempotency: success is never re-run
+  });
+});
