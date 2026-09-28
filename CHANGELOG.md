@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed — publishing waits for green CI; canaries keep one issue (ci)
+
+- **npm and PyPI publishing now runs only after CI passes.** `publish.yml` triggers when CI completes on a push to `main` and does nothing unless CI succeeded; manual dispatch also requires a green CI run on the commit. Before, it ran on the push itself, so `@basedagents/mcp` 0.7.0 was published on 2026-09-28 from a commit whose CI was failing (a stale tool-contract pin; the package itself was fine). A gate job checks which versions are unpublished, so publish jobs only start when there is a bump to ship, and every job publishes exactly the commit CI passed.
+- **The Supabase and Vercel provisioner canaries keep one open issue.** A failure comments on the open issue instead of opening a new one every week, and a passing run closes it.
+
 ## [0.9.0] — 2026-09-28
 
 ### Added — register_agent: MCP-native onboarding (@basedagents/mcp 0.7.0, skill 1.3.1)

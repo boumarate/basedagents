@@ -3,9 +3,11 @@
 # the checked-in manifest is already published and skips when it is, so the
 # workflow is safe to run at any time — it only ever ships a version bump.
 #
-# Runs on every push to main that touches a package manifest (a merged bump
-# PR publishes itself) and on manual dispatch (re-run a failed publish, or
-# publish a bump that landed alongside other changes).
+# Runs after CI finishes on main (a push, or a manual CI re-run), and only when
+# CI passed: a commit whose tests fail never reaches a registry. The gate job checks that, then asks
+# each registry which versions are unpublished, so the publish jobs only run
+# when there is a bump to ship. Manual dispatch (re-run a failed publish) also
+# requires a green CI run on the dispatched commit.
 #
 # One-time setup per registry (documented in GOTCHAS.md → Releasing):
 #   npmjs.com  → each package → Settings → Trusted Publisher → GitHub Actions
@@ -23,16 +25,10 @@
 name: Publish
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - packages/keyring/package.json
-      - packages/sdk/package.json
-      - packages/mcp/package.json
-      - packages/mcp/server.json
-      - packages/python/pyproject.toml
-      - .github/workflows/publish.yml
-      - scripts/publish-if-unpublished.sh
   workflow_dispatch:
 
 concurrency:
@@ -43,8 +39,74 @@ permissions:
   contents: read
 
 jobs:
+  gate:
+    name: CI passed + what to publish
+    # Only a successful CI run on main in this repository: a push, or a manual
+    # re-run of CI after a cancelled or flaky one. Never a pull request,
+    # including one from a fork's branch named main.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch') &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+      keyring: ${{ steps.detect.outputs.keyring }}
+      sdk: ${{ steps.detect.outputs.sdk }}
+      mcp: ${{ steps.detect.outputs.mcp }}
+      registry: ${{ steps.detect.outputs.registry }}
+      python: ${{ steps.detect.outputs.python }}
+    steps:
+      - name: Commit to publish
+        id: sha
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: echo "sha=${RUN_SHA:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - name: CI passed on this commit (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          n=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&branch=main&status=success" \
+            --jq "[.workflow_runs[] | select(.event == \"push\" or .event == \"workflow_dispatch\") | select(.head_repository.full_name == \"${GITHUB_REPOSITORY}\")] | length")
+          if [ "$n" = "0" ]; then echo "::error::CI has not passed on ${SHA}; not publishing"; exit 1; fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+      - name: Which versions are unpublished
+        id: detect
+        run: |
+          set -euo pipefail
+          # true when the checked-in version isn't on the registry yet (a lookup
+          # error also says true: the job re-checks before publishing anything).
+          npm_unpublished() {
+            local name version
+            name=$(jq -r .name "$1/package.json"); version=$(jq -r .version "$1/package.json")
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then echo false; else echo true; fi
+          }
+          {
+            echo "keyring=$(npm_unpublished packages/keyring)"
+            echo "sdk=$(npm_unpublished packages/sdk)"
+            echo "mcp=$(npm_unpublished packages/mcp)"
+            name=$(jq -r .name packages/mcp/server.json); version=$(jq -r .version packages/mcp/server.json)
+            listed=$(curl -sS "https://registry.modelcontextprotocol.io/v0/servers?search=${name}" \
+              | jq -r --arg n "$name" --arg v "$version" '[.servers[] | (.server // .) | select(.name == $n and .version == $v)] | length' || echo 0)
+            echo "registry=$([ "$listed" = "0" ] && echo true || echo false)"
+            pyver=$(python3 -c "import tomllib; print(tomllib.load(open('packages/python/pyproject.toml','rb'))['project']['version'])")
+            echo "python=$(curl -sSf -o /dev/null "https://pypi.org/pypi/basedagents/${pyver}/json" && echo false || echo true)"
+          } | tee -a "$GITHUB_OUTPUT"
+
   keyring:
     name: npm @basedagents/keyring
+    needs: gate
+    if: needs.gate.outputs.keyring == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: publish
@@ -53,6 +115,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -65,7 +129,11 @@ jobs:
 
   sdk:
     name: npm basedagents (sdk + cli)
-    needs: keyring
+    # After keyring when keyring publishes too (the sdk pins it); on its own otherwise.
+    needs: [gate, keyring]
+    if: >-
+      always() && needs.gate.result == 'success' && needs.gate.outputs.sdk == 'true' &&
+      (needs.keyring.result == 'success' || needs.keyring.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: publish
@@ -74,6 +142,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -85,6 +155,8 @@ jobs:
 
   mcp:
     name: npm @basedagents/mcp
+    needs: gate
+    if: needs.gate.outputs.mcp == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: publish
@@ -93,6 +165,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -108,7 +182,10 @@ jobs:
   # retired identity-registry copy while npm moved on.
   mcp-registry:
     name: MCP Registry listing
-    needs: mcp
+    needs: [gate, mcp]
+    if: >-
+      always() && needs.gate.result == 'success' && needs.gate.outputs.registry == 'true' &&
+      (needs.mcp.result == 'success' || needs.mcp.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: publish
@@ -117,6 +194,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
       - name: Skip if this version is already listed
         id: check
         run: |
@@ -146,6 +225,8 @@ jobs:
 
   python:
     name: PyPI basedagents
+    needs: gate
+    if: needs.gate.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: publish
@@ -154,6 +235,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
