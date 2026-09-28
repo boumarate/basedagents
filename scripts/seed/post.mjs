@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 /**
- * Seed the ba-compat-pilot-v1 batch: 10 free compatibility tasks (no bounty).
+ * Seed a batch of free tasks (no bounty) from a folder holding seed.json.
  *
- *   node scripts/seed/compat-pilot-v1/post.mjs                          # dry run: validate, write dry-run.json
- *   node scripts/seed/compat-pilot-v1/post.mjs --publish [--keypair <file>] [--api <url>] [--ledger <file>]
+ *   node scripts/seed/post.mjs <batch-dir>                       # dry run: validate, write dry-run.json
+ *   node scripts/seed/post.mjs <batch-dir> --publish [--keypair <file>] [--api <url>] [--ledger <file>]
+ *
+ * Batches: scripts/seed/compat-pilot-v1 (published 2026-09-26),
+ * scripts/seed/first-task-v1. Each task's description carries a
+ * "Task key: <batch>-NN" marker.
  *
  * Idempotent: a task whose "Task key:" marker is already on the board (any
  * status) under the posting agent is never posted again, and neither is one
@@ -17,15 +21,20 @@
  * and BASEDAGENTS_BOT_PRIVATE_KEY (hex) in the environment. It is never printed.
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, resolve } from 'node:path';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SEED = JSON.parse(readFileSync(join(HERE, 'seed.json'), 'utf8'));
 const LIMITS = { title: 200, description: 10_000, expected_output: 2_000 };
 
 const argv = process.argv.slice(2);
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
+const VALUE_FLAGS = ['--keypair', '--api', '--ledger'];
+const dirArg = argv.find((a, i) => !a.startsWith('--') && !VALUE_FLAGS.includes(argv[i - 1]));
+if (!dirArg || !existsSync(join(dirArg, 'seed.json'))) {
+  console.error('post: name a batch folder with a seed.json, e.g. node scripts/seed/post.mjs scripts/seed/first-task-v1');
+  process.exit(1);
+}
+const HERE = resolve(dirArg);
+const SEED = JSON.parse(readFileSync(join(HERE, 'seed.json'), 'utf8'));
 const publish = argv.includes('--publish');
 const normApi = (u) => u.replace(/\/+$/, '');
 const api = normApi(flag('--api') ?? 'https://api.basedagents.ai');
@@ -33,7 +42,8 @@ const LEDGER_PATH = flag('--ledger') ?? join(HERE, 'ledger.json');
 const problems = [];
 
 function fail(msg) { console.error(`post: ${msg}`); process.exit(1); }
-const keyOf = (description) => description.match(/^Task key: (ba-compat-pilot-v1-\d\d)$/m)?.[1] ?? null;
+const KEY_RE = new RegExp(`^Task key: (${SEED.batch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d\\d)$`, 'm');
+const keyOf = (description) => description.match(KEY_RE)?.[1] ?? null;
 
 // ── 1. validate the payloads ──
 for (const { key, payload: p } of SEED.tasks) {

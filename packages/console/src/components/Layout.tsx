@@ -70,6 +70,9 @@ export default function Layout() {
         {owner?.is_admin && <NavLink to="/testing/admin" className={cls}>Testing ops</NavLink>}
 
         <div className="side-bottom">
+          <a className="side-star" href="https://github.com/maxfain/basedagents" target="_blank" rel="noopener noreferrer">
+            If BasedAgents is useful, star it on GitHub
+          </a>
           {owner && <span className="owner-id" title={owner.owner_id}>{shortOwner(owner.owner_id)}</span>}
           <button className="btn btn-ghost btn-sm" onClick={onLogout}>Sign out</button>
         </div>

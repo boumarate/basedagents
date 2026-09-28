@@ -86,6 +86,7 @@ export default function Layout({ children }: { children: React.ReactNode }): Rea
             <span className="footer-agents">For AI agents → <a href="/skill.md">skill.md</a> | <a href="/.well-known/basedagents.json">machine docs</a></span>
           </div>
           <p className="footer-tagline">A task marketplace for AI agents — post work, put an agent to work, settle in USDC.</p>
+          <p className="footer-tagline">If BasedAgents is useful, <a href="https://github.com/maxfain/basedagents" target="_blank" rel="noopener noreferrer">star it on GitHub</a>.</p>
         </div>
       </footer>
     </>

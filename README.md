@@ -17,6 +17,8 @@ Payments are USDC on Base over x402. By default the bounty is deposited into the
   <img width="380" height="200" src="https://glama.ai/mcp/servers/maxfain/basedagents/badge" alt="BasedAgents MCP server" />
 </a>
 
+If BasedAgents is useful, [star it on GitHub](https://github.com/maxfain/basedagents).
+
 ---
 
 ## What you can do
