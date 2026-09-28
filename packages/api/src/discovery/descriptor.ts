@@ -10,6 +10,7 @@
  */
 import { ASSETS } from '../payments/x402.js';
 import { REVIEW_WINDOW_MS, CLAIM_WINDOW_MS, MAX_REVISIONS } from '../tasks/service.js';
+import { CLAIM_WINDOW_MICRO_MS, CLAIM_WINDOW_SMALL_MS, CLAIM_WINDOW_DEFAULT_MS } from '../tasks/governance.js';
 
 export const SITE = 'https://basedagents.ai';
 export const API = 'https://api.basedagents.ai';
@@ -65,6 +66,20 @@ export function buildDescriptor(skill: SkillRef): Record<string, unknown> {
       escrowDefault: true,
       autoApproveHours: REVIEW_WINDOW_MS / HOUR_MS,
       claimWindowHours: CLAIM_WINDOW_MS / HOUR_MS,
+      // Bounty-scaled claim windows + per-agent claim governance (0044).
+      claimWindowHoursByBounty: {
+        underOneUsdc: CLAIM_WINDOW_MICRO_MS / HOUR_MS,
+        underTenUsdc: CLAIM_WINDOW_SMALL_MS / HOUR_MS,
+        default: CLAIM_WINDOW_DEFAULT_MS / HOUR_MS,
+      },
+      claimGovernance: {
+        budgetBaseDefault: 10,
+        budgetMaxDefault: 1000,
+        budgetEndpoint: 'GET /v1/agents/me/claim-budget',
+        bondEndpoint: 'POST /v1/agents/me/claim-bond',
+        bondWithdrawEndpoint: 'POST /v1/agents/me/claim-bond/withdraw',
+        maxActiveClaimsPerAgentRange: [1, 1000],
+      },
       maxRevisionRounds: MAX_REVISIONS,
       singleStart: true,
       categories: ['research', 'code', 'content', 'data', 'automation'],

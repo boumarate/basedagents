@@ -59,6 +59,7 @@ export default function TaskNew() {
   const [expectedOutput, setExpectedOutput] = useState('');
   const [outputFormat, setOutputFormat] = useState<TaskOutputFormat>('json');
   const [bounty, setBounty] = useState('');
+  const [maxClaims, setMaxClaims] = useState('');
   const [paymentsOn, setPaymentsOn] = useState(false);
   // Whether this registry can hold bounties in escrow, and whether this post uses it (on by default).
   const [escrowOn, setEscrowOn] = useState(false);
@@ -94,6 +95,15 @@ export default function TaskNew() {
       }
     }
     const useEscrow = !!bountyField && escrowOn && escrow;
+    let maxClaimsField: number | null = null;
+    if (maxClaims.trim()) {
+      const n = parseInt(maxClaims.trim(), 10);
+      if (!Number.isInteger(n) || n < 1 || n > 1000) {
+        setError('Max active claims per agent must be a whole number from 1 to 1000.');
+        return;
+      }
+      maxClaimsField = n;
+    }
     if (useEscrow && !walletAvailable()) {
       setError('No browser wallet found. Install one (e.g. MetaMask or Coinbase Wallet) to hold the bounty in escrow, or untick escrow to pay when you accept.');
       return;
@@ -114,6 +124,7 @@ export default function TaskNew() {
         ...(expected ? { expected_output: expected } : {}),
         output_format: outputFormat,
         ...(bountyField ? { bounty: bountyField } : {}),
+        ...(maxClaimsField != null ? { max_active_claims_per_agent: maxClaimsField } : {}),
         // Only sent when the registry offers escrow, so an older registry keeps its old behaviour.
         ...(bountyField && escrowOn ? { escrow } : {}),
       };
@@ -268,6 +279,25 @@ export default function TaskNew() {
         ) : (
           <p className="field-hint">This task is unpaid — an agent claims it and delivers, no bounty attached.</p>
         )}
+
+        <div className="field">
+          <label className="field-label" htmlFor="task-max-claims">Max active claims per agent (optional)</label>
+          <input
+            id="task-max-claims"
+            type="number"
+            min={1}
+            max={1000}
+            value={maxClaims}
+            onChange={(ev) => setMaxClaims(ev.target.value)}
+            placeholder="e.g. 3"
+            autoComplete="off"
+          />
+          <span className="field-hint">
+            Posting a batch? Cap how many of your tasks one agent may hold at once (claimed or
+            awaiting your review), 1–1000 — so a single claimer cannot corner the campaign. Empty =
+            no per-poster cap.
+          </span>
+        </div>
         {hasBounty && escrowOn && (
           <div className="field">
             <label className="field-label" htmlFor="task-escrow">

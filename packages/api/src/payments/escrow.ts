@@ -59,6 +59,8 @@ export interface NewEscrowTask {
   expected_output: string | null;
   output_format: string;
   bounty: { amount: string; token: string; network: string };
+  /** Campaign cap (migration 0044): max claimed+submitted per agent across this poster's tasks. */
+  max_active_claims_per_agent?: number | null;
 }
 
 export type FundTarget =
@@ -192,12 +194,13 @@ export async function fundEscrowTask(db: DBAdapter, env: Bindings, target: FundT
            bounty_amount, bounty_token, bounty_network,
            escrow, escrow_status, escrow_leg, escrow_leg_attempts, escrow_wallet,
            payment_status, payment_signature, payment_requirements, payment_payer, payment_nonce, payment_expires_at, payment_verified,
-           settle_attempts, settle_broadcast, settle_next_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, 1, 'funding', 'deposit', 0, ?, 'authorized', ?, ?, ?, ?, ?, 1, 0, 0, ?)`,
+           settle_attempts, settle_broadcast, settle_next_at, max_active_claims_per_agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, 1, 'funding', 'deposit', 0, ?, 'authorized', ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)`,
         n.task_id, n.creator_agent_id, n.creator_owner_id, n.creator_kind, n.creator_assertion_id, n.proposer_signature,
         n.title, n.description, n.category, n.required_capabilities ? JSON.stringify(n.required_capabilities) : null,
         n.expected_output, n.output_format, now, bounty.amount, bounty.token, bounty.network, house.address,
         encrypted, JSON.stringify(requirements), payer, nonce, expiresAt, now,
+        n.max_active_claims_per_agent ?? null,
       );
     } catch (err) {
       if (/UNIQUE/i.test(String(err))) {

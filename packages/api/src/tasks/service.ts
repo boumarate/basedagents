@@ -23,6 +23,7 @@ import type { PaymentStatus, TaskStatus } from '../types/index.js';
 import { computeChainHash, GENESIS_HASH, sha256, bytesToHex, canonicalJsonStringify } from '../crypto/index.js';
 import { fireWebhook, type WebhookEvent } from '../lib/webhooks.js';
 import { gateWithEvent, recordEvent } from '../events/service.js';
+import { claimBudget, claimWindowMsForBounty } from './governance.js';
 import { computeReputation } from '../reputation/calculator.js';
 import { generatePublicId } from '../lib/ids.js';
 import { atomicToDisplay } from '../payments/x402.js';
@@ -74,6 +75,8 @@ export interface TaskRow {
   auto_release_at: string | null;
   /** Claim-delivery timer: a `claimed` task past this returns to `open` (cron). Cleared on delivery/cancel. */
   claim_expires_at: string | null;
+  /** Campaign cap (migration 0044): max claimed+submitted per agent across this poster's tasks; NULL = uncapped. */
+  max_active_claims_per_agent: number | null;
   settle_attempts: number;
   settle_broadcast: number;
   settle_started_at: string | null;
@@ -466,19 +469,41 @@ export interface GateNotify { recipientAgentId: string | null; event: WebhookEve
  * rows for it), only a listed agent wins the gate — checked inside the same
  * atomic UPDATE so a revoked listing loses the race, not just the pre-read.
  */
-export async function claimGate(db: DBAdapter, taskId: string, agentId: string, acceptorSig: string | null, nowIso: string, notify?: GateNotify): Promise<boolean> {
+export async function claimGate(db: DBAdapter, taskId: string, agentId: string, acceptorSig: string | null, nowIso: string, notify?: GateNotify, env?: unknown): Promise<boolean> {
   const restrictable = await claimAllowlistTablePresent(db);
   const allowlistPredicate = restrictable
     ? ` AND (NOT EXISTS (SELECT 1 FROM task_claim_allowlist w WHERE w.task_id = tasks.task_id)
          OR EXISTS (SELECT 1 FROM task_claim_allowlist w WHERE w.task_id = tasks.task_id AND w.agent_id = ?))`
     : '';
-  const params: unknown[] = [agentId, nowIso, isoPlus(nowIso, CLAIM_WINDOW_MS), acceptorSig, taskId, agentId];
+  // Claim governance (migration 0044): the window scales with the bounty (a
+  // $0.10 task is not lockable for a week), the agent's GLOBAL budget bounds
+  // how many 'claimed' tasks they hold at once, and the poster's per-campaign
+  // cap bounds claimed+submitted across THIS creator's tasks. The counts run
+  // inside this single UPDATE, so racing claims cannot both squeeze under a
+  // cap. The budget VALUE is read just before — a stale read only ever errs
+  // by the one in-flight reputational event, never by concurrent claims.
+  const task = await db.get<{ bounty_amount: string | null }>(
+    'SELECT bounty_amount FROM tasks WHERE task_id = ?', taskId,
+  );
+  const budget = (await claimBudget(db, env, agentId)).budget;
+  const budgetPredicate =
+    ` AND (SELECT COUNT(*) FROM tasks b WHERE b.claimed_by_agent_id = ? AND b.status = 'claimed') < ?`;
+  const campaignPredicate =
+    ` AND (tasks.max_active_claims_per_agent IS NULL OR (
+         SELECT COUNT(*) FROM tasks p WHERE p.claimed_by_agent_id = ?
+           AND p.status IN ('claimed','submitted')
+           AND ((tasks.creator_agent_id IS NOT NULL AND p.creator_agent_id = tasks.creator_agent_id)
+             OR (tasks.creator_owner_id IS NOT NULL AND p.creator_owner_id = tasks.creator_owner_id))
+       ) < tasks.max_active_claims_per_agent)`;
+  const expiresAt = isoPlus(nowIso, claimWindowMsForBounty(task?.bounty_amount ?? null));
+  const params: unknown[] = [agentId, nowIso, expiresAt, acceptorSig, taskId, agentId];
   if (restrictable) params.push(agentId);
+  params.push(agentId, budget, agentId);
   return gateWithEvent(db, {
     sql: `UPDATE tasks SET claimed_by_agent_id = ?, status = 'claimed', claimed_at = ?, claim_expires_at = ?, acceptor_signature = ?
      WHERE task_id = ? AND status = 'open' AND claimed_by_agent_id IS NULL
        AND (creator_agent_id IS NULL OR creator_agent_id <> ?)
-       AND (escrow = 0 OR escrow_status = 'funded')${allowlistPredicate}`,
+       AND (escrow = 0 OR escrow_status = 'funded')${allowlistPredicate}${budgetPredicate}${campaignPredicate}`,
     params,
   }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
 }

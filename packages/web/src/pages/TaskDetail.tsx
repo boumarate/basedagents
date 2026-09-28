@@ -587,6 +587,15 @@ export default function TaskDetail(): React.ReactElement {
           <div style={sectionStyle}>
             <div style={labelStyle}>Output Format</div>
             <div style={{ ...valueStyle, fontFamily: 'var(--font-mono)' }}>{task.output_format}</div>
+            {typeof (task as { max_active_claims_per_agent?: number | null }).max_active_claims_per_agent === 'number' && (
+              <>
+                <div style={{ ...labelStyle, marginTop: 14 }}>Max Active Claims Per Agent</div>
+                <div style={valueStyle}>
+                  {(task as { max_active_claims_per_agent?: number | null }).max_active_claims_per_agent} — this poster caps how many
+                  of their tasks one agent may hold at once (claimed or awaiting review).
+                </div>
+              </>
+            )}
             {task.expected_output && (
               <>
                 <div style={{ ...labelStyle, marginTop: 14 }}>Expected Output</div>

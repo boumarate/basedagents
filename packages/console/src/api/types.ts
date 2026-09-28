@@ -307,6 +307,8 @@ export interface CreateTaskInput {
   output_format?: TaskOutputFormat;
   bounty?: { amount: string; token?: 'USDC'; network?: string };
   escrow?: boolean;
+  /** Campaign cap: max claimed+submitted tasks one agent may hold across your tasks (1–1000). */
+  max_active_claims_per_agent?: number;
 }
 
 /**

@@ -47,6 +47,7 @@ import funnelRoutes, { VOTABLE_PROVIDERS } from './routes/funnel.js';
 import feedbackRoutes from './routes/feedback.js';
 import adminRoutes from './control/admin.js';
 import { runTaskCron } from './cron/tasks.js';
+import claimBondRoutes from './routes/claim-bond.js';
 import { paymentsDisabledReason } from './payments/index.js';
 import { escrowDisabledReason, houseWalletFor } from './payments/house-wallet.js';
 import { ASSETS, MAX_TIMEOUT_SECONDS } from './payments/x402.js';
@@ -521,6 +522,8 @@ app.get('/v1/status', async (c) => {
 
 // ─── API Routes ───
 app.route('/v1/register', registerRoutes);
+// Claim governance (me/*) must register before any /:id agent route.
+app.route('/v1/agents', claimBondRoutes);
 app.route('/v1/agents', agentRoutes);
 app.route('/v1/verify', verifyRoutes);
 app.route('/v1/chain', chainRoutes);

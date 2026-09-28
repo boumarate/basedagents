@@ -144,6 +144,12 @@ export const CreateTaskSchema = z.object({
    * when accepting). Ignored without a `bounty`.
    */
   escrow: z.boolean().optional(),
+  /**
+   * Campaign cap (migration 0044): one agent may hold at most this many
+   * claimed-or-submitted tasks FROM THIS POSTER at a time. Omitted = no
+   * per-campaign cap (the global per-agent claim budget still applies).
+   */
+  max_active_claims_per_agent: z.number().int().min(1).max(1000).optional(),
 });
 
 export const SubmitDeliverableSchema = z.object({

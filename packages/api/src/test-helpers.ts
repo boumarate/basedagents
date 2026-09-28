@@ -25,6 +25,7 @@ import eventRoutes from './routes/events.js';
 import boardRoutes from './routes/board.js';
 import feedRoutes from './routes/feed.js';
 import taskRoutes from './routes/tasks.js';
+import claimBondRoutes from './routes/claim-bond.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -117,6 +118,13 @@ CREATE TABLE IF NOT EXISTS api_usage_daily (day TEXT NOT NULL, agent_id TEXT NOT
 CREATE TABLE IF NOT EXISTS idempotency_keys (scope TEXT NOT NULL, idem_key TEXT NOT NULL, request_hash TEXT NOT NULL, status INTEGER NOT NULL, response TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scope, idem_key));
 CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
 CREATE TABLE IF NOT EXISTS job_runs (job TEXT NOT NULL, run_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','failed')), attempts INTEGER NOT NULL DEFAULT 1, ran_at TEXT NOT NULL, PRIMARY KEY (job, run_key));
+ALTER TABLE tasks ADD COLUMN max_active_claims_per_agent INTEGER;
+CREATE TABLE IF NOT EXISTS agent_claim_bonds (agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE, balance_atomic TEXT NOT NULL DEFAULT '0', total_deposited_atomic TEXT NOT NULL DEFAULT '0', total_slashed_atomic TEXT NOT NULL DEFAULT '0', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_claim_bond_events (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('deposit','slash','withdraw','withdraw_reverted')), amount_atomic TEXT NOT NULL, ref TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_bond_events_agent ON agent_claim_bond_events(agent_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS agent_claim_bond_withdrawals (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, amount_atomic TEXT NOT NULL, to_address TEXT NOT NULL, to_network TEXT NOT NULL, nonce TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','settled','refunded','failed')), attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, tx_hash TEXT, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_bond_withdrawals_due ON agent_claim_bond_withdrawals(state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_claimer_status ON tasks(claimed_by_agent_id, status);
 `.trim();
 
 /**
@@ -306,6 +314,7 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
   });
 
   app.route('/v1/register', registerRoutes);
+  app.route('/v1/agents', claimBondRoutes);
   app.route('/v1/agents', agentRoutes);
   app.route('/v1/verify', verifyRoutes);
   app.route('/v1/agents', messageRoutes);

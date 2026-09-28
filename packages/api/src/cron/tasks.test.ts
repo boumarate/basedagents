@@ -46,6 +46,7 @@ const CREATOR_HOOK = 'https://creator.example.com/hook';
 
 const EMPTY_SUMMARY: TaskCronSummary = {
   auto_accepted: 0, claims_expired: 0, settle_attempted: 0, settled: 0, expired: 0, recovered: 0, capped: 0, settle_skipped_reason: null,
+  bonds_slashed: 0, bond_withdrawals_settled: 0, bond_withdrawals_refunded: 0,
   escrow_swept: 0, escrow_stuck: 0,
 };
 
@@ -733,7 +734,7 @@ describe('cron/tasks.ts runTaskCron', () => {
 
       const summary = await runTaskCron(db, env, NOW);
 
-      expect(summary).toEqual({ auto_accepted: 1, claims_expired: 0, settle_attempted: 1, settled: 1, expired: 1, recovered: 1, capped: 1, settle_skipped_reason: null, escrow_swept: 0, escrow_stuck: 0 });
+      expect(summary).toEqual({ auto_accepted: 1, claims_expired: 0, settle_attempted: 1, settled: 1, expired: 1, recovered: 1, capped: 1, settle_skipped_reason: null, escrow_swept: 0, escrow_stuck: 0, bonds_slashed: 0, bond_withdrawals_settled: 0, bond_withdrawals_refunded: 0 });
       expect((await row(acceptId)).status).toBe('verified');
       expect((await row(settleId)).payment_status).toBe('settled');
       expect((await row(sweepId)).payment_status).toBe('expired');

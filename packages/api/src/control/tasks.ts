@@ -197,6 +197,7 @@ app.post('/tasks', ownerSession, async (c) => {
         proposer_signature: null, title: parsed.data.title, description: parsed.data.description, category: parsed.data.category ?? null,
         required_capabilities: parsed.data.required_capabilities ?? null, expected_output: parsed.data.expected_output ?? null,
         output_format: parsed.data.output_format, bounty: { amount: b.amount, token: b.token, network: b.network },
+        max_active_claims_per_agent: parsed.data.max_active_claims_per_agent ?? null,
       },
     }, { rawHeader: null, nowIso: new Date().toISOString(), actor: { kind: 'owner', ownerId } });
     for (const [k, v] of Object.entries(challenge.headers ?? {})) c.header(k, v);
@@ -250,6 +251,7 @@ app.post('/tasks', ownerSession, async (c) => {
         proposer_signature: null, title: fields.title, description: fields.description, category: fields.category ?? null,
         required_capabilities: reqCaps, expected_output: fields.expected_output ?? null, output_format: fields.output_format,
         bounty: { amount: bounty.amount, token: bounty.token, network: bounty.network },
+        max_active_claims_per_agent: fields.max_active_claims_per_agent ?? null,
       },
     }, { rawHeader, nowIso: now, actor: { kind: 'owner', ownerId } });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
@@ -259,11 +261,13 @@ app.post('/tasks', ownerSession, async (c) => {
   const paymentStatus = bounty ? 'pending' : 'none';
   await db.run(
     `INSERT INTO tasks (task_id, creator_agent_id, creator_owner_id, creator_kind, creator_assertion_id, title, description, category,
-       required_capabilities, expected_output, output_format, status, created_at, bounty_amount, bounty_token, bounty_network, payment_status)
-     VALUES (?, NULL, ?, 'owner', ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
+       required_capabilities, expected_output, output_format, status, created_at, bounty_amount, bounty_token, bounty_network, payment_status,
+       max_active_claims_per_agent)
+     VALUES (?, NULL, ?, 'owner', ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
     taskId, ownerId, cer.assertionId, fields.title, fields.description, fields.category ?? null,
     reqCaps ? JSON.stringify(reqCaps) : null, fields.expected_output ?? null, fields.output_format, now,
     bounty?.amount ?? null, bounty?.token ?? null, bounty?.network ?? null, paymentStatus,
+    fields.max_active_claims_per_agent ?? null,
   );
   if (bounty) {
     await logPaymentEvent(db, taskId, 'bounty_declared', { amount_atomic: bounty.amount, token: bounty.token, network: bounty.network }, now);

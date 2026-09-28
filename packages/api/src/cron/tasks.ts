@@ -29,6 +29,8 @@ import {
   bountyView, notifyMatchingAgents,
 } from '../tasks/service.js';
 import { recordEvent, drainOutbox } from '../events/service.js';
+import { slashBondForExpiredClaim } from '../tasks/governance.js';
+import { settleDueBondWithdrawals } from '../tasks/bonds.js';
 
 export interface TaskCronSummary {
   auto_accepted: number;
@@ -39,6 +41,10 @@ export interface TaskCronSummary {
   recovered: number;
   capped: number;
   settle_skipped_reason: string | null;
+  /** Claim-bond governance: expired-claim slashes and withdrawal payouts this tick. */
+  bonds_slashed: number;
+  bond_withdrawals_settled: number;
+  bond_withdrawals_refunded: number;
   /** Escrow sweep: payout legs (re-)started this tick, and funded tasks that gave up (manual). */
   escrow_swept: number;
   escrow_stuck: number;
@@ -49,6 +55,7 @@ const BATCH = 50;
 export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string = new Date().toISOString()): Promise<TaskCronSummary> {
   const summary: TaskCronSummary = {
     auto_accepted: 0, claims_expired: 0, settle_attempted: 0, settled: 0, expired: 0, recovered: 0, capped: 0, settle_skipped_reason: null,
+    bonds_slashed: 0, bond_withdrawals_settled: 0, bond_withdrawals_refunded: 0,
     escrow_swept: 0, escrow_stuck: 0,
   };
 
@@ -97,6 +104,14 @@ export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string =
       if (!(await claimExpiryGate(db, task_id, nowIso))) continue;
       summary.claims_expired++;
       if (exClaimer) await recordEvent(db, exClaimer, { type: 'task.claim_expired', agent_id: exClaimer, task_id }, nowIso);
+      // Sitting on a claim until it expires is the one abuse a bond exists
+      // to price: slash it (no-op without a bond).
+      if (exClaimer) {
+        try {
+          const slashed = await slashBondForExpiredClaim(db, env, exClaimer, task_id, nowIso);
+          if (slashed !== '0') summary.bonds_slashed++;
+        } catch { /* the reopen must never fail on ledger trouble */ }
+      }
       if (task) {
         let reqCaps: string[] | null = null;
         try { reqCaps = task.required_capabilities ? JSON.parse(task.required_capabilities) as string[] : null; } catch { reqCaps = null; }
@@ -207,6 +222,13 @@ export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string =
   } catch (err) {
     console.error('[cron] outbox drain failed:', err);
   }
+
+  // Bond withdrawal payouts (durable rows; terminal failures re-credit).
+  try {
+    const w = await settleDueBondWithdrawals(db, env, nowIso);
+    summary.bond_withdrawals_settled = w.settled;
+    summary.bond_withdrawals_refunded = w.refunded;
+  } catch { /* payouts retry next tick */ }
 
   return summary;
 }

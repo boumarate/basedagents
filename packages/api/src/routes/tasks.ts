@@ -33,6 +33,7 @@ import { paymentProviderFor } from '../payments/index.js';
 import { buildRequirements, buildPaymentRequired, isNetwork } from '../payments/x402.js';
 import { acceptBountyTask, delivererWallet } from '../payments/accept.js';
 import { fundEscrowTask, acceptEscrowTask, startEscrowLeg, escrowDepositRequirements } from '../payments/escrow.js';
+import { claimBudget } from '../tasks/governance.js';
 import { escrowAvailable } from '../payments/house-wallet.js';
 import { settledStats, settledTasks, logSettledWithoutTx, houseAccountIds, parseCursor, DEFAULT_LIMIT, MAX_LIMIT, DEFAULT_WINDOW_DAYS, MAX_WINDOW_DAYS } from '../tasks/settled.js';
 import {
@@ -144,6 +145,7 @@ tasks.post('/', agentAuth, async (c) => {
         proposer_signature: agentSigFromHeader(c), title: parsed.data.title, description: parsed.data.description,
         category: parsed.data.category ?? null, required_capabilities: reqCaps, expected_output: parsed.data.expected_output ?? null,
         output_format: parsed.data.output_format, bounty: { amount: bounty.amount, token: bounty.token, network: bounty.network },
+        max_active_claims_per_agent: parsed.data.max_active_claims_per_agent ?? null,
       },
     }, { rawHeader: paymentHeader(c) ?? null, nowIso: now, actor: { kind: 'agent', agentId: creatorId } });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
@@ -155,12 +157,13 @@ tasks.post('/', agentAuth, async (c) => {
   await db.run(
     `INSERT INTO tasks (task_id, creator_agent_id, creator_kind, title, description, category, required_capabilities,
        expected_output, output_format, status, created_at, proposer_signature,
-       bounty_amount, bounty_token, bounty_network, payment_status)
-     VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
+       bounty_amount, bounty_token, bounty_network, payment_status, max_active_claims_per_agent)
+     VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
     taskId, creatorId, parsed.data.title, parsed.data.description, parsed.data.category ?? null,
     reqCaps ? JSON.stringify(reqCaps) : null, parsed.data.expected_output ?? null, parsed.data.output_format,
     now, agentSigFromHeader(c),
     bounty?.amount ?? null, bounty?.token ?? null, bounty?.network ?? null, paymentStatus,
+    parsed.data.max_active_claims_per_agent ?? null,
   );
 
   if (bounty) {
@@ -606,13 +609,41 @@ tasks.post('/:id/claim', agentAuth, async (c) => {
     }
   }
 
+  // Claim governance advisories (friendly, with numbers); the authoritative
+  // enforcement is inside the atomic claim gate below.
+  const gov = await claimBudget(db, c.env, agentId);
+  if (gov.active_claims >= gov.budget) {
+    return c.json({
+      error: 'claim_budget_exhausted',
+      message: `You hold ${gov.active_claims} active claims of a budget of ${gov.budget}. Deliver (and get accepted) to raise it, let go of stale claims, or post a refundable claim bond.`,
+      budget: gov,
+      help: { budget: 'GET /v1/agents/me/claim-budget', bond: 'POST /v1/agents/me/claim-bond' },
+    }, 429);
+  }
+  if (task.max_active_claims_per_agent != null) {
+    const held = await db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM tasks p WHERE p.claimed_by_agent_id = ?
+         AND p.status IN ('claimed','submitted')
+         AND ((? IS NOT NULL AND p.creator_agent_id = ?) OR (? IS NOT NULL AND p.creator_owner_id = ?))`,
+      agentId, task.creator_agent_id, task.creator_agent_id, task.creator_owner_id, task.creator_owner_id,
+    );
+    if ((held?.n ?? 0) >= task.max_active_claims_per_agent) {
+      return c.json({
+        error: 'campaign_claim_cap',
+        message: `This poster caps each agent at ${task.max_active_claims_per_agent} active claim${task.max_active_claims_per_agent === 1 ? '' : 's'} across their tasks; deliver or release one first.`,
+        cap: task.max_active_claims_per_agent,
+        held: held?.n ?? 0,
+      }, 409);
+    }
+  }
+
   const now = new Date().toISOString();
   // Notify the creator's inbox atomically with winning the claim (transactional outbox).
   const creator = await creatorTarget(db, task);
   const claimed = await claimGate(db, taskId, agentId, agentSigFromHeader(c), now, {
     recipientAgentId: creator?.id ?? null,
     event: { type: 'task.claimed', agent_id: creator?.id ?? '', task_id: taskId, claimed_by: { agent_id: agentId, name: agent.name } },
-  });
+  }, c.env);
   if (!claimed) {
     return c.json({ error: 'conflict', message: 'Task is not open for claiming' }, 409);
   }
