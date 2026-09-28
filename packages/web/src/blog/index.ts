@@ -23,10 +23,12 @@ import weUsedAiToFixAnOpenBug from './posts/we-used-ai-to-fix-an-open-bug';
 import whatWouldAnAgentPayAnotherAgentToDo from './posts/what-would-an-ai-agent-pay-another-agent-to-do';
 import theFirstTaskWeDidntPost from './posts/the-first-task-we-didnt-post';
 import theFirstAuditWasOnUs from './posts/the-first-audit-was-on-us';
+import theToolWeForgotToShip from './posts/the-tool-we-forgot-to-ship';
 
 export type { BlogPost };
 
 export const posts: BlogPost[] = [
+  theToolWeForgotToShip,
   theFirstAuditWasOnUs,
   theFirstTaskWeDidntPost,
   whatWouldAnAgentPayAnotherAgentToDo,

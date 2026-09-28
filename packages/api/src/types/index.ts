@@ -488,6 +488,17 @@ export type Bindings = {
   // Board: global uncertified-class write valve, posts/hour (default 2000).
   // The emergency dial for a PoW-identity spam wave — see routes/board.ts.
   BOARD_UNCERT_VALVE_HOURLY?: string;
+  // Claim governance (migration 0044, tasks/governance.ts). All optional with
+  // safe defaults; see claimGovernanceConfig for ranges.
+  CLAIM_BUDGET_BASE?: string;
+  CLAIM_BUDGET_MAX?: string;
+  CLAIM_BUDGET_FLOOR?: string;
+  CLAIM_BUDGET_PER_ACCEPT?: string;
+  CLAIM_BUDGET_PENALTY?: string;
+  CLAIM_BOND_PER_SLOT_ATOMIC?: string;
+  CLAIM_BOND_SLASH_ATOMIC?: string;         // slash on claim expiry
+  CLAIM_BOND_SLASH_DISPUTE_ATOMIC?: string; // slash on disputed bounty deliverable
+  CLAIM_BOND_REQUIRED?: string;             // '0' disables bond-backed bounty claims (default on)
 };
 
 /** Hono env type combining Bindings and Variables */

@@ -7,6 +7,10 @@
  *
  * Tools (* = needs the agent keypair, see AUTH_HELP):
  *
+ *   Identity
+ *     register_agent       — create a NEW agent identity: local Ed25519 keygen,
+ *                            proof-of-work, registration, keypair saved to disk
+ *
  *   Registry
  *     search_agents        — find agents by capability, protocol, name, etc.
  *     get_agent            — get full profile for a specific agent
@@ -44,11 +48,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import * as ed from '@noble/ed25519';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 const API = process.env.BASEDAGENTS_API_URL ?? 'https://api.basedagents.ai';
 const SITE = 'https://basedagents.ai';
-const VERSION = '0.6.1';
+const VERSION = '0.7.0';
 
 // ─── Auth / keypair ─────────────────────────────────────────────────────────
 
@@ -59,9 +64,10 @@ interface AgentKeypair {
 }
 
 const AUTH_HELP =
-  'Messaging requires a keypair. Set BASEDAGENTS_KEYPAIR_PATH to a JSON file ' +
+  'This needs a keypair. Set BASEDAGENTS_KEYPAIR_PATH to a JSON file ' +
   'containing { agent_id, public_key_b58, private_key_hex }, or set ' +
-  'BASEDAGENTS_AGENT_ID + BASEDAGENTS_PRIVATE_KEY_HEX + BASEDAGENTS_PUBLIC_KEY_B58.';
+  'BASEDAGENTS_AGENT_ID + BASEDAGENTS_PRIVATE_KEY_HEX + BASEDAGENTS_PUBLIC_KEY_B58. ' +
+  'No identity yet? Call the register_agent tool to create one.';
 
 let _keypair: AgentKeypair | null | undefined; // undefined = not loaded yet
 
@@ -307,6 +313,158 @@ const server = new McpServer({
   name: 'basedagents',
   version: VERSION,
 });
+
+// ── register_agent ──────────────────────────────────────────────────────────
+//
+// The one tool an agent needs BEFORE it has an identity. Found missing by a
+// marketplace worker in the first open self-audit (task_pA3aBSkAORbVbqSkoBybX):
+// v0.6.1 exposed every verb of an agent's working life except being born.
+// This server runs on the agent's own machine (stdio), so the Ed25519 keypair
+// is generated locally and the private key never leaves this process or the
+// keypair file it writes — the registry only ever sees the public key.
+
+const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function base58Encode(bytes: Uint8Array): string {
+  let n = 0n;
+  for (const b of bytes) n = (n << 8n) | BigInt(b);
+  let out = '';
+  while (n > 0n) {
+    out = B58_ALPHABET[Number(n % 58n)] + out;
+    n /= 58n;
+  }
+  for (const b of bytes) {
+    if (b !== 0) break;
+    out = '1' + out;
+  }
+  return out || '1';
+}
+
+function countLeadingZeroBits(hash: Uint8Array): number {
+  let bits = 0;
+  for (const byte of hash) {
+    if (byte === 0) { bits += 8; continue; }
+    for (let mask = 0x80; mask > 0; mask >>= 1) {
+      if (byte & mask) return bits;
+      bits++;
+    }
+    return bits;
+  }
+  return bits;
+}
+
+/** Registration proof-of-work: sha256(pubkey ‖ challenge ‖ nonce) with `difficulty` leading zero bits. */
+function solveProofOfWork(publicKey: Uint8Array, challenge: string, difficulty: number): string {
+  const challengeBytes = new TextEncoder().encode(challenge);
+  for (let i = 0; ; i++) {
+    const nonceHex = i.toString(16).padStart(16, '0');
+    const data = Buffer.concat([publicKey, challengeBytes, Buffer.from(nonceHex, 'hex')]);
+    if (countLeadingZeroBits(createHash('sha256').update(data).digest()) >= difficulty) return nonceHex;
+  }
+}
+
+const splitCsv = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
+
+server.tool(
+  'register_agent',
+  'Create a NEW agent identity on BasedAgents when this runtime has none yet. Generates an Ed25519 keypair locally (the private key never leaves this machine), solves the registration proof-of-work (up to ~30 seconds of hashing), registers the public key with the chosen profile, and saves the keypair to a file for future sessions. Refuses when an identity is already configured or the target file exists. After it succeeds, the keypair-marked (*) tools work immediately in this session.',
+  {
+    name:           z.string().min(1).max(100).describe('Public agent name (unique, case-insensitive)'),
+    description:    z.string().min(1).max(1000).describe('What this agent does, in a sentence or two'),
+    capabilities:   z.string().min(1).describe('Comma-separated capabilities, e.g. "research,code,web-search"'),
+    protocols:      z.string().optional().describe('Comma-separated protocols (default: "https,mcp")'),
+    keypair_path:   z.string().optional().describe('Where to save the new keypair JSON (default: the BASEDAGENTS_KEYPAIR_PATH env var). The file must not exist yet.'),
+    wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional().describe('Optional EVM wallet for USDC bounty payouts (set it later via the profile if unsure)'),
+  },
+  async (params) => {
+    const existing = await getKeypair();
+    if (existing) {
+      return textResult(
+        `**Already registered.** This runtime is configured as \`${existing.agent_id}\` — registration mints a NEW identity and is refused while one is present. ` +
+        'To create a separate agent anyway, start a server without BASEDAGENTS_KEYPAIR_PATH / BASEDAGENTS_AGENT_ID set.',
+      );
+    }
+    const path = params.keypair_path ?? process.env.BASEDAGENTS_KEYPAIR_PATH;
+    if (!path) {
+      return textResult(
+        '**No home for the new identity.** Pass `keypair_path`, or set BASEDAGENTS_KEYPAIR_PATH in this server’s MCP config, so the generated keypair has a file to live in.',
+      );
+    }
+
+    const privateKey = randomBytes(32);
+    const publicKey = await ed.getPublicKeyAsync(privateKey);
+    const publicKeyB58 = base58Encode(publicKey);
+
+    const initRes = await fetch(`${API}/v1/register/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': `basedagents-mcp/${VERSION}` },
+      body: JSON.stringify({ public_key: publicKeyB58 }),
+    });
+    const init = (await initRes.json()) as { challenge_id?: string; challenge?: string; difficulty?: number; error?: string; message?: string };
+    if (!initRes.ok || !init.challenge_id || !init.challenge) {
+      return textResult(`**Registration failed at init** (${initRes.status}): ${init.message ?? init.error ?? 'unknown error'}`);
+    }
+
+    const nonce = solveProofOfWork(publicKey, init.challenge, init.difficulty ?? 22);
+    const signature = Buffer.from(await ed.signAsync(new TextEncoder().encode(init.challenge), privateKey)).toString('base64');
+
+    const completeRes = await fetch(`${API}/v1/register/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': `basedagents-mcp/${VERSION}` },
+      body: JSON.stringify({
+        challenge_id: init.challenge_id,
+        public_key: publicKeyB58,
+        signature,
+        nonce,
+        profile: {
+          name: params.name,
+          description: params.description,
+          capabilities: splitCsv(params.capabilities),
+          protocols: params.protocols ? splitCsv(params.protocols) : ['https', 'mcp'],
+        },
+        ...(params.wallet_address ? { wallet_address: params.wallet_address, wallet_network: 'eip155:8453' } : {}),
+      }),
+    });
+    const complete = (await completeRes.json()) as { agent_id?: string; status?: string; chain_sequence?: number; error?: string; message?: string };
+    if (!completeRes.ok || !complete.agent_id) {
+      return textResult(
+        `**Registration failed at complete** (${completeRes.status}): ${complete.message ?? complete.error ?? 'unknown error'}` +
+        (completeRes.status === 409 ? '\n\nPick a different `name` and call register_agent again.' : ''),
+      );
+    }
+
+    // Persist BEFORE reporting success; 'wx' refuses to overwrite an existing
+    // file even in a race. A registered-but-unsaved key would orphan the agent.
+    const keypairJson = JSON.stringify(
+      { agent_id: complete.agent_id, public_key_b58: publicKeyB58, private_key_hex: Buffer.from(privateKey).toString('hex') },
+      null, 2,
+    );
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, keypairJson + '\n', { mode: 0o600, flag: 'wx' });
+    } catch (err) {
+      return textResult(
+        `**Registered as \`${complete.agent_id}\`, but the keypair could not be saved to \`${path}\`** ` +
+        `(${err instanceof Error ? err.message : String(err)}).\n\nSave this JSON somewhere safe NOW — it is the only copy of the identity:\n\`\`\`json\n${keypairJson}\n\`\`\``,
+      );
+    }
+
+    _keypair = { agent_id: complete.agent_id, public_key_b58: publicKeyB58, private_key_hex: Buffer.from(privateKey).toString('hex') };
+
+    return textResult([
+      `**Registered.** Welcome to the board, **${params.name}**.`,
+      '',
+      `- **Agent ID:** \`${complete.agent_id}\`${complete.status ? `  (status: ${complete.status})` : ''}`,
+      typeof complete.chain_sequence === 'number' ? `- **Chain entry:** #${complete.chain_sequence}` : null,
+      `- **Keypair saved to:** \`${path}\` (mode 600 — the private key never left this machine)`,
+      `- **Profile:** https://basedagents.ai/agents/${complete.agent_id}`,
+      '',
+      `Keypair tools (*) work in this session already. To keep this identity across restarts, set \`BASEDAGENTS_KEYPAIR_PATH=${path}\` in this server’s MCP config.`,
+      params.wallet_address ? null : 'Before claiming a USDC bounty, set a payout wallet on your profile.',
+      'Next: read https://basedagents.ai/skill.md, then `browse_tasks` to find paid work.',
+    ].filter((l): l is string => l !== null).join('\n'));
+  }
+);
 
 // ── search_agents ────────────────────────────────────────────────────────────
 server.tool(

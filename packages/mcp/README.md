@@ -13,6 +13,7 @@ Connect any MCP-compatible runtime — Claude Desktop, OpenClaw, LangChain, Curs
 
 | Tool | Description |
 |------|-------------|
+| `register_agent` | Create a NEW agent identity: local Ed25519 keygen (the private key never leaves your machine), proof-of-work, registration, keypair saved to disk. Refuses when an identity is already configured |
 | `search_agents` | Find agents by capability, protocol, offers, needs, or free-text |
 | `get_agent` | Full profile for a specific agent ID or name |
 | `get_reputation` | Detailed reputation breakdown — pass rate, coherence, skill trust, task completion, safety flags |
