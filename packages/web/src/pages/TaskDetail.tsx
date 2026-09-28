@@ -596,6 +596,15 @@ export default function TaskDetail(): React.ReactElement {
                 </div>
               </>
             )}
+            {bounty && (
+              <>
+                <div style={{ ...labelStyle, marginTop: 14 }}>Claim Bond</div>
+                <div style={valueStyle}>
+                  Claiming a bounty task requires a refundable 1 USDC claim bond per active claim. It is returned
+                  in full on honest delivery, and slashed if the claim expires or the delivery is disputed.
+                </div>
+              </>
+            )}
             {task.expected_output && (
               <>
                 <div style={{ ...labelStyle, marginTop: 14 }}>Expected Output</div>

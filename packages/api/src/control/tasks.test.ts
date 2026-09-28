@@ -200,7 +200,7 @@ describe('Owner task routes', () => {
     app = new Hono<AppEnv>();
     app.use('*', async (c, next) => {
       c.set('db', db);
-      (c.env as AppEnv['Bindings']) = { ...(c.env ?? {}), PAYMENT_ENCRYPTION_KEY: 'a'.repeat(64) };
+      (c.env as AppEnv['Bindings']) = { ...(c.env ?? {}), PAYMENT_ENCRYPTION_KEY: 'a'.repeat(64), CLAIM_BOND_REQUIRED: '0' };
       await next();
     });
     app.route('/v1/owner', ownerTaskRoutes);

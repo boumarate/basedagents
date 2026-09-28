@@ -23,7 +23,7 @@ import type { PaymentStatus, TaskStatus } from '../types/index.js';
 import { computeChainHash, GENESIS_HASH, sha256, bytesToHex, canonicalJsonStringify } from '../crypto/index.js';
 import { fireWebhook, type WebhookEvent } from '../lib/webhooks.js';
 import { gateWithEvent, recordEvent } from '../events/service.js';
-import { claimBudget, claimWindowMsForBounty } from './governance.js';
+import { claimBudget, claimGovernanceConfig, claimWindowMsForBounty } from './governance.js';
 import { computeReputation } from '../reputation/calculator.js';
 import { generatePublicId } from '../lib/ids.js';
 import { atomicToDisplay } from '../payments/x402.js';
@@ -495,15 +495,29 @@ export async function claimGate(db: DBAdapter, taskId: string, agentId: string, 
            AND ((tasks.creator_agent_id IS NOT NULL AND p.creator_agent_id = tasks.creator_agent_id)
              OR (tasks.creator_owner_id IS NOT NULL AND p.creator_owner_id = tasks.creator_owner_id))
        ) < tasks.max_active_claims_per_agent)`;
+  // Capital at risk for BOUNTY claims: one bonded bondPerSlotAtomic backs one
+  // concurrent bounty claim, occupied through claimed AND submitted (so a
+  // junk-submit does not free the slot — only acceptance or resolution does).
+  // Applied only when THIS task pays a bounty; free tasks stay bond-free.
+  // Counted inside the same atomic UPDATE for the same race-safety reasons.
+  const cfg = claimGovernanceConfig(env);
+  const targetHasBounty = !!task?.bounty_amount && /^[0-9]{1,15}$/.test(task.bounty_amount) && Number(task.bounty_amount) > 0;
+  const bondPredicate = cfg.bondRequiredForBounty && targetHasBounty
+    ? ` AND ((SELECT COUNT(*) FROM tasks bb WHERE bb.claimed_by_agent_id = ?
+           AND bb.status IN ('claimed','submitted')
+           AND bb.bounty_amount IS NOT NULL AND CAST(bb.bounty_amount AS INTEGER) > 0)
+         < (CAST(COALESCE((SELECT balance_atomic FROM agent_claim_bonds WHERE agent_id = ?), '0') AS INTEGER) / CAST(? AS INTEGER)))`
+    : '';
   const expiresAt = isoPlus(nowIso, claimWindowMsForBounty(task?.bounty_amount ?? null));
   const params: unknown[] = [agentId, nowIso, expiresAt, acceptorSig, taskId, agentId];
   if (restrictable) params.push(agentId);
   params.push(agentId, budget, agentId);
+  if (bondPredicate) params.push(agentId, agentId, cfg.bondPerSlotAtomic);
   return gateWithEvent(db, {
     sql: `UPDATE tasks SET claimed_by_agent_id = ?, status = 'claimed', claimed_at = ?, claim_expires_at = ?, acceptor_signature = ?
      WHERE task_id = ? AND status = 'open' AND claimed_by_agent_id IS NULL
        AND (creator_agent_id IS NULL OR creator_agent_id <> ?)
-       AND (escrow = 0 OR escrow_status = 'funded')${allowlistPredicate}${budgetPredicate}${campaignPredicate}`,
+       AND (escrow = 0 OR escrow_status = 'funded')${allowlistPredicate}${budgetPredicate}${campaignPredicate}${bondPredicate}`,
     params,
   }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
 }

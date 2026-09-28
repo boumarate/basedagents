@@ -33,7 +33,7 @@ import { paymentProviderFor } from '../payments/index.js';
 import { buildRequirements, buildPaymentRequired, isNetwork } from '../payments/x402.js';
 import { acceptBountyTask, delivererWallet } from '../payments/accept.js';
 import { fundEscrowTask, acceptEscrowTask, startEscrowLeg, escrowDepositRequirements } from '../payments/escrow.js';
-import { claimBudget } from '../tasks/governance.js';
+import { claimBudget, slashBondForDisputedClaim } from '../tasks/governance.js';
 import { escrowAvailable } from '../payments/house-wallet.js';
 import { settledStats, settledTasks, logSettledWithoutTx, houseAccountIds, parseCursor, DEFAULT_LIMIT, MAX_LIMIT, DEFAULT_WINDOW_DAYS, MAX_WINDOW_DAYS } from '../tasks/settled.js';
 import {
@@ -636,6 +636,20 @@ tasks.post('/:id/claim', agentAuth, async (c) => {
       }, 409);
     }
   }
+  // Bounty claims put capital at risk: each concurrent bounty claim (claimed
+  // or submitted) must be backed by one bonded slot. Advisory here; the
+  // authoritative predicate is inside the atomic claim gate.
+  if (task.bounty_amount && Number(task.bounty_amount) > 0 && gov.bond_required_for_bounty
+      && gov.bounty_claims_active >= gov.bond_slots) {
+    return c.json({
+      error: 'claim_bond_required',
+      message: `Claiming a bounty task requires a refundable claim bond: 1 bonded USDC backs 1 bounty claim, held while the task is claimed or submitted. You have ${gov.bond_slots} bonded slot${gov.bond_slots === 1 ? '' : 's'} and ${gov.bounty_claims_active} bounty claim${gov.bounty_claims_active === 1 ? '' : 's'} in flight. The bond is returned in full when you deliver honestly; it is slashed if you abandon a claim or a deliverable is disputed.`,
+      bond_slots: gov.bond_slots,
+      bounty_claims_active: gov.bounty_claims_active,
+      bond_balance_atomic: gov.bond_balance_atomic,
+      help: { bond: 'POST /v1/agents/me/claim-bond', budget: 'GET /v1/agents/me/claim-budget' },
+    }, 409);
+  }
 
   const now = new Date().toISOString();
   // Notify the creator's inbox atomically with winning the claim (transactional outbox).
@@ -911,7 +925,14 @@ tasks.post('/:id/dispute', agentAuth, async (c) => {
   await logPaymentEvent(db, taskId, 'disputed', { reason: parsed.data.reason, disputed_by: agentId, payment_status: task.payment_status }, now);
   await recordFunnel(db, 'task_disputed', taskId, null);
 
-  return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now, payment_status: task.payment_status });
+  // A disputed BOUNTY deliverable slashes the worker's claim bond (once per
+  // task, min(balance, configured slash)); an empty bond never blocks the dispute.
+  let bondSlashed = '0';
+  if (task.claimed_by_agent_id && task.bounty_amount && Number(task.bounty_amount) > 0) {
+    bondSlashed = await slashBondForDisputedClaim(db, c.env, task.claimed_by_agent_id, taskId, now);
+  }
+
+  return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now, payment_status: task.payment_status, bond_slashed_atomic: bondSlashed });
 });
 
 /**

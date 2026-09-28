@@ -1,13 +1,14 @@
 /**
  * Claim governance (migration 0044): global reputation-scaled budgets,
  * per-poster campaign caps, bounty-scaled claim windows, and refundable
- * claim bonds with slash-on-expiry and durable withdrawals.
+ * claim bonds — required per concurrent BOUNTY claim, slashed on expiry
+ * and on dispute, withdrawn via durable rows.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setupTestDb, createTestApp, createTestAgent, signRequest, type TestKeypair } from '../test-helpers.js';
 import type { SQLiteAdapter } from '../db/sqlite-adapter.js';
 import { claimGate, loadTask } from '../tasks/service.js';
-import { claimBudget, claimWindowMsForBounty, creditBond, CLAIM_WINDOW_MICRO_MS, CLAIM_WINDOW_DEFAULT_MS } from '../tasks/governance.js';
+import { claimBudget, claimGovernanceConfig, claimWindowMsForBounty, creditBond, CLAIM_WINDOW_MICRO_MS, CLAIM_WINDOW_DEFAULT_MS } from '../tasks/governance.js';
 import { requestBondWithdrawal, settleDueBondWithdrawals, depositClaimBond } from '../tasks/bonds.js';
 import { runTaskCron } from '../cron/tasks.js';
 import { enablePaymentsForTests, resetPaymentsForTests, TEST_TX } from '../payments/test-fixtures.js';
@@ -235,9 +236,123 @@ describe('claim governance', () => {
     const headers = await signRequest(worker, 'GET', '/v1/agents/me/claim-budget', '');
     const res = await app.request('/v1/agents/me/claim-budget', { headers });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { budget: number; active_claims: number; base: number };
+    const body = (await res.json()) as { budget: number; active_claims: number; base: number; bounty_claims_active: number; bond_required_for_bounty: boolean };
     expect(body.base).toBe(10);
     expect(body.budget).toBe(10);
     expect(body.active_claims).toBe(0);
+    expect(body.bounty_claims_active).toBe(0);
+    // The harness ships CLAIM_BOND_REQUIRED='0'; production defaults to on.
+    expect(body.bond_required_for_bounty).toBe(false);
+    expect(claimGovernanceConfig({}).bondRequiredForBounty).toBe(true);
+  });
+
+  async function createBountyTask(app: ReturnType<typeof createTestApp>, agent: TestKeypair, amount: string): Promise<string> {
+    const body = JSON.stringify({ title: 'bounty probe', description: 'run one probe and report honestly', bounty: { amount, token: 'USDC', network: 'eip155:8453' }, escrow: false });
+    const h = await signRequest(agent, 'POST', '/v1/tasks', body);
+    const res = await app.request('/v1/tasks', { method: 'POST', headers: h, body });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { task_id: string }).task_id;
+  }
+
+  async function deliver(app: ReturnType<typeof createTestApp>, agent: TestKeypair, taskId: string): Promise<void> {
+    const body = JSON.stringify({ summary: 'done', submission_type: 'json', submission_content: '{"ok":true}' });
+    const h = await signRequest(agent, 'POST', `/v1/tasks/${taskId}/deliver`, body);
+    expect((await app.request(`/v1/tasks/${taskId}/deliver`, { method: 'POST', headers: h, body })).status).toBe(200);
+  }
+
+  it('requires a free bonded slot per concurrent bounty claim (occupied through submitted), leaves free tasks alone, and honors the kill switch', async () => {
+    enablePaymentsForTests();
+    const env = { TASK_PAYMENTS_ENABLED: '1', CLAIM_BOND_REQUIRED: '1' };
+    const app = appWith(env);
+    await db.run(`UPDATE agents SET wallet_address = ?, wallet_network = 'eip155:8453' WHERE id = ?`, '0x' + '5'.repeat(40), worker.agentId);
+
+    const b1 = await createBountyTask(app, creator, '2000000');
+    const b2 = await createBountyTask(app, creator, '1000000');
+
+    // No bond → refused with the advisory, and the gate itself agrees.
+    const refused = await claim(app, worker, b1);
+    expect(refused.status).toBe(409);
+    const refusedBody = (await refused.json()) as { error: string; bond_slots: number; help: { bond: string } };
+    expect(refusedBody.error).toBe('claim_bond_required');
+    expect(refusedBody.bond_slots).toBe(0);
+    expect(refusedBody.help.bond).toBe('POST /v1/agents/me/claim-bond');
+    expect(await claimGate(db, b1, worker.agentId, null, new Date().toISOString(), undefined, env)).toBe(false);
+
+    // One bonded slot → one bounty claim; the second is refused…
+    await creditBond(db, worker.agentId, '1000000', 'deposit', 'test', new Date().toISOString());
+    expect((await claim(app, worker, b1)).status).toBe(200);
+    expect(((await (await claim(app, worker, b2)).json()) as { error: string }).error).toBe('claim_bond_required');
+
+    // …and delivering does NOT free the slot (junk-submit must not recycle it)…
+    await deliver(app, worker, b1);
+    expect(((await (await claim(app, worker, b2)).json()) as { error: string }).error).toBe('claim_bond_required');
+
+    // …while a FREE task claim is untouched by bond math.
+    const free = await createFreeTask(app, creator);
+    expect((await claim(app, worker, free)).status).toBe(200);
+
+    // Acceptance resolves the slot.
+    await db.run(`UPDATE tasks SET status = 'verified', accepted_by = 'creator' WHERE task_id = ?`, b1);
+    expect((await claim(app, worker, b2)).status).toBe(200);
+
+    // Kill switch: CLAIM_BOND_REQUIRED=0 restores bond-free bounty claims.
+    const off = appWith({ TASK_PAYMENTS_ENABLED: '1', CLAIM_BOND_REQUIRED: '0' });
+    const bare = await createTestAgent(db, { status: 'active', capabilities: ['research'] });
+    await db.run(`UPDATE agents SET wallet_address = ?, wallet_network = 'eip155:8453' WHERE id = ?`, '0x' + '6'.repeat(40), bare.agentId);
+    const b3 = await createBountyTask(off, creator, '1000000');
+    expect((await claim(off, bare, b3)).status).toBe(200);
+  });
+
+  it('slashes the bond when a bounty deliverable is disputed — once per task, never blocking the dispute', async () => {
+    enablePaymentsForTests();
+    const env = { TASK_PAYMENTS_ENABLED: '1' };
+    const app = appWith(env);
+    await db.run(`UPDATE agents SET wallet_address = ?, wallet_network = 'eip155:8453' WHERE id = ?`, '0x' + '7'.repeat(40), worker.agentId);
+    await creditBond(db, worker.agentId, '2000000', 'deposit', 'test', new Date().toISOString());
+
+    const b = await createBountyTask(app, creator, '2000000');
+    expect((await claim(app, worker, b)).status).toBe(200);
+    await deliver(app, worker, b);
+
+    const disputeBody = JSON.stringify({ reason: 'generic template, no evidence of execution' });
+    const dh = await signRequest(creator, 'POST', `/v1/tasks/${b}/dispute`, disputeBody);
+    const disputed = await app.request(`/v1/tasks/${b}/dispute`, { method: 'POST', headers: dh, body: disputeBody });
+    expect(disputed.status).toBe(200);
+    expect(((await disputed.json()) as { bond_slashed_atomic: string }).bond_slashed_atomic).toBe('1000000');
+    expect((await claimBudget(db, env, worker.agentId)).bond_balance_atomic).toBe('1000000');
+
+    // Revision → re-delivery → second dispute of the SAME task does not slash again.
+    const revBody = JSON.stringify({ note: 'resubmit with real evidence' });
+    const rh = await signRequest(creator, 'POST', `/v1/tasks/${b}/revision`, revBody);
+    expect((await app.request(`/v1/tasks/${b}/revision`, { method: 'POST', headers: rh, body: revBody })).status).toBe(200);
+    await deliver(app, worker, b);
+    const dh2 = await signRequest(creator, 'POST', `/v1/tasks/${b}/dispute`, disputeBody);
+    const disputed2 = await app.request(`/v1/tasks/${b}/dispute`, { method: 'POST', headers: dh2, body: disputeBody });
+    expect(disputed2.status).toBe(200);
+    expect(((await disputed2.json()) as { bond_slashed_atomic: string }).bond_slashed_atomic).toBe('0');
+    expect((await claimBudget(db, env, worker.agentId)).bond_balance_atomic).toBe('1000000');
+
+    // A bond-less worker (grandfathered claim, or bond requirement off) is
+    // disputed without a slash — the dispute itself always proceeds.
+    const off = appWith({ TASK_PAYMENTS_ENABLED: '1', CLAIM_BOND_REQUIRED: '0' });
+    const bare = await createTestAgent(db, { status: 'active', capabilities: ['research'] });
+    await db.run(`UPDATE agents SET wallet_address = ?, wallet_network = 'eip155:8453' WHERE id = ?`, '0x' + '8'.repeat(40), bare.agentId);
+    const b2 = await createBountyTask(off, creator, '1000000');
+    expect((await claim(off, bare, b2)).status).toBe(200);
+    await deliver(off, bare, b2);
+    const dh3 = await signRequest(creator, 'POST', `/v1/tasks/${b2}/dispute`, disputeBody);
+    const disputed3 = await off.request(`/v1/tasks/${b2}/dispute`, { method: 'POST', headers: dh3, body: disputeBody });
+    expect(disputed3.status).toBe(200);
+    expect(((await disputed3.json()) as { bond_slashed_atomic: string }).bond_slashed_atomic).toBe('0');
+
+    // A free task's dispute never touches bonds either.
+    const free = await createFreeTask(app, creator);
+    expect((await claim(app, worker, free)).status).toBe(200);
+    await deliver(app, worker, free);
+    const dh4 = await signRequest(creator, 'POST', `/v1/tasks/${free}/dispute`, disputeBody);
+    const disputed4 = await app.request(`/v1/tasks/${free}/dispute`, { method: 'POST', headers: dh4, body: disputeBody });
+    expect(disputed4.status).toBe(200);
+    expect(((await disputed4.json()) as { bond_slashed_atomic: string }).bond_slashed_atomic).toBe('0');
+    expect((await claimBudget(db, env, worker.agentId)).bond_balance_atomic).toBe('1000000');
   });
 });

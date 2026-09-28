@@ -308,6 +308,10 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
     (c.env as AppEnv['Bindings']) = {
       ...(c.env ?? {}),
       PAYMENT_ENCRYPTION_KEY: 'a'.repeat(64), // test key for payment encryption
+      // Bond-backed bounty claims are ON in production; the harness turns them
+      // off so suites about other mechanics need no bond fixtures. Governance
+      // tests re-enable with CLAIM_BOND_REQUIRED: '1'.
+      CLAIM_BOND_REQUIRED: '0',
       ...extraEnv,
     };
     await next();

@@ -24,7 +24,7 @@ app.get('/me/claim-budget', agentAuth, async (c) => {
   return c.json({
     agent_id: agentId,
     ...budget,
-    note: 'budget bounds concurrently CLAIMED tasks; human-accepted deliveries raise it, expired claims and disputes lower it, auto-accepted deliveries do not count.',
+    note: 'budget bounds concurrently CLAIMED tasks; human-accepted deliveries raise it, expired claims and disputes lower it, auto-accepted deliveries do not count. Bounty claims additionally need one bonded slot each (claimed or submitted); expired claims and disputed bounty deliverables slash the bond.',
   });
 });
 

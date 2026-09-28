@@ -347,6 +347,7 @@ export function makeHarness(envOverrides: Record<string, string> = {}): Harness 
     TESTING_TREASURY_PRIVATE_KEY: TREASURY_KEY,
     TESTING_OPERATOR_EMAIL: 'ops@example.com',
     PAYMENT_ENCRYPTION_KEY: 'a'.repeat(64),
+    CLAIM_BOND_REQUIRED: '0', // fulfillment suites are not about claim bonds
     ...envOverrides,
   };
 

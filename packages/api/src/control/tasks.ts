@@ -51,6 +51,7 @@ import { acceptBountyTask } from '../payments/accept.js';
 import { fundEscrowTask, acceptEscrowTask, startEscrowLeg } from '../payments/escrow.js';
 import { escrowAvailable } from '../payments/house-wallet.js';
 import { escrowView } from '../tasks/service.js';
+import { slashBondForDisputedClaim } from '../tasks/governance.js';
 import { recordEvent } from '../events/service.js';
 
 const textEncoder = new TextEncoder();
@@ -478,7 +479,13 @@ app.post('/tasks/:id/dispute', ownerSession, async (c) => {
   await logPaymentEvent(db, taskId, 'disputed', { reason: parsed.data.reason, disputed_by: 'owner', payment_status: task.payment_status }, now);
   if (task.claimed_by_agent_id) await recordEvent(db, task.claimed_by_agent_id, { type: 'task.disputed', agent_id: task.claimed_by_agent_id, task_id: taskId, reason: parsed.data.reason }, now);
   await recordFunnel(db, 'task_disputed', taskId, null);
-  return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now });
+  // Same accountability as the agent-route dispute: a disputed BOUNTY
+  // deliverable slashes the worker's claim bond, once per task.
+  let bondSlashed = '0';
+  if (task.claimed_by_agent_id && task.bounty_amount && Number(task.bounty_amount) > 0) {
+    bondSlashed = await slashBondForDisputedClaim(db, c.env, task.claimed_by_agent_id, taskId, now);
+  }
+  return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now, bond_slashed_atomic: bondSlashed });
 });
 
 /** POST /v1/owner/tasks/:id/cancel — cancel (T8; delivered work only after a dispute). */

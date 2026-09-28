@@ -17,6 +17,12 @@
  * budget. Expired claims are counted from the claimer's own
  * `task.claim_expired` events; disputes from tasks the agent delivered.
  *
+ * BOUNTY claims additionally require capital at risk: one bonded
+ * bondPerSlotAtomic backs one concurrent bounty claim (occupied while the
+ * task is claimed or submitted), and a disputed bounty deliverable is
+ * slashed like an expired claim. Identities are free; bonded USDC is not —
+ * that, not reputation, is what prices a sybil farm out of junk-submitting.
+ *
  * Money: USDC atomic units (6 dp) as digit strings, summed via CAST; every
  * value is validated to fit far below 2^53.
  */
@@ -37,6 +43,15 @@ export interface ClaimGovernanceConfig {
   bondPerSlotAtomic: string;
   /** Slashed from the bond when a claim expires unworked (default 1 USDC). */
   slashPerExpiryAtomic: string;
+  /** Slashed from the bond when a bounty deliverable is disputed (default 1 USDC). */
+  slashPerDisputeAtomic: string;
+  /**
+   * When true (default), claiming a BOUNTY task requires a free bonded slot:
+   * one bondPerSlotAtomic of bonded USDC backs one concurrent bounty claim,
+   * occupied while the task is claimed or submitted. Free tasks are exempt.
+   * Kill switch: CLAIM_BOND_REQUIRED=0.
+   */
+  bondRequiredForBounty: boolean;
 }
 
 function intFromEnv(env: unknown, key: string, dflt: number, min: number, max: number): number {
@@ -54,6 +69,8 @@ export function claimGovernanceConfig(env: unknown): ClaimGovernanceConfig {
     penalty: intFromEnv(env, 'CLAIM_BUDGET_PENALTY', 25, 0, 10_000),
     bondPerSlotAtomic: String(intFromEnv(env, 'CLAIM_BOND_PER_SLOT_ATOMIC', 1_000_000, 1, 1_000_000_000)),
     slashPerExpiryAtomic: String(intFromEnv(env, 'CLAIM_BOND_SLASH_ATOMIC', 1_000_000, 0, 1_000_000_000)),
+    slashPerDisputeAtomic: String(intFromEnv(env, 'CLAIM_BOND_SLASH_DISPUTE_ATOMIC', 1_000_000, 0, 1_000_000_000)),
+    bondRequiredForBounty: ((env ?? {}) as Record<string, string | undefined>).CLAIM_BOND_REQUIRED !== '0',
   };
 }
 
@@ -83,6 +100,9 @@ export interface ClaimBudgetView {
   disputes: number;
   bond_balance_atomic: string;
   bond_slots: number;
+  /** Bounty tasks this agent holds in claimed|submitted — each occupies one bonded slot. */
+  bounty_claims_active: number;
+  bond_required_for_bounty: boolean;
 }
 
 const isAtomic = (v: string) => /^[0-9]{1,15}$/.test(v);
@@ -97,7 +117,7 @@ export async function bondBalanceAtomic(db: DBAdapter, agentId: string): Promise
 /** The full budget view: what the gate enforces and the agent can inspect. */
 export async function claimBudget(db: DBAdapter, env: unknown, agentId: string): Promise<ClaimBudgetView> {
   const cfg = claimGovernanceConfig(env);
-  const [accepted, expired, disputed, active, bond] = await Promise.all([
+  const [accepted, expired, disputed, active, bountyActive, bond] = await Promise.all([
     db.get<{ n: number }>(
       `SELECT COUNT(*) AS n FROM tasks
         WHERE claimed_by_agent_id = ? AND status = 'verified'
@@ -111,6 +131,10 @@ export async function claimBudget(db: DBAdapter, env: unknown, agentId: string):
     ),
     db.get<{ n: number }>(
       `SELECT COUNT(*) AS n FROM tasks WHERE claimed_by_agent_id = ? AND status = 'claimed'`, agentId,
+    ),
+    db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM tasks WHERE claimed_by_agent_id = ? AND status IN ('claimed','submitted')
+          AND bounty_amount IS NOT NULL AND CAST(bounty_amount AS INTEGER) > 0`, agentId,
     ),
     bondBalanceAtomic(db, agentId),
   ]);
@@ -128,6 +152,8 @@ export async function claimBudget(db: DBAdapter, env: unknown, agentId: string):
     disputes: disputed?.n ?? 0,
     bond_balance_atomic: bond,
     bond_slots: bondSlots,
+    bounty_claims_active: bountyActive?.n ?? 0,
+    bond_required_for_bounty: cfg.bondRequiredForBounty,
   };
 }
 
@@ -196,4 +222,25 @@ export async function slashBondForExpiredClaim(db: DBAdapter, env: unknown, agen
   const amount = String(Math.min(Number(balance), Number(cfg.slashPerExpiryAtomic)));
   if (amount === '0') return '0';
   return (await debitBond(db, agentId, amount, 'slash', `claim_expired:${taskId}`, nowIso)) ? amount : '0';
+}
+
+/**
+ * Slash on dispute (creator disputes a BOUNTY deliverable): takes
+ * min(balance, configured slash), at most ONCE per task — a dispute cleared
+ * by a revision round and disputed again must not slash twice, and an empty
+ * bond never blocks the dispute itself. Returns the amount taken ('0' when
+ * nothing was).
+ */
+export async function slashBondForDisputedClaim(db: DBAdapter, env: unknown, agentId: string, taskId: string, nowIso: string): Promise<string> {
+  const cfg = claimGovernanceConfig(env);
+  if (cfg.slashPerDisputeAtomic === '0') return '0';
+  const prior = await db.get<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM agent_claim_bond_events WHERE agent_id = ? AND kind = 'slash' AND ref = ?`,
+    agentId, `disputed:${taskId}`,
+  );
+  if ((prior?.n ?? 0) > 0) return '0';
+  const balance = await bondBalanceAtomic(db, agentId);
+  const amount = String(Math.min(Number(balance), Number(cfg.slashPerDisputeAtomic)));
+  if (amount === '0') return '0';
+  return (await debitBond(db, agentId, amount, 'slash', `disputed:${taskId}`, nowIso)) ? amount : '0';
 }
