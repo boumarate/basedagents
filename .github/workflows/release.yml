@@ -1,0 +1,39 @@
+# Turns a pushed v* tag into a GitHub Release, so the /releases page tracks
+# platform milestones instead of whatever tag happened to be pushed last.
+# Notes come from docs/releases/<tag>.md checked in alongside the tag; when
+# the file is missing, GitHub's generated notes are used. Re-pushing a tag
+# whose release exists updates the title/notes instead of failing, so the
+# workflow is safe to re-run.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TITLE="BasedAgents ${TAG#v}"
+          NOTES="docs/releases/${TAG}.md"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ -f "$NOTES" ]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes-file "$NOTES" --latest
+            else
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --latest
+            fi
+          elif [ -f "$NOTES" ]; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes-file "$NOTES" --latest --verify-tag
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --generate-notes --latest --verify-tag
+          fi
