@@ -113,6 +113,8 @@ afterAll(async () => {
 // The full tool set. Pinned so a tool cannot appear or disappear unnoticed —
 // the README table, the header comment in src/index.ts and this list must agree.
 const EXPECTED_TOOLS = [
+  // identity
+  'register_agent',
   // registry
   'search_agents', 'get_agent', 'get_reputation', 'get_chain_status', 'get_chain_entry',
   // messaging
