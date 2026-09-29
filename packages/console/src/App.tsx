@@ -22,6 +22,7 @@ import TasksPage from './pages/Tasks.js';
 import Explore from './pages/Explore.js';
 import TaskNew from './pages/TaskNew.js';
 import TaskReview from './pages/TaskReview.js';
+import SignWallet from './pages/SignWallet.js';
 import AdminFeedback from './pages/AdminFeedback.js';
 import TestingAudits from './pages/testing/Audits.js';
 import TestingIntake from './pages/testing/Intake.js';
@@ -85,6 +86,7 @@ export default function App() {
               reviewed, so submission needs only an email (signed-in visitors
               are redirected to the in-app form). */}
           <Route path="/testing/request" element={<TestingIntake />} />
+          <Route path="/sign-wallet" element={<SignWallet />} />
           <Route element={<Protected />}>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<Home />} />

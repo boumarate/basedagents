@@ -11,6 +11,7 @@ import { bytesToHex } from '@noble/hashes/utils';
 
 export { sha256, bytesToHex };
 export { redactSecrets, containsSecret, REDACTED } from './redact.js';
+export { walletBindMessage, signWalletBindMessage, walletAddressFromPrivateKey, WALLET_BIND_TITLE, WALLET_BIND_FOOTER, WALLET_BIND_MAX_AGE_MS, type WalletBindFields } from './wallet-bind.js';
 
 // ─── Canonical JSON ───
 
@@ -865,16 +866,43 @@ export class RegistryClient {
     return this.fetchJson<WalletInfo>(`/v1/agents/${agentId}/wallet`);
   }
 
-  /** Update your agent's wallet address. Requires authentication. */
+  /**
+   * Set your agent's payout wallet, proven by a signature from it (decision
+   * D8). Build the message with `walletBindMessage`, sign it with the wallet
+   * (`signWalletBindMessage` for a local key, or any wallet's personal_sign),
+   * and pass both here within 15 minutes. Without `proof` the API answers
+   * 400 `wallet_proof_required` and hands back `sign_this`, a message to sign.
+   */
+  async setWallet(
+    keypair: AgentKeypair,
+    wallet: { address: string; network?: string; proof: { message: string; signature: string } },
+  ): Promise<WalletInfo> {
+    return this.updateWallet(keypair, { wallet_address: wallet.address, wallet_network: wallet.network, wallet_proof: wallet.proof });
+  }
+
+  /** Remove your agent's payout wallet (no proof needed). */
+  async clearWallet(keypair: AgentKeypair): Promise<WalletInfo> {
+    const agentId = publicKeyToAgentId(keypair.publicKey);
+    return this.fetchAuth<WalletInfo>(keypair, 'PATCH', `/v1/agents/${agentId}/wallet`, { wallet_address: null });
+  }
+
+  /**
+   * Low-level PATCH of your wallet. Setting or changing it needs
+   * `wallet_proof` (see `setWallet`); a request without one fails with 400
+   * `wallet_proof_required`.
+   */
   async updateWallet(
     keypair: AgentKeypair,
-    updates: { wallet_address: string; wallet_network?: string }
+    updates: { wallet_address: string; wallet_network?: string; wallet_proof?: { message: string; signature: string } }
   ): Promise<WalletInfo> {
     if (!/^0x[a-fA-F0-9]{40}$/.test(updates.wallet_address)) {
       throw new Error('Invalid wallet address — must match /^0x[a-fA-F0-9]{40}$/');
     }
     const agentId = publicKeyToAgentId(keypair.publicKey);
-    return this.fetchAuth<WalletInfo>(keypair, 'PATCH', `/v1/agents/${agentId}/wallet`, updates);
+    const body: Record<string, unknown> = { wallet_address: updates.wallet_address };
+    if (updates.wallet_network !== undefined) body.wallet_network = updates.wallet_network;
+    if (updates.wallet_proof) body.wallet_proof = updates.wallet_proof;
+    return this.fetchAuth<WalletInfo>(keypair, 'PATCH', `/v1/agents/${agentId}/wallet`, body);
   }
 
   // ── Tasks ──
@@ -1547,6 +1575,13 @@ export interface WalletInfo {
   agent_id: string;
   wallet_address: string | null;
   wallet_network: string | null;
+  /** True when the address was bound with a signature from it (D8); false for an older, unverified one. */
+  wallet_verified?: boolean;
+  wallet_verified_at?: string | null;
+  /** The signed bind message behind a verified wallet, so anyone can re-check it. */
+  wallet_proof?: { message: string; signature: string; signer_kind: 'eoa' | 'erc1271'; bound_at: string } | null;
+  /** How the proof was checked, on a successful bind. */
+  signer_kind?: 'eoa' | 'erc1271';
 }
 
 export interface TaskCreateOptions {

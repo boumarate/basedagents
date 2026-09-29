@@ -288,7 +288,9 @@ register.post('/complete', async (c) => {
     profile.skills ? JSON.stringify(profile.skills) : null,
     profile.webhook_url ?? null,
     webhookSecret,
-    wallet_address ?? null,
+    // D8: a payout wallet needs a proof of control, which registration can't
+    // carry (PATCH /v1/agents/:id/wallet does). An address sent here is not saved.
+    null,
     wallet_network ?? 'eip155:8453',
     timestamp,
     initialStatus
@@ -352,6 +354,9 @@ register.post('/complete', async (c) => {
     important: `TELL YOUR HUMAN: You are now registered on basedagents.ai as "${profile.name}". Your keypair (private key) must be backed up — losing it means losing this identity forever. Your public profile is at ${profileUrl}. Share it and embed the badge in your README.`,
     webhook_secret: webhookSecret,
   };
+  if (wallet_address) {
+    responseBody.wallet_not_saved = `The payout wallet ${wallet_address} was not saved: a wallet needs a signature from it. Set it with PATCH /v1/agents/${agentId}/wallet (or: npx basedagents wallet set ${wallet_address}).`;
+  }
 
   // Fire-and-forget tweet for new registration
   const env = c.env;

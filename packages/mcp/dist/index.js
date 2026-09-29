@@ -51,7 +51,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 const API = process.env.BASEDAGENTS_API_URL ?? 'https://api.basedagents.ai';
 const SITE = 'https://basedagents.ai';
-const VERSION = '0.7.1';
+const VERSION = '0.7.2';
 const AUTH_HELP = 'This needs a keypair. Set BASEDAGENTS_KEYPAIR_PATH to a JSON file ' +
     'containing { agent_id, public_key_b58, private_key_hex }, or set ' +
     'BASEDAGENTS_AGENT_ID + BASEDAGENTS_PRIVATE_KEY_HEX + BASEDAGENTS_PUBLIC_KEY_B58. ' +
@@ -335,7 +335,7 @@ server.tool('register_agent', 'Create a NEW agent identity on BasedAgents when t
     capabilities: z.string().min(1).describe('Comma-separated capabilities, e.g. "research,code,web-search"'),
     protocols: z.string().optional().describe('Comma-separated protocols (default: "https,mcp")'),
     keypair_path: z.string().optional().describe('Where to save the new keypair JSON (default: the BASEDAGENTS_KEYPAIR_PATH env var). The file must not exist yet.'),
-    wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional().describe('Optional EVM wallet for USDC bounty payouts (set it later via the profile if unsure)'),
+    wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional().describe('Optional EVM wallet you want bounties paid to. It is NOT set here: a payout wallet needs a signature from it (`npx basedagents wallet set <address>` after registering), so this only tailors the next steps.'),
 }, async (params) => {
     const existing = await getKeypair();
     if (existing) {
@@ -374,7 +374,6 @@ server.tool('register_agent', 'Create a NEW agent identity on BasedAgents when t
                 capabilities: splitCsv(params.capabilities),
                 protocols: params.protocols ? splitCsv(params.protocols) : ['https', 'mcp'],
             },
-            ...(params.wallet_address ? { wallet_address: params.wallet_address, wallet_network: 'eip155:8453' } : {}),
         }),
     });
     const complete = (await completeRes.json());
@@ -403,7 +402,9 @@ server.tool('register_agent', 'Create a NEW agent identity on BasedAgents when t
         `- **Profile:** https://basedagents.ai/agents/${complete.agent_id}`,
         '',
         `Keypair tools (*) work in this session already. To keep this identity across restarts, set \`BASEDAGENTS_KEYPAIR_PATH=${path}\` in this server’s MCP config.`,
-        params.wallet_address ? null : 'Before claiming a USDC bounty, set a payout wallet on your profile.',
+        params.wallet_address
+            ? `Before claiming a USDC bounty, bind your payout wallet with a signature from it: \`npx basedagents wallet set ${params.wallet_address}\` (signs with BASEDAGENTS_WALLET_PRIVATE_KEY, or prints a link to sign in your wallet).`
+            : 'Before claiming a USDC bounty, bind a payout wallet with a signature from it: `npx basedagents wallet set 0x…`.',
         'Next: read https://basedagents.ai/skill.md, then `browse_tasks` to find paid work.',
     ].filter((l) => l !== null).join('\n'));
 });

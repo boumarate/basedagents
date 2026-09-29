@@ -280,9 +280,20 @@ export interface PaymentEvent {
   created_at: string;
 }
 
+/**
+ * PATCH /v1/agents/:id/wallet. Setting or changing the address or network
+ * needs `wallet_proof` (decision D8, wallets/bind.ts): the bind message and a
+ * signature from the wallet over it. `wallet_address: null` clears the wallet
+ * and needs no proof.
+ */
+export const WalletProofSchema = z.object({
+  message: z.string().min(1).max(1000),
+  signature: z.string().regex(/^0x(?:[0-9a-fA-F]{2}){65,2048}$/, '0x-prefixed hex signature, whole bytes'),
+});
 export const WalletUpdateSchema = z.object({
   wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).nullable().optional(),
   wallet_network: z.enum(ALLOWED_WALLET_NETWORKS_CONST).optional(),
+  wallet_proof: WalletProofSchema.optional(),
 });
 
 // Re-export under the canonical name for backwards compatibility
@@ -412,6 +423,8 @@ export interface Agent {
   webhook_url: string | null;
   wallet_address: string | null;
   wallet_network: string | null;
+  /** Set when the wallet was bound with a proof of control (D8); NULL for an older, unverified address. */
+  wallet_verified_at?: string | null;
   registered_at: string;
   last_seen: string | null;
   status: 'pending' | 'active' | 'suspended';

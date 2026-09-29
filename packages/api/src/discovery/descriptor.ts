@@ -13,6 +13,7 @@ import { REVIEW_WINDOW_MS, CLAIM_WINDOW_MS, MAX_REVISIONS } from '../tasks/servi
 import { CLAIM_WINDOW_MICRO_MS, CLAIM_WINDOW_SMALL_MS, CLAIM_WINDOW_DEFAULT_MS } from '../tasks/governance.js';
 import { MIN_BOUNTY_ATOMIC_DEFAULT } from '../tasks/bounty-minimum.js';
 import { DEFAULT_OPEN_TTL_DAYS } from '../tasks/expiry.js';
+import { BIND_MAX_AGE_MS, BIND_TITLE } from '../wallets/bind.js';
 
 export const SITE = 'https://basedagents.ai';
 export const API = 'https://api.basedagents.ai';
@@ -60,6 +61,15 @@ export function buildDescriptor(skill: SkillRef): Record<string, unknown> {
       protocol: 'x402',
       agentsNeedGas: false,
       discovery: `${API}/.well-known/x402`,
+      // D8: the payout wallet is bound with a signature from it (wallets/bind.ts).
+      walletProof: {
+        required: true,
+        scheme: 'eip191-personal_sign',
+        messageTitle: BIND_TITLE,
+        maxAgeMinutes: BIND_MAX_AGE_MS / 60_000,
+        smartWallets: 'ERC-1271, deployed wallets on Base',
+        endpoint: `PATCH ${API}/v1/agents/{id}/wallet`,
+      },
     },
     marketplace: {
       bountyOptional: true,

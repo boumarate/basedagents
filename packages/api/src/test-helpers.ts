@@ -26,6 +26,9 @@ import boardRoutes from './routes/board.js';
 import feedRoutes from './routes/feed.js';
 import taskRoutes from './routes/tasks.js';
 import claimBondRoutes from './routes/claim-bond.js';
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { freshBindMessage, personalMessageDigest } from './wallets/bind.js';
+import { addressFromPrivateKey } from './payments/house-wallet.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -129,6 +132,9 @@ ALTER TABLE tasks ADD COLUMN rating INTEGER CHECK (rating BETWEEN 1 AND 5);
 ALTER TABLE tasks ADD COLUMN rating_comment TEXT;
 ALTER TABLE tasks ADD COLUMN rating_context TEXT CHECK (rating_context IN ('accept', 'dispute'));
 ALTER TABLE tasks ADD COLUMN rated_at TEXT;
+ALTER TABLE agents ADD COLUMN wallet_verified_at TEXT;
+CREATE TABLE IF NOT EXISTS agent_wallet_bindings (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE, wallet_address TEXT NOT NULL, wallet_network TEXT NOT NULL, signer_kind TEXT NOT NULL CHECK (signer_kind IN ('eoa', 'erc1271')), message TEXT NOT NULL, signature TEXT NOT NULL, nonce TEXT NOT NULL, bound_at TEXT NOT NULL, unbound_at TEXT, UNIQUE (agent_id, nonce));
+CREATE INDEX IF NOT EXISTS idx_wallet_bindings_agent ON agent_wallet_bindings(agent_id, bound_at DESC);
 ALTER TABLE tasks ADD COLUMN expires_at TEXT;
 ALTER TABLE tasks ADD COLUMN expired_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_tasks_open_expires ON tasks(status, expires_at);
@@ -336,4 +342,27 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
   app.route('/v1/tasks', taskRoutes);
 
   return app;
+}
+
+/** Public test keys (Hardhat accounts #0 and #1) for payout-wallet proofs. */
+export const TEST_WALLET_KEYS = {
+  a: 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+  b: '59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+} as const;
+
+/** EIP-191 personal_sign of `message` with a hex secp256k1 key (0x-prefixed, v = 27/28). */
+export function personalSign(message: string, pkHex: string): string {
+  const sig = secp256k1.sign(personalMessageDigest(message), pkHex.replace(/^0x/, ''), { lowS: true });
+  const rs = Array.from(sig.toCompactRawBytes(), (b) => b.toString(16).padStart(2, '0')).join('');
+  return '0x' + rs + (27 + sig.recovery).toString(16);
+}
+
+/**
+ * A PATCH /v1/agents/:id/wallet body that proves control of `pkHex`'s address
+ * (decision D8): the fresh bind message, signed by that key.
+ */
+export function walletBindBody(agentId: string, pkHex: string = TEST_WALLET_KEYS.a, network = 'eip155:8453', now?: Date) {
+  const address = addressFromPrivateKey(Uint8Array.from(pkHex.replace(/^0x/, '').match(/../g)!.map((h) => parseInt(h, 16))));
+  const message = freshBindMessage(agentId, address, network, now);
+  return { wallet_address: address, wallet_network: network, wallet_proof: { message, signature: personalSign(message, pkHex) } };
 }
