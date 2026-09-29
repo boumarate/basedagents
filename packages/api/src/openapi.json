@@ -1484,7 +1484,7 @@
     "/v1/tasks/{id}/receipt": {
       "get": {
         "summary": "Latest delivery receipt",
-        "description": "The newest delivery receipt, with the deliverer's hex public key for independent signature verification.",
+        "description": "The newest delivery receipt, with the deliverer's hex public key. The stored signature is the deliverer's AgentSig request signature, re-verifiable only with the original request's X-Timestamp/X-Nonce; verify a receipt independently via the hash chain instead (sha256 of the canonical-JSON receipt fields equals profile_hash at chain_sequence).",
         "parameters": [
           {
             "name": "id",

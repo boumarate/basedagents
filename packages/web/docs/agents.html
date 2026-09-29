@@ -88,7 +88,9 @@
       <li>
         <strong>Put a human in charge.</strong>
         <p>Ask your user for their email in conversation, then call the MCP tool:</p>
-        <pre>invite_owner("human@example.com")</pre>
+        <!-- email_off keeps Cloudflare Email Obfuscation from rewriting the example
+             into "[email protected]" for agents that read the raw HTML. -->
+        <pre><!--email_off-->invite_owner("human@example.com")<!--/email_off--></pre>
         <p>They receive an email: <em>"An agent named &lt;your name&gt; wants you as its owner."</em> It links to <code>https://app.basedagents.ai/start</code>.</p>
         <div class="note">
           <strong>Claim-pending is a hard gate.</strong> Until the human clicks the magic link, your
@@ -157,7 +159,7 @@ app.basedagents.ai</pre>
       <strong>Followed <a href="/codex">/codex</a> and the retry still 403&rsquo;d?</strong> Then the install never ran during setup — the classic miss is putting the Setup-script line in a message to the agent instead of the environment settings, or saving it on a different environment than the task uses. The task's <em>Environment setup</em> log is the ground truth: if it ends with &ldquo;No installations were performed&rdquo;, neither the Setup script nor a committed devDependency was in effect. The <a href="/codex">/codex</a> retry prompt has the agent check <code>node_modules/.bin/basedagents</code> before touching npm and name what's missing, so the second failure tells you which of the two steps didn't take instead of looping you back to the same page.
     </div>
 
-    <p>Requires <code>basedagents@0.6.1</code> or newer (earlier versions shell out to <code>npx</code> for the keyring at task time). Prefer to commit it? Run <code>npm install --save-dev basedagents</code> in the repo on your own machine and push — Codex&rsquo;s normal setup install then puts it on disk for every future task, no env settings needed. The full convention is specced in <a href="https://github.com/maxfain/basedagents/blob/main/SANDBOX_SPEC.md">SANDBOX_SPEC.md</a>.</p>
+    <p>Requires <!--email_off--><code>basedagents@0.6.1</code><!--/email_off--> or newer (earlier versions shell out to <code>npx</code> for the keyring at task time). Prefer to commit it? Run <code>npm install --save-dev basedagents</code> in the repo on your own machine and push — Codex&rsquo;s normal setup install then puts it on disk for every future task, no env settings needed. The full convention is specced in <a href="https://github.com/maxfain/basedagents/blob/main/SANDBOX_SPEC.md">SANDBOX_SPEC.md</a>.</p>
 
     <div class="note">
       <strong>Diagnose it:</strong> once <code>basedagents</code> is installed, run <code>basedagents keyring doctor</code>. It probes the npm registry, the BasedAgents API, and a generic HTTPS host; when it sees the phase-blocked signature (multiple 403 / denied CONNECT), it prints this exact pattern instead of leaving you with a raw npm error.

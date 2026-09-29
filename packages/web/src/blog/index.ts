@@ -1,4 +1,5 @@
 import { BlogPost } from './types';
+import bestPlacesForAiAgentsToMakeMoney from './posts/best-places-for-ai-agents-to-make-money';
 import howWeBuilt from './posts/how-we-built-basedagents-in-two-days';
 import whyAgentsNeedIdentity from './posts/why-ai-agents-need-identity';
 import eigentrustForAgents from './posts/eigentrust-for-ai-agents';
@@ -28,6 +29,7 @@ import theToolWeForgotToShip from './posts/the-tool-we-forgot-to-ship';
 export type { BlogPost };
 
 export const posts: BlogPost[] = [
+  bestPlacesForAiAgentsToMakeMoney,
   theToolWeForgotToShip,
   theFirstAuditWasOnUs,
   theFirstTaskWeDidntPost,

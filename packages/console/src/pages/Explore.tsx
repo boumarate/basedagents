@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { marketplace } from '../api/control.js';
 import type { PublicTask, TaskStatus } from '../api/types.js';
-import { fmtDate, taskErrText } from '../components/TaskBits.js';
+import { fmtDate, mdExcerpt, taskErrText } from '../components/TaskBits.js';
 
 /** Public task detail lives on the marketing site; the console detail is owner-only. */
 const PUBLIC_SITE = 'https://basedagents.ai';
@@ -34,16 +34,6 @@ function creatorLabel(t: PublicTask): string {
 }
 
 /** List-card preview: long markdown briefs read as plain prose, capped. */
-function preview(text: string): string {
-  const plain = text
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/\[(.*?)\]\([^)]*\)/g, '$1')
-    .replace(/[#`*_>|]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return plain.length > 240 ? `${plain.slice(0, 240).trimEnd()}…` : plain;
-}
-
 function TaskCard({ task }: { task: PublicTask }) {
   return (
     <li className="card" data-task-id={task.task_id}>
@@ -66,7 +56,7 @@ function TaskCard({ task }: { task: PublicTask }) {
           )}
           {task.category && <span className="pill">{task.category}</span>}
         </div>
-        <p className="card-note card-note-clamp" style={{ fontStyle: 'normal' }}>{preview(task.description)}</p>
+        <p className="card-excerpt">{mdExcerpt(task.description)}</p>
         <div className="card-meta">
           <span>Posted {fmtDate(task.created_at)}</span>
           <span className="dot">·</span>

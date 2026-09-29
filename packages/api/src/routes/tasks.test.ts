@@ -285,6 +285,20 @@ describe('Task Marketplace', () => {
       expect(data.tasks[0].category).toBe('research');
     });
 
+    it('rejects an unknown category or status → 400, never a shrug', async () => {
+      // Regression: one invalid value used to fail the whole query parse, which
+      // silently dropped ALL filters (status included) and returned every task.
+      await createTask(creator, { category: 'research' });
+
+      const res = await app.request('/v1/tasks?category=nosuchcategory');
+      expect(res.status).toBe(400);
+      const data = await res.json() as { error: string };
+      expect(data.error).toBe('bad_request');
+
+      const res2 = await app.request('/v1/tasks?status=bogus');
+      expect(res2.status).toBe(400);
+    });
+
     it('filters by capability', async () => {
       await createTask(creator, { required_capabilities: ['research'] });
       await createTask(creator, { required_capabilities: ['code'] });

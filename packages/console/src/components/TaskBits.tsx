@@ -16,6 +16,30 @@ export function fmtDate(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
+/**
+ * Task descriptions are Markdown written for the task page; a list card only
+ * gets a short plain-text excerpt. Drop the syntax that reads as noise in a
+ * card (fences, markers, link targets), collapse whitespace, cut on a word.
+ */
+export function mdExcerpt(md: string, max = 280): string {
+  const text = md
+    .replace(/```[\s\S]*?(?:```|$)/g, ' ') // fenced code blocks
+    .replace(/`([^`]*)`/g, '$1') // inline code
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1') // images -> alt text
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // links -> their text
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '') // heading marks
+    .replace(/^\s{0,3}>\s?/gm, '') // blockquote marks
+    .replace(/^\s{0,3}(?:[-*+]|\d+\.)\s+/gm, '') // list markers
+    .replace(/^\s{0,3}(?:[-*_]\s*){3,}$/gm, ' ') // horizontal rules
+    .replace(/\*\*([^*]+)\*\*/g, '$1') // bold
+    .replace(/\*([^*\n]+)\*/g, '$1') // italic
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), max - 20))}…`;
+}
+
 /** Human words for a task's lifecycle state (the pill next to its title). */
 export function statusLabel(task: Pick<OwnerTask, 'status' | 'review_state'>): { text: string; cls: string } {
   switch (task.status) {

@@ -101,8 +101,23 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .content { flex: 1; width: 100%; max-width: 880px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
 @media (max-width: 860px) {
   .app { flex-direction: column; }
-  .sidebar { position: static; width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
-  .side-bottom { margin-top: 0.6rem; }
+  /* On a phone the tall nav column would fill the first screen; flow the same
+     links as a compact chip row under the brand instead. */
+  .sidebar {
+    position: static; width: 100%; height: auto;
+    border-right: none; border-bottom: 1px solid var(--border);
+    flex-direction: row; flex-wrap: wrap; align-items: center;
+    gap: 0.4rem; padding: 0.75rem 1rem;
+  }
+  .side-brand { width: 100%; padding: 0 0 0.4rem; }
+  .side-head, .side-empty, .owner-id { display: none; }
+  .side-link {
+    border: 1px solid var(--border); background: var(--panel);
+    border-radius: 999px; padding: 0.3rem 0.75rem; font-size: 0.88rem;
+  }
+  .side-link.active { border-color: var(--accent-strong); }
+  .side-label { max-width: 40vw; }
+  .side-bottom { margin: 0 0 0 auto; padding: 0; border-top: none; display: flex; align-items: center; }
 }
 
 /* ── page ── */
@@ -119,11 +134,14 @@ code { font-family: var(--mono); font-size: 0.9em; }
   padding: 1.1rem 1.2rem;
 }
 .card-main { min-width: 0; }
-.card-title { font-weight: 600; font-size: 1.05rem; display: flex; align-items: center; gap: 0.6rem; }
+.card-title { font-weight: 600; font-size: 1.05rem; display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.6rem; min-width: 0; }
 .pill { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); background: #1c1a2e; border: 1px solid #363657; border-radius: 999px; padding: 0.1rem 0.5rem; }
-.card-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.card-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; min-width: 0; overflow-wrap: anywhere; }
 .card-meta .dot { opacity: 0.5; }
-.card-note { margin: 0.6rem 0 0; color: #dcdce8; font-style: italic; }
+.card-note { margin: 0.6rem 0 0; color: #dcdce8; font-style: italic; overflow-wrap: anywhere; }
+/* List-card preview of a long text: a plain excerpt, clamped to three lines. */
+.card-excerpt { margin: 0.55rem 0 0; color: #dcdce8; font-size: 0.92rem; line-height: 1.5; overflow-wrap: anywhere; }
+.card-excerpt, .card-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.75rem; }
 .chip { font-size: 0.78rem; color: #e6e6f0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 0.2rem 0.55rem; }
 .card-actions { display: flex; flex-direction: column; gap: 0.5rem; flex-shrink: 0; }
@@ -273,7 +291,9 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .mini-activity { list-style: none; padding: 0; margin: 0.9rem 0 0; display: grid; gap: 0.25rem; font-size: 0.82rem; }
 
 @media (max-width: 560px) {
-  .card { flex-direction: column; }
+  .content { padding: 1.25rem 1rem 3rem; }
+  .page-head { flex-wrap: wrap; gap: 0.6rem; }
+  .card { flex-direction: column; padding: 1rem; }
   .card-actions { flex-direction: row; width: 100%; }
   .card-actions .btn { flex: 1; }
   .form-inline { grid-template-columns: 1fr; }
@@ -293,7 +313,7 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 
 /* ── agent detail page (/agents/:agentId) ── */
 .agent-head { align-items: flex-start; gap: 1rem; }
-.card-title-link { color: inherit; text-decoration: none; }
+.card-title-link { color: inherit; text-decoration: none; min-width: 0; overflow-wrap: anywhere; }
 .card-title-link:hover { text-decoration: underline; }
 .tool-row { justify-content: space-between; }
 .tool-main { min-width: 0; }
@@ -354,11 +374,19 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 /* Inline filter row (browse board): bare inputs/selects, not .field-wrapped. */
 .form-row { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 1.25rem 0; }
 .explore-filters input { flex: 1 1 220px; }
+.explore-filters select { min-width: 0; }
 .explore-filters input, .explore-filters select {
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
   color: var(--text); font: inherit; font-size: 0.9rem; padding: 0.5rem 0.7rem;
+  max-width: 100%;
 }
 .explore-filters input:focus, .explore-filters select:focus { outline: none; border-color: var(--accent-strong); }
+/* Small screens: search on its own line, the two selects share the next.
+   (Placed after the .form-row flex rule so the grid wins the cascade.) */
+@media (max-width: 560px) {
+  .explore-filters { display: grid; grid-template-columns: 1fr 1fr; }
+  .explore-filters input { grid-column: 1 / -1; }
+}
 .banner-ok { color: #c8f5d6; background: #10241a; border: 1px solid #1d4a30; }
 .prewrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .timeline { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.35rem; font-size: 0.9rem; }
@@ -442,6 +470,5 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .review-consequence-none { color: var(--muted); }
 .draft-findings { margin: 0.3rem 0 0; padding-left: 1.2rem; display: grid; gap: 0.35rem; }
 
-/* Task-board cards: previews clamp to three lines; the full brief lives on
-   the task page. */
-.card-note-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+/* Task-board card previews clamp to three lines (.card-excerpt / .card-clamp,
+   defined with the card rules); the full brief lives on the task page. */

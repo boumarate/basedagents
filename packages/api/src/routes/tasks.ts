@@ -237,7 +237,12 @@ tasks.get('/', async (c) => {
     offset: c.req.query('offset') ? parseInt(c.req.query('offset')!, 10) : undefined,
   });
 
-  const q = query.success ? query.data : {};
+  // An invalid parameter is a 400, never a shrug: dropping the failed query
+  // silently served EVERY task (all statuses) to a typo like ?category=nosuch.
+  if (!query.success) {
+    return c.json({ error: 'bad_request', message: 'Invalid query parameter', details: query.error.flatten() }, 400);
+  }
+  const q = query.data;
   const limit = Math.min(q.limit ?? 20, 100);
   // ?min_usdc=1.00 — bounty floor in USDC, validated on its own so a malformed
   // value is a 400 instead of silently dropping every other filter.
