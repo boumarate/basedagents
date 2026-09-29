@@ -226,17 +226,25 @@ describe('migration 0047_task_expiry.sql', () => {
     return raw;
   }
 
-  it('grandfathers open rows with a 7-day window and leaves other statuses NULL', () => {
+  it('grandfathers every non-terminal row with a 7-day window; allowlisted and terminal rows keep NULL', () => {
     const db = replayTo('0047', (d) => {
       d.prepare(`INSERT INTO agents (id, public_key, name, description, capabilities, protocols) VALUES ('ag_pre', ?, 'a', 'd', '[]', '[]')`).run(Buffer.from('k'.repeat(32)));
       d.prepare(`INSERT INTO tasks (task_id, creator_agent_id, title, description, status, created_at) VALUES ('task_pre_open', 'ag_pre', 't', 'd', 'open', '2026-01-01T00:00:00Z')`).run();
+      // A pre-migration claim that later lapses must re-arm a window, not live forever on NULL.
       d.prepare(`INSERT INTO tasks (task_id, creator_agent_id, claimed_by_agent_id, title, description, status, created_at) VALUES ('task_pre_claimed', 'ag_pre', 'ag_pre', 't', 'd', 'claimed', '2026-01-01T00:00:00Z')`).run();
+      d.prepare(`INSERT INTO tasks (task_id, creator_agent_id, title, description, status, created_at, verified_at, accepted_by) VALUES ('task_pre_done', 'ag_pre', 't', 'd', 'verified', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 'creator')`).run();
+      // Managed (allowlisted) work belongs to the testing jobs' own timers.
+      d.prepare(`INSERT INTO tasks (task_id, creator_agent_id, title, description, status, created_at) VALUES ('task_pre_managed', 'ag_pre', 't', 'd', 'open', '2026-01-01T00:00:00Z')`).run();
+      d.prepare(`INSERT INTO task_claim_allowlist (task_id, agent_id, created_at) VALUES ('task_pre_managed', 'ag_pre', '2026-01-01T00:00:00Z')`).run();
     });
-    const open = db.prepare(`SELECT expires_at FROM tasks WHERE task_id = 'task_pre_open'`).get() as { expires_at: string | null };
-    expect(open.expires_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-    expect(Date.parse(open.expires_at as string)).toBeGreaterThan(Date.now() + 6.9 * DAY_MS);
-    const claimed = db.prepare(`SELECT expires_at FROM tasks WHERE task_id = 'task_pre_claimed'`).get() as { expires_at: string | null };
-    expect(claimed.expires_at).toBeNull();
+    const window = (id: string) =>
+      (db.prepare(`SELECT expires_at FROM tasks WHERE task_id = ?`).get(id) as { expires_at: string | null }).expires_at;
+    for (const id of ['task_pre_open', 'task_pre_claimed']) {
+      expect(window(id)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(Date.parse(window(id) as string)).toBeGreaterThan(Date.now() + 6.9 * DAY_MS);
+    }
+    expect(window('task_pre_done')).toBeNull();
+    expect(window('task_pre_managed')).toBeNull();
     expect(db.pragma('foreign_key_check')).toEqual([]);
     db.close();
   });

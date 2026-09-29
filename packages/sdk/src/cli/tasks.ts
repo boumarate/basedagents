@@ -681,13 +681,15 @@ const TERMINAL_STATUSES = new Set(['verified', 'closed', 'cancelled', 'expired']
 const PAYMENT_FINAL = new Set(['none', 'settled', 'refunded', 'expired']);
 
 /**
- * Done watching: cancelled/closed, or accepted with the payout final. An
+ * Done watching: a terminal status with the money in a final state. An
  * accepted bounty whose transfer is still pending/settling (or failed and
- * being retried by the registry) keeps the watch going.
+ * being retried by the registry) keeps the watch going — and so does a
+ * cancelled or expired escrow task whose deposit refund has not landed yet:
+ * the buyer's watch must not report done while their money is in flight.
+ * (`failed` retries on its own; only a state nothing will move counts.)
  */
 export function watchIsDone(t: { status?: unknown; payment_status?: unknown }): boolean {
   if (!TERMINAL_STATUSES.has(String(t.status))) return false;
-  if (t.status !== 'verified') return true;
   return PAYMENT_FINAL.has(String(t.payment_status ?? 'none'));
 }
 

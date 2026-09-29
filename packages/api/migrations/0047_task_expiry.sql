@@ -10,12 +10,15 @@
 -- each file in a better-sqlite3 transaction so the pragma is effective
 -- locally too.
 --
--- Grandfathering: rows that are `open` at migration time get
--- expires_at = now + 7 days (ISO-8601 with 'T', matching the app's
+-- Grandfathering: every non-terminal row (`open`, `claimed`, `submitted`)
+-- gets expires_at = now + 7 days (ISO-8601 with 'T', matching the app's
 -- toISOString() strings so lexicographic compares hold), so the first sweep
--- after a deploy never purges the board without a full week's notice.
--- Non-open rows keep NULL; a claimed task that later returns to `open` is
--- re-stamped by the claim-expiry gate.
+-- after a deploy never purges the board without a full week's notice, and a
+-- pre-migration claim that later lapses back to `open` re-arms a fresh
+-- window instead of living forever on a NULL. The exception is a task with
+-- task_claim_allowlist rows (managed Agent Testing work): its lifecycle
+-- belongs to the testing jobs, so it keeps NULL like the never-expiring
+-- house tasks posted after this migration.
 PRAGMA defer_foreign_keys = ON;
 
 CREATE TABLE tasks_backup AS SELECT * FROM tasks;
@@ -119,7 +122,9 @@ SELECT task_id, creator_agent_id, creator_owner_id, creator_kind, creator_assert
   escrow_deposit_nonce, escrow_deposit_tx_hash, escrow_funded_at, escrow_release_tx_hash, escrow_released_at,
   escrow_refund_tx_hash, escrow_refunded_at, max_active_claims_per_agent,
   rating, rating_comment, rating_context, rated_at,
-  CASE WHEN status = 'open' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+7 days') END,
+  CASE WHEN status IN ('open', 'claimed', 'submitted')
+         AND NOT EXISTS (SELECT 1 FROM task_claim_allowlist w WHERE w.task_id = tasks_backup.task_id)
+       THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+7 days') END,
   NULL
 FROM tasks_backup;
 

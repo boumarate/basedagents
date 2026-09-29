@@ -29,6 +29,9 @@ import {
   bountyView, notifyMatchingAgents, recordFunnel,
 } from '../tasks/service.js';
 import { defaultOpenExpiresAt } from '../tasks/expiry.js';
+// Owner expiry email (best-effort; proprietary control plane — absent tables skip).
+import { ControlStore } from '../control/store.js';
+import { emailSenderFromEnv } from '../control/email.js';
 import { recordEvent, drainOutbox } from '../events/service.js';
 import { slashBondForExpiredClaim } from '../tasks/governance.js';
 import { settleDueBondWithdrawals } from '../tasks/bonds.js';
@@ -135,9 +138,15 @@ export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string =
   // the same money path as cancel; escrowSweep retries a refused start), and
   // the gate voids a never-settled declared bounty. The window is part of the
   // gate's predicate, so a claim racing the sweep wins cleanly.
+  // The SELECT repeats the gate's blocking predicates so a deposit still
+  // moving in never occupies the batch: 50 rows the gate refuses every tick
+  // would starve every other due task behind them.
   const staleOpen = await db.all<{ task_id: string }>(
     `SELECT task_id FROM tasks WHERE status = 'open'
-       AND expires_at IS NOT NULL AND expires_at <= ? LIMIT ?`,
+       AND expires_at IS NOT NULL AND expires_at <= ?
+       AND payment_status NOT IN ('authorized','settling','settled')
+       AND NOT (escrow = 1 AND escrow_status = 'funding' AND settle_broadcast = 1)
+     LIMIT ?`,
     nowIso, BATCH,
   );
   for (const { task_id } of staleOpen) {
@@ -156,6 +165,26 @@ export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string =
         await startEscrowLeg(db, env, task_id, 'refund', 'cron', nowIso);
       } else if (task.bounty_amount && ['pending', 'failed'].includes(task.payment_status)) {
         await logPaymentEvent(db, task_id, 'expired', { reason: 'task_expired' }, nowIso);
+      }
+      // A human poster has no agent inbox: tell them by email, best-effort
+      // (LogEmailSender in dev; OSS deploys without the owners table skip).
+      if (task.creator_kind === 'owner' && task.creator_owner_id) {
+        try {
+          const owner = await new ControlStore(db).getOwner(task.creator_owner_id);
+          if (owner?.email) {
+            const origin = (env as { KEYRING_CONSOLE_ORIGIN?: string }).KEYRING_CONSOLE_ORIGIN || 'https://app.basedagents.ai';
+            const refundLine = task.escrow && task.escrow_status === 'funded'
+              ? ' The escrowed deposit is being refunded to the wallet that paid it.'
+              : '';
+            await emailSenderFromEnv(env).send({
+              to: owner.email,
+              subject: 'Your task expired unclaimed',
+              text: `Nobody claimed "${task.title}" within its open window, so it expired.${refundLine}\n\nPost it again to relist: ${origin}/tasks/${task_id}\n\n— BasedAgents`,
+            });
+          }
+        } catch (err) {
+          console.error(`[cron] expiry email failed for ${task_id}:`, err);
+        }
       }
       await recordFunnel(db, 'task_expired', task_id, null);
     } catch (err) {

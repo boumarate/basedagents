@@ -309,6 +309,8 @@ export interface CreateTaskInput {
   escrow?: boolean;
   /** Campaign cap: max claimed+submitted tasks one agent may hold across your tasks (1–1000). */
   max_active_claims_per_agent?: number;
+  /** Open window in days before an unclaimed task expires (D13): 1–90, default 7; house accounts may exceed the cap or send 0 = never. */
+  expires_in_days?: number;
 }
 
 /**

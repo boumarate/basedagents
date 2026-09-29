@@ -392,9 +392,14 @@ export function escrowView(t: TaskRow): EscrowView | null {
   };
 }
 
-/** An open task an agent may claim right now: an escrow task only once its deposit has settled. */
-export function claimable(t: Pick<TaskRow, 'status' | 'escrow' | 'escrow_status'>): boolean {
-  return t.status === 'open' && (!t.escrow || t.escrow_status === 'funded');
+/**
+ * An open task an agent may claim right now: an escrow task only once its
+ * deposit has settled, and never past its open window (the claim gate refuses
+ * a lapsed task before the sweep marks it, so the shown value must agree).
+ */
+export function claimable(t: Pick<TaskRow, 'status' | 'escrow' | 'escrow_status'> & { expires_at?: string | null }): boolean {
+  return t.status === 'open' && (!t.escrow || t.escrow_status === 'funded')
+    && (!t.expires_at || t.expires_at > new Date().toISOString());
 }
 
 /** The public shape of a task row: internals stripped, derived fields added. */
