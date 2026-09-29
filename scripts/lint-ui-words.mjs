@@ -28,6 +28,7 @@ const SURFACES = [
   'packages/console/src/pages/AddAgent.tsx',
   'packages/console/src/pages/Login.tsx',
   'packages/console/src/pages/Start.tsx',
+  'packages/console/src/pages/SignWallet.tsx',
   'packages/console/src/pages/Board.tsx',
   'packages/console/src/pages/Tasks.tsx',
   'packages/console/src/pages/TaskNew.tsx',

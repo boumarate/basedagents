@@ -1,10 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import {
-  setupTestDb,
-  createTestApp,
-  createTestAgent,
-  signRequest,
-} from '../test-helpers.js';
+import { setupTestDb, createTestApp, createTestAgent, signRequest, walletBindBody, TEST_WALLET_KEYS } from '../test-helpers.js';
 import type { SQLiteAdapter } from '../db/sqlite-adapter.js';
 import type { TestKeypair } from '../test-helpers.js';
 import { encryptPaymentSignature, decryptPaymentSignature } from './crypto.js';
@@ -81,13 +76,16 @@ describe('x402 Payment Integration (sign-at-accept)', () => {
     return { res, task_id: data.task_id };
   }
 
+  /**
+   * The deliverer's payout wallet, as a verified bind would leave it. These
+   * tests are about payments; binding (the proof of control) is covered in
+   * routes/agents.test.ts and the Wallet Identity block below.
+   */
   async function setWallet(agent: TestKeypair, address = TEST_WALLET): Promise<void> {
-    const body = JSON.stringify({ wallet_address: address });
-    const headers = await signRequest(agent, 'PATCH', `/v1/agents/${agent.agentId}/wallet`, body);
-    const r = await app.request(`/v1/agents/${agent.agentId}/wallet`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json', ...headers }, body,
-    });
-    expect(r.status).toBe(200);
+    await db.run(
+      "UPDATE agents SET wallet_address = ?, wallet_network = 'eip155:8453', wallet_verified_at = ? WHERE id = ?",
+      address, new Date().toISOString(), agent.agentId,
+    );
   }
 
   async function claimAndDeliver(taskId: string): Promise<void> {
@@ -181,10 +179,8 @@ describe('x402 Payment Integration (sign-at-accept)', () => {
       expect(data.wallet_network).toBe('eip155:8453');
     });
 
-    it('PATCH /v1/agents/:id/wallet updates wallet address', async () => {
-      const body = JSON.stringify({
-        wallet_address: '0x1234567890abcdef1234567890abcdef12345678',
-      });
+    it('PATCH /v1/agents/:id/wallet binds a wallet proven by its signature (D8)', async () => {
+      const body = JSON.stringify(walletBindBody(creator.agentId, TEST_WALLET_KEYS.a));
       const headers = await signRequest(creator, 'PATCH', `/v1/agents/${creator.agentId}/wallet`, body);
 
       const res = await app.request(`/v1/agents/${creator.agentId}/wallet`, {
@@ -194,7 +190,8 @@ describe('x402 Payment Integration (sign-at-accept)', () => {
       });
       expect(res.status).toBe(200);
       const data = await res.json() as Record<string, unknown>;
-      expect(data.wallet_address).toBe('0x1234567890abcdef1234567890abcdef12345678');
+      expect(data.wallet_address).toBe('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266');
+      expect(data.wallet_verified).toBe(true);
     });
 
     it('PATCH /v1/agents/:id/wallet rejects invalid address', async () => {

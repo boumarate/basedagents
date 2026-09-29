@@ -8,6 +8,10 @@ import { hashProfile, computeChainHash, GENESIS_HASH } from '../crypto/index.js'
 import { isSafeUrl } from '../lib/url-validator.js';
 import { nameSkeleton } from '../lib/skeleton.js';
 import { ratingSummary } from '../tasks/service.js';
+import type { DBAdapter } from '../db/adapter.js';
+import { generatePublicId } from '../lib/ids.js';
+import { freshBindMessage, verifyBindProof } from '../wallets/bind.js';
+import { toChecksumAddress } from '../payments/house-wallet.js';
 
 const agents = new Hono<AppEnv>();
 
@@ -69,6 +73,7 @@ function formatAgent(agent: Agent) {
     webhook_url: agent.webhook_url ?? null,
     wallet_address: agent.wallet_address ?? null,
     wallet_network: agent.wallet_network ?? null,
+    wallet_verified: !!(agent.wallet_address && agent.wallet_verified_at),
     status: agent.status,
     reputation_score: agent.reputation_score,
     verification_count: agent.verification_count,
@@ -443,29 +448,51 @@ agents.get('/:id/reputation', async (c) => {
   });
 });
 
-/**
- * GET /v1/agents/:id/wallet — Public wallet info
- */
-agents.get('/:id/wallet', async (c) => {
-  const id = c.req.param('id');
-  const db = c.get('db');
-
-  const agent = await db.get<{ wallet_address: string | null; wallet_network: string | null }>(
-    'SELECT wallet_address, wallet_network FROM agents WHERE id = ?', id
+/** The public view of an agent's payout wallet (GET and the PATCH response share it). */
+async function walletView(db: DBAdapter, id: string) {
+  const agent = await db.get<{ wallet_address: string | null; wallet_network: string | null; wallet_verified_at: string | null }>(
+    'SELECT wallet_address, wallet_network, wallet_verified_at FROM agents WHERE id = ?', id,
   );
-  if (!agent) {
-    return c.json({ error: 'not_found', message: 'Agent not found' }, 404);
-  }
-
-  return c.json({
+  if (!agent) return null;
+  const verified = !!(agent.wallet_address && agent.wallet_verified_at);
+  // The proof shown is the live bind for exactly this wallet and network.
+  const proof = verified
+    ? await db.get<{ message: string; signature: string; signer_kind: string; bound_at: string }>(
+      `SELECT message, signature, signer_kind, bound_at FROM agent_wallet_bindings
+       WHERE agent_id = ? AND unbound_at IS NULL AND lower(wallet_address) = lower(?) AND wallet_network = ?
+       ORDER BY bound_at DESC LIMIT 1`, id, agent.wallet_address, agent.wallet_network,
+    )
+    : null;
+  return {
     agent_id: id,
     wallet_address: agent.wallet_address,
     wallet_network: agent.wallet_network,
-  });
+    /** D8: true when the address was bound with a signature from it; false for an older, unverified address. */
+    wallet_verified: verified,
+    wallet_verified_at: verified ? agent.wallet_verified_at : null,
+    /** The signed bind message, so anyone can re-check it. */
+    wallet_proof: proof ?? null,
+  };
+}
+
+/**
+ * GET /v1/agents/:id/wallet — Public wallet info, with the proof of control when there is one.
+ */
+agents.get('/:id/wallet', async (c) => {
+  const view = await walletView(c.get('db'), c.req.param('id'));
+  if (!view) return c.json({ error: 'not_found', message: 'Agent not found' }, 404);
+  return c.json(view);
 });
 
 /**
- * PATCH /v1/agents/:id/wallet — Update wallet address (AgentSig auth, owner only)
+ * PATCH /v1/agents/:id/wallet — Set, change or clear the payout wallet (AgentSig auth, own agent only).
+ *
+ * Decision D8: bring your own address, but prove control. Setting or changing
+ * the address or its network needs `wallet_proof: { message, signature }`, a
+ * signature FROM the wallet over the bind message (wallets/bind.ts). Without
+ * one the answer is 400 wallet_proof_required with `sign_this`, a fresh
+ * message to sign. `wallet_address: null` clears the wallet with no proof.
+ * Re-sending the current, verified wallet is a no-op.
  */
 agents.patch('/:id/wallet', agentAuth, async (c) => {
   const id = c.req.param('id');
@@ -483,37 +510,80 @@ agents.patch('/:id/wallet', agentAuth, async (c) => {
   if (!parsed.success) {
     return c.json({ error: 'bad_request', message: 'Validation failed', details: parsed.error.flatten() }, 400);
   }
-
-  const db = c.get('db');
   const updates = parsed.data;
-  const setClauses: string[] = [];
-  const params: unknown[] = [];
-
-  if (updates.wallet_address !== undefined) {
-    setClauses.push('wallet_address = ?');
-    params.push(updates.wallet_address);
-  }
-  if (updates.wallet_network !== undefined) {
-    setClauses.push('wallet_network = ?');
-    params.push(updates.wallet_network);
-  }
-
-  if (setClauses.length === 0) {
+  if (updates.wallet_address === undefined && updates.wallet_network === undefined) {
     return c.json({ error: 'bad_request', message: 'No fields to update' }, 400);
   }
 
-  params.push(id);
-  await db.run(`UPDATE agents SET ${setClauses.join(', ')} WHERE id = ?`, ...params);
-
-  const agent = await db.get<{ wallet_address: string | null; wallet_network: string | null }>(
-    'SELECT wallet_address, wallet_network FROM agents WHERE id = ?', id
+  const db = c.get('db');
+  const nowIso = new Date().toISOString();
+  const current = await db.get<{ wallet_address: string | null; wallet_network: string | null; wallet_verified_at: string | null }>(
+    'SELECT wallet_address, wallet_network, wallet_verified_at FROM agents WHERE id = ?', id,
   );
 
-  return c.json({
-    agent_id: id,
-    wallet_address: agent!.wallet_address,
-    wallet_network: agent!.wallet_network,
-  });
+  // Clearing needs no proof: nothing new is bound.
+  if (updates.wallet_address === null) {
+    await db.run(
+      'UPDATE agents SET wallet_address = NULL, wallet_verified_at = NULL, wallet_network = COALESCE(?, wallet_network) WHERE id = ?',
+      updates.wallet_network ?? null, id,
+    );
+    await db.run('UPDATE agent_wallet_bindings SET unbound_at = ? WHERE agent_id = ? AND unbound_at IS NULL', nowIso, id);
+    return c.json(await walletView(db, id));
+  }
+
+  const address = updates.wallet_address ?? current?.wallet_address ?? null;
+  const network = updates.wallet_network ?? current?.wallet_network ?? 'eip155:8453';
+  if (!address) {
+    return c.json({ error: 'bad_request', message: 'Set wallet_address (there is no wallet to change the network of).' }, 400);
+  }
+  const unchanged = !!current?.wallet_address && current.wallet_address.toLowerCase() === address.toLowerCase()
+    && current.wallet_network === network && !!current.wallet_verified_at;
+  if (unchanged && !updates.wallet_proof) return c.json(await walletView(db, id));
+
+  if (!network.startsWith('eip155:')) {
+    return c.json({ error: 'wallet_proof_invalid', reason: 'unsupported_network', message: `A payout wallet on ${network} can't be proven with an EVM signature. Use an eip155 network, e.g. eip155:8453 (Base).` }, 400);
+  }
+  if (!updates.wallet_proof) {
+    return c.json({
+      error: 'wallet_proof_required',
+      message: 'Setting a payout wallet needs a signature from it. Sign sign_this with the wallet (EIP-191 personal_sign, e.g. `basedagents wallet set` with BASEDAGENTS_WALLET_PRIVATE_KEY, or your wallet app), then resend with wallet_proof: { message, signature }. The message is valid for 15 minutes.',
+      sign_this: freshBindMessage(id, address, network),
+    }, 400);
+  }
+
+  const proof = await verifyBindProof(c.env, { agentId: id, address, network, message: updates.wallet_proof.message, signature: updates.wallet_proof.signature });
+  if (!proof.ok) {
+    if (proof.reason === 'rpc_unavailable') return c.json({ error: 'wallet_proof_unavailable', message: proof.detail }, 503);
+    return c.json({ error: 'wallet_proof_invalid', reason: proof.reason, message: proof.detail }, 400);
+  }
+
+  // One atomic write: record the bind, retire the older ones, point the agent
+  // at the wallet. The UNIQUE (agent_id, nonce) constraint makes a reused
+  // message fail the whole batch, so a signed message binds at most once.
+  try {
+    await db.batch([
+      {
+        sql: `INSERT INTO agent_wallet_bindings (id, agent_id, wallet_address, wallet_network, signer_kind, message, signature, nonce, bound_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [generatePublicId('wbind'), id, toChecksumAddress(address), network, proof.signerKind,
+          updates.wallet_proof.message, updates.wallet_proof.signature, proof.fields.nonce, nowIso],
+      },
+      {
+        sql: 'UPDATE agent_wallet_bindings SET unbound_at = ? WHERE agent_id = ? AND unbound_at IS NULL AND nonce != ?',
+        params: [nowIso, id, proof.fields.nonce],
+      },
+      {
+        sql: 'UPDATE agents SET wallet_address = ?, wallet_network = ?, wallet_verified_at = ? WHERE id = ?',
+        params: [toChecksumAddress(address), network, nowIso, id],
+      },
+    ]);
+  } catch (err) {
+    if (/UNIQUE/i.test(err instanceof Error ? err.message : String(err))) {
+      return c.json({ error: 'wallet_proof_reused', message: 'This signed message was already used. Sign a fresh one.' }, 409);
+    }
+    throw err;
+  }
+  return c.json({ ...(await walletView(db, id)), signer_kind: proof.signerKind });
 });
 
 export default agents;

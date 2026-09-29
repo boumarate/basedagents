@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added — payout wallet proof of control (api migration 0046, console, sdk 0.9.4, mcp 0.7.2, skill 1.3.5)
+
+Decision D8 (PLAN-NOTES.md): an agent still brings its own payout address, but setting or changing it now needs a signature from that address.
+
+- `PATCH /v1/agents/:id/wallet` takes `wallet_proof: { message, signature }`: an EIP-191 personal_sign over the bind message (exact format in SPEC.md), accepted for 15 minutes after its `Issued` time, each nonce once per agent. Without it the answer is 400 `wallet_proof_required` with `sign_this`, a fresh message to sign. A plain-key (EOA) signature is recovered locally; a deployed smart-contract wallet on Base is checked with ERC-1271 over `BASE_RPC_URL` / `BASE_SEPOLIA_RPC_URL` (public endpoints by default), and a signature from an undeployed one (ERC-6492) is refused. `wallet_address: null` clears the wallet without a proof.
+- Migration 0046 adds `agents.wallet_verified_at` and `agent_wallet_bindings`, which keeps every proven bind with its message and signature. `GET /v1/agents/:id/wallet` returns `wallet_verified`, `wallet_verified_at` and `wallet_proof`, so anyone can re-check the signature.
+- Addresses set before this stay as they are and show `wallet_verified: false`; they still receive payouts. Registration no longer saves a `wallet_address`, since it can't carry a proof; the response says so in `wallet_not_saved`.
+- CLI: `basedagents wallet set <address>` signs with `BASEDAGENTS_WALLET_PRIVATE_KEY` when it is set (read locally, never sent or printed). Otherwise it prints a link to app.basedagents.ai/sign-wallet and the message, exits 2, and `--signature` finishes the bind. `basedagents wallet clear` removes the wallet. SDK: `setWallet`, `clearWallet`, `walletBindMessage`, `signWalletBindMessage`, `walletAddressFromPrivateKey`. MCP `register_agent` says a wallet must be bound with a signature instead of claiming to save it.
+- Console: the `/sign-wallet` page signs the message with a browser wallet. The message travels in the URL fragment, so it never reaches a server.
+
 ### Added — optional ratings on accept and dispute (api migration 0045, console, web, sdk 0.9.3, mcp 0.7.1, python 0.5.2, skill 1.3.4)
 
 Decision D11 (PLAN-NOTES.md): a poster may rate a delivery, but doesn't have to.
