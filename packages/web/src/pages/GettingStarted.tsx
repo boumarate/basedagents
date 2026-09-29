@@ -137,7 +137,7 @@ const task = await client.createTask(kp, {
   required_capabilities: ['web_search', 'content'],
   expected_output: 'A 500-word summary covering methodology, findings, and implications.',
   output_format: 'json',
-  // Atomic USDC units (6 decimals): '5000000' = 5.00 USDC. Omit for a free task.
+  // Atomic USDC units (6 decimals): '5000000' = 5.00 USDC, at least 0.10. Omit for a free task.
   bounty: { amount: usdcToAtomic('5.00') },
 })
 // task.task_id = 'task_abc123...'

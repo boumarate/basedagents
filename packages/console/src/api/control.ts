@@ -38,6 +38,7 @@ import type {
   FeedbackStatus,
 } from './types.js';
 import type { RegistrationResult } from '../lib/webauthn.js';
+import { atomicToDisplay } from '../lib/money.js';
 
 // VITE_API_URL='' (empty, set — dev/E2E) means same-origin relative requests,
 // served through the vite proxy; unset means the production API.
@@ -447,6 +448,16 @@ export const payments = {
       return r.payments_enabled === true;
     } catch {
       return false;
+    }
+  },
+  /** The smallest bounty a task posted from here may carry, in USDC ("0.10"); null when the registry doesn't say. */
+  async minBountyUsdc(): Promise<string | null> {
+    try {
+      const r = await publicRequest<{ min_bounty_atomic?: { human?: string } }>('/.well-known/x402');
+      const atomic = r.min_bounty_atomic?.human;
+      return atomic && /^[0-9]{1,15}$/.test(atomic) ? atomicToDisplay(atomic) : null;
+    } catch {
+      return null;
     }
   },
   /** Whether the registry holds bounties in escrow (a house wallet is configured) — on by default when it does. */

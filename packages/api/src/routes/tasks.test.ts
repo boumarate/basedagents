@@ -1290,6 +1290,37 @@ describe('Task Marketplace', () => {
         resetPaymentsForTests();
       }
     });
+
+    it('refuses a bounty under the minimum (D3) on both paths, before any escrow deposit; free tasks and the floor itself pass', async () => {
+      enablePaymentsForTests();
+      try {
+        const post = async (appUnderTest: typeof app, amount: string | null, escrow = false) => {
+          const body = JSON.stringify({ title: 'T', description: 'D', required_capabilities: ['code'], escrow, ...(amount ? { bounty: { amount, token: 'USDC', network: 'eip155:8453' } } : {}) });
+          const headers = await signRequest(creator, 'POST', '/v1/tasks', body);
+          return appUnderTest.request('/v1/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body });
+        };
+        const before = (await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM tasks'))!.n;
+
+        for (const escrow of [false, true]) {
+          const res = await post(app, '99999', escrow);
+          expect(res.status).toBe(400); // never the escrow 402: nothing is signed for a post that would be refused
+          expect(await res.json()).toMatchObject({ error: 'bounty_below_minimum', minimum_amount: '100000', minimum_usdc: '0.10' });
+        }
+        expect((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM tasks'))!.n).toBe(before);
+
+        expect((await post(app, '100000')).status).toBe(200); // the floor is inclusive
+        expect((await post(app, null)).status).toBe(200);     // a free task has no floor
+
+        // The floor is config: MIN_BOUNTY_ATOMIC_A2A raises it for agent posters.
+        const strict = createTestApp(db, { MIN_BOUNTY_ATOMIC_A2A: '1000000' });
+        const raised = await post(strict, '500000');
+        expect(raised.status).toBe(400);
+        expect(await raised.json()).toMatchObject({ error: 'bounty_below_minimum', minimum_amount: '1000000', minimum_usdc: '1.00' });
+        expect((await post(strict, '1000000')).status).toBe(200);
+      } finally {
+        resetPaymentsForTests();
+      }
+    });
   });
 
   // ─── Bounty tasks: wallet required to claim (sign-at-accept model) ───

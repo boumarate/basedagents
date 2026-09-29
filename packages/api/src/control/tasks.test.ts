@@ -105,6 +105,8 @@ class Authenticator {
 describe('Owner task routes', () => {
   let db: SQLiteAdapter;
   let app: Hono<AppEnv>;
+  /** Extra bindings for one test (reset before each). */
+  let extraEnv: Record<string, string> = {};
   let store: ControlStore;
   let agent: TestKeypair & { name: string };
   const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
@@ -189,6 +191,7 @@ describe('Owner task routes', () => {
   }
 
   beforeEach(async () => {
+    extraEnv = {};
     db = setupTestDb();
     await installControlTables();
     store = new ControlStore(db);
@@ -200,7 +203,7 @@ describe('Owner task routes', () => {
     app = new Hono<AppEnv>();
     app.use('*', async (c, next) => {
       c.set('db', db);
-      (c.env as AppEnv['Bindings']) = { ...(c.env ?? {}), PAYMENT_ENCRYPTION_KEY: 'a'.repeat(64), CLAIM_BOND_REQUIRED: '0' };
+      (c.env as AppEnv['Bindings']) = { ...(c.env ?? {}), PAYMENT_ENCRYPTION_KEY: 'a'.repeat(64), CLAIM_BOND_REQUIRED: '0', ...extraEnv } as AppEnv['Bindings'];
       await next();
     });
     app.route('/v1/owner', ownerTaskRoutes);
@@ -262,6 +265,26 @@ describe('Owner task routes', () => {
     const res = await composeRaw(cookie, { title: 'x', description: 'y', output_format: 'json', bounty: { amount: '5000000' } });
     expect(res.status).toBe(503);
     expect(((await res.json()) as { error: string }).error).toBe('payments_unavailable');
+  });
+
+  it('refuses a bounty under the minimum (D3) before the escrow challenge: no 402, nothing to sign', async () => {
+    enablePaymentsForTests();
+    const { cookie } = await ownerSession();
+    for (const escrow of [undefined, false]) {
+      const res = await ownerPost('/v1/owner/tasks', {
+        title: 'Tiny', description: 'x', output_format: 'json', ...(escrow === undefined ? {} : { escrow }),
+        bounty: { amount: '99999', token: 'USDC', network: 'eip155:8453' },
+      }, cookie);
+      expect(res.status).toBe(400);
+      expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
+      expect(await res.json()).toMatchObject({ error: 'bounty_below_minimum', minimum_amount: '100000', minimum_usdc: '0.10' });
+    }
+    // MIN_BOUNTY_ATOMIC_HUMAN sets the console floor on its own.
+    extraEnv = { MIN_BOUNTY_ATOMIC_HUMAN: '5000000' };
+    const raised = await composeRaw(cookie, { title: 'x', description: 'y', output_format: 'json', escrow: false, bounty: { amount: '1000000' } });
+    expect(raised.status).toBe(400);
+    expect(await raised.json()).toMatchObject({ error: 'bounty_below_minimum', minimum_usdc: '5.00' });
+    expect((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM tasks'))!.n).toBe(0);
   });
 
   it('composes a bounty task when payments are enabled: stores the bounty, payment_status=pending, declares it', async () => {

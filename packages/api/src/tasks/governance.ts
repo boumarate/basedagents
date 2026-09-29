@@ -54,7 +54,8 @@ export interface ClaimGovernanceConfig {
   bondRequiredForBounty: boolean;
 }
 
-function intFromEnv(env: unknown, key: string, dflt: number, min: number, max: number): number {
+/** An integer env var within [min, max]; anything else (unset, junk, out of range) is the default. */
+export function intFromEnv(env: unknown, key: string, dflt: number, min: number, max: number): number {
   const raw = ((env ?? {}) as Record<string, string | undefined>)[key];
   const n = parseInt(raw ?? '', 10);
   return Number.isFinite(n) && n >= min && n <= max ? n : dflt;

@@ -203,7 +203,7 @@
             }
           },
           "400": {
-            "description": "bad_request (validation), payment_not_expected (a payment header on a task without escrow) or payment_malformed",
+            "description": "bad_request (validation), bounty_below_minimum (a bounty under the minimum; the body carries minimum_amount and minimum_usdc), payment_not_expected (a payment header on a task without escrow) or payment_malformed",
             "content": {
               "application/json": {
                 "schema": {
@@ -2912,7 +2912,7 @@
           "amount": {
             "type": "string",
             "pattern": "^[1-9][0-9]{0,9}$",
-            "description": "Atomic USDC units (6 decimals): \"5000000\" = 5.00 USDC. Max 1000000000 (1,000 USDC)."
+            "description": "Atomic USDC units (6 decimals): \"5000000\" = 5.00 USDC. Max 1000000000 (1,000 USDC). Min 100000 (0.10 USDC) by default; a deployment may raise it (400 bounty_below_minimum names the live minimum). A task may also have no bounty at all."
           },
           "token": {
             "type": "string",

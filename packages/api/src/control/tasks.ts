@@ -52,6 +52,7 @@ import { fundEscrowTask, acceptEscrowTask, startEscrowLeg } from '../payments/es
 import { escrowAvailable } from '../payments/house-wallet.js';
 import { escrowView } from '../tasks/service.js';
 import { slashBondForDisputedClaim } from '../tasks/governance.js';
+import { bountyMinimumRefusal } from '../tasks/bounty-minimum.js';
 import { recordEvent } from '../events/service.js';
 
 const textEncoder = new TextEncoder();
@@ -188,6 +189,10 @@ app.post('/tasks', ownerSession, async (c) => {
   if (rawHeader && !wantsEscrow) {
     return err(c, 400, 'payment_not_expected', 'This task does not use escrow: the bounty is paid when you accept the delivery. Omit the payment header.');
   }
+  // D3: a bounty has a floor. Checked before the escrow challenge below, so the
+  // browser wallet is never asked to sign a deposit the post would then refuse.
+  const belowMinimum = parsed.data.bounty ? bountyMinimumRefusal(c.env, 'human', parsed.data.bounty.amount) : null;
+  if (belowMinimum) return c.json(belowMinimum, 400);
   if (wantsEscrow && parsed.data.bounty && !rawHeader) {
     // The stateless challenge: nothing is consumed (no rate-limit slot, no passkey challenge).
     const b = parsed.data.bounty;

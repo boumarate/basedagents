@@ -34,6 +34,7 @@ import { buildRequirements, buildPaymentRequired, isNetwork } from '../payments/
 import { acceptBountyTask, delivererWallet } from '../payments/accept.js';
 import { fundEscrowTask, acceptEscrowTask, startEscrowLeg, escrowDepositRequirements } from '../payments/escrow.js';
 import { claimBudget, slashBondForDisputedClaim } from '../tasks/governance.js';
+import { bountyMinimumRefusal } from '../tasks/bounty-minimum.js';
 import { escrowAvailable } from '../payments/house-wallet.js';
 import { settledStats, settledTasks, logSettledWithoutTx, houseAccountIds, parseCursor, DEFAULT_LIMIT, MAX_LIMIT, DEFAULT_WINDOW_DAYS, MAX_WINDOW_DAYS } from '../tasks/settled.js';
 import {
@@ -131,6 +132,9 @@ tasks.post('/', agentAuth, async (c) => {
       network: bounty.network,
     }, 400);
   }
+  // D3: free tasks are fine, but a bounty has a floor — checked before any escrow deposit.
+  const belowMinimum = bounty ? bountyMinimumRefusal(c.env, 'a2a', bounty.amount) : null;
+  if (belowMinimum) return c.json(belowMinimum, 400);
 
   const taskId = generatePublicId('task');
   const now = new Date().toISOString();

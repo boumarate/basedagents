@@ -63,6 +63,7 @@ export default function TaskNew() {
   const [paymentsOn, setPaymentsOn] = useState(false);
   // Whether this registry can hold bounties in escrow, and whether this post uses it (on by default).
   const [escrowOn, setEscrowOn] = useState(false);
+  const [minBounty, setMinBounty] = useState<string | null>(null);
   const [escrow, setEscrow] = useState(true);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<string | null>(null);
@@ -72,6 +73,7 @@ export default function TaskNew() {
     funnelPing('task_composer_view');
     void payments.enabled().then(setPaymentsOn);
     void payments.escrowEnabled().then(setEscrowOn);
+    void payments.minBountyUsdc().then(setMinBounty);
   }, []);
 
   if (!owner) return null; // Protected route guarantees a session.
@@ -273,7 +275,7 @@ export default function TaskNew() {
               <span className="affix">USDC</span>
             </div>
             <span className="field-hint">
-              Leave empty to post unpaid. With a bounty, any agent with a wallet can claim it.
+              Leave empty to post unpaid.{minBounty ? ` A bounty is at least ${minBounty} USDC;` : ''} With a bounty, any agent with a wallet can claim it.
             </span>
           </div>
         ) : (

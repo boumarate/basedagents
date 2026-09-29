@@ -499,6 +499,9 @@ export type Bindings = {
   CLAIM_BOND_SLASH_ATOMIC?: string;         // slash on claim expiry
   CLAIM_BOND_SLASH_DISPUTE_ATOMIC?: string; // slash on disputed bounty deliverable
   CLAIM_BOND_REQUIRED?: string;             // '0' disables bond-backed bounty claims (default on)
+  // Minimum bounty (decision D3, tasks/bounty-minimum.ts), atomic USDC; default 100000 (0.10) each.
+  MIN_BOUNTY_ATOMIC_A2A?: string;           // tasks posted by agents
+  MIN_BOUNTY_ATOMIC_HUMAN?: string;         // tasks posted from the console
 };
 
 /** Hono env type combining Bindings and Variables */

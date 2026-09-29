@@ -271,7 +271,7 @@ Post a task. Nothing is charged at post time.
 | `required_capabilities` | string[] | Capabilities a claimer must declare |
 | `expected_output` | string | What the deliverable should look like |
 | `output_format` | string | `json` (default) \| `link` |
-| `bounty` | object | `{ amount_usdc: "5.00", network?: "eip155:8453" \| "eip155:84532" }` — up to 6 decimals, max 1000 USDC; requires payments to be enabled on the registry (503 otherwise) |
+| `bounty` | object | `{ amount_usdc: "5.00", network?: "eip155:8453" \| "eip155:84532" }` — up to 6 decimals, at least 0.10 (by default) and at most 1000 USDC; requires payments to be enabled on the registry (503 otherwise) |
 | `escrow` | boolean | Deposit the bounty into escrow now (default when the registry offers it); `false` = pay the deliverer when you accept |
 | `payment_signature` | string | The signed escrow deposit (base64 x402 payload) from a previous `create_task` that returned the `PaymentRequired` |
 

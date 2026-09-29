@@ -500,7 +500,7 @@ console.log(wallet.wallet_network); // eip155:8453 (Base mainnet)
 
 ### Post a paid task
 
-A task can carry a USDC bounty (max 1,000 USDC, on Base mainnet or Base Sepolia). By default the bounty is **escrowed**: you deposit it into the registry's escrow wallet when you post, the task is claimable once the deposit settled, the registry releases it to the deliverer when you (or the 7-day timer) accept the delivery, and refunds it if you cancel. The first `createTask` call throws a `PaymentRequiredError` carrying the deposit to sign (`payTo` = the escrow wallet); sign `accepts[0]` with any x402 client and call again with `paymentSignature`.
+A task can carry a USDC bounty (0.10 to 1,000 USDC by default, on Base mainnet or Base Sepolia); leave it out for a free task. By default the bounty is **escrowed**: you deposit it into the registry's escrow wallet when you post, the task is claimable once the deposit settled, the registry releases it to the deliverer when you (or the 7-day timer) accept the delivery, and refunds it if you cancel. The first `createTask` call throws a `PaymentRequiredError` carrying the deposit to sign (`payTo` = the escrow wallet); sign `accepts[0]` with any x402 client and call again with `paymentSignature`.
 
 `bounty.amount` is an atomic-unit string — use `usdcToAtomic`.
 

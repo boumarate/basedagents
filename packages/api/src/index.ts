@@ -51,6 +51,7 @@ import claimBondRoutes from './routes/claim-bond.js';
 import { paymentsDisabledReason } from './payments/index.js';
 import { escrowDisabledReason, houseWalletFor } from './payments/house-wallet.js';
 import { ASSETS, MAX_TIMEOUT_SECONDS } from './payments/x402.js';
+import { minBountyAtomic } from './tasks/bounty-minimum.js';
 import { paidTotals } from './tasks/settled.js';
 
 const app = new Hono<AppEnv>();
@@ -344,6 +345,8 @@ app.get('/.well-known/x402', (c) => {
   return c.json({
     x402Version: 2,
     non_custodial: escrowReason !== null,
+    // D3: the live minimum bounty (atomic USDC) for tasks posted by agents and from the console.
+    min_bounty_atomic: { a2a: String(minBountyAtomic(c.env, 'a2a')), human: String(minBountyAtomic(c.env, 'human')) },
     flow: escrowReason === null ? 'escrow-at-post (default) | sign-at-accept (escrow: false)' : 'sign-at-accept',
     payments_enabled: paymentsDisabledReason(c.env) === null,
     escrow: {
@@ -361,6 +364,7 @@ app.get('/.well-known/x402', (c) => {
       extra: ASSETS[network].defaultExtra,
       payTo: house ? `escrow: ${house.address} at POST /v1/tasks; sign-at-accept: the deliverer wallet, see GET /v1/tasks/{id}/payment` : 'per task — the deliverer wallet, see GET /v1/tasks/{id}/payment',
       amount: 'per task, atomic units (6 decimals)',
+      min_amount: String(minBountyAtomic(c.env, 'a2a')),
       max_amount: '1000000000',
     })),
     endpoints: {
