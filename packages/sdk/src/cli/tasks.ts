@@ -10,9 +10,9 @@
  *   tasks claim <id>
  *   tasks deliver <id> --summary S [--pr-url u | --content c | --artifact u1,u2]
  *                 [--type json|link|pr] [--commit <sha>]
- *   tasks accept <id> [--note N] [--payment-signature <b64>|@file|-]
+ *   tasks accept <id> [--note N] [--rating 1-5 [--rating-comment C]] [--payment-signature <b64>|@file|-]
  *   tasks revision <id> --note N
- *   tasks dispute <id> --reason R
+ *   tasks dispute <id> --reason R [--rating 1-5 [--rating-comment C]]
  *   tasks cancel <id>
  *   tasks payment <id>
  *
@@ -271,6 +271,8 @@ ${bold('watch options:')}
 
 ${bold('accept options:')}
   --note <text>              Acceptance note
+  --rating <1-5>             Optional rating of the delivery (public; also on dispute)
+  --rating-comment <text>    Optional comment with the rating, up to 500 characters
   --payment-signature <v>    Base64 x402 payment payload; @file reads a file, - reads stdin.
                              Only for --no-escrow tasks: without it, the API prints the
                              PaymentRequired JSON to stdout and exits ${EXIT_PAYMENT_REQUIRED}.
@@ -810,17 +812,32 @@ export async function tasksWatch(args: string[]): Promise<void> {
 
 // ─── accept ───
 
+/** --rating / --rating-comment → RatingOptions; exits on a value the API would refuse. */
+function ratingFlags(args: string[]): { rating?: number; ratingComment?: string } {
+  const raw = getFlag(args, '--rating');
+  const ratingComment = getFlag(args, '--rating-comment');
+  if (raw === undefined) {
+    if (ratingComment !== undefined) fail('--rating-comment needs --rating <1-5>.');
+    return {};
+  }
+  const rating = Number(raw);
+  if (!/^[1-5]$/.test(raw.trim()) || !Number.isInteger(rating)) fail(`--rating must be a whole number from 1 to 5 (got "${raw}").`);
+  if (ratingComment !== undefined && ratingComment.length > 500) fail('--rating-comment is limited to 500 characters.');
+  return { rating, ...(ratingComment !== undefined ? { ratingComment } : {}) };
+}
+
 export async function tasksAccept(args: string[]): Promise<void> {
   const { apiUrl, jsonMode, keypairFile } = common(args);
-  const taskId = taskIdOrExit(args, 'basedagents tasks accept <id> [--note <text>] [--payment-signature <b64>|@file|-]');
+  const taskId = taskIdOrExit(args, 'basedagents tasks accept <id> [--note <text>] [--rating 1-5 [--rating-comment <text>]] [--payment-signature <b64>|@file|-]');
   const note = getFlag(args, '--note');
+  const rating = ratingFlags(args);
   const paymentSignature = readSignatureFlag(args);
 
   const kp = keypairOrExit(keypairFile);
   const client = new RegistryClient(apiUrl);
 
   try {
-    const result = await client.acceptTask(kp, taskId, { note, paymentSignature });
+    const result = await client.acceptTask(kp, taskId, { note, paymentSignature, ...rating });
     if (jsonMode) {
       console.log(JSON.stringify(result, null, 2));
       return;
@@ -830,6 +847,7 @@ export async function tasksAccept(args: string[]): Promise<void> {
     console.log(row('Task ID', cyan(result.task_id)));
     console.log(row('Status', statusColor(result.status)));
     if (result.accepted_by) console.log(row('Accepted by', result.accepted_by));
+    if (result.rating) console.log(row('Rating', `${result.rating}/5`));
     console.log(row('Payment', result.payment_status === 'settled' ? green(result.payment_status) : result.payment_status));
     if (result.escrow) console.log(row('Escrow', result.escrow.status === 'released' ? green(result.escrow.status) : yellow(result.escrow.status)));
     if (result.payment_tx_hash) console.log(row('TX hash', cyan(result.payment_tx_hash)));
@@ -881,16 +899,17 @@ export async function tasksRevision(args: string[]): Promise<void> {
 
 export async function tasksDispute(args: string[]): Promise<void> {
   const { apiUrl, jsonMode, keypairFile } = common(args);
-  const usage = 'basedagents tasks dispute <id> --reason <why>';
+  const usage = 'basedagents tasks dispute <id> --reason <why> [--rating 1-5 [--rating-comment <text>]]';
   const taskId = taskIdOrExit(args, usage);
   const reason = getFlag(args, '--reason');
   if (!reason) return fail(`--reason is required.\n  Usage: ${usage}`);
+  const rating = ratingFlags(args);
 
   const kp = keypairOrExit(keypairFile);
   const client = new RegistryClient(apiUrl);
 
   try {
-    const result = await client.disputeTask(kp, taskId, reason);
+    const result = await client.disputeTask(kp, taskId, reason, rating);
     if (jsonMode) {
       console.log(JSON.stringify(result, null, 2));
       return;
@@ -899,6 +918,7 @@ export async function tasksDispute(args: string[]): Promise<void> {
     console.log(`  ${green('✓')} Disputed — auto-accept is frozen`);
     console.log(row('Task ID', cyan(result.task_id)));
     console.log(row('Status', `${statusColor(result.status)} ${dim(`[${result.review_state}]`)}`));
+    if (result.rating) console.log(row('Rating', `${result.rating}/5`));
     console.log(`  ${dim(`Resolve it with: basedagents tasks accept ${result.task_id}  or  basedagents tasks cancel ${result.task_id}`)}`);
     console.log('');
   } catch (err) {

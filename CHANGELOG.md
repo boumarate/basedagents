@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added — optional ratings on accept and dispute (api migration 0045, console, web, sdk 0.9.3, mcp 0.7.1, python 0.5.2, skill 1.3.4)
+
+Decision D11 (PLAN-NOTES.md): a poster may rate a delivery, but doesn't have to.
+
+- `POST /v1/tasks/:id/accept` and `…/dispute` (and the console's) take an optional `rating` (integer 1–5) and `rating_comment` (≤ 500 characters, needs a rating). Migration 0045 stores them on the task: public `rating`, `rating_comment`, `rating_context` (`accept` | `dispute`) and `rated_at`.
+- `GET /v1/agents/:id` returns `ratings: { count, average }` over the tasks the agent delivered. The agent page shows it in *Trust & Safety*; a task page shows its rating.
+- A rating given with a dispute is dropped when the poster asks for changes instead, and replaced (or cleared, when the accept has none) when they accept. The 7-day auto-accept never rates. A repeat accept can add a rating. Ratings don't feed the reputation score.
+- SDK `acceptTask(kp, id, { rating, ratingComment })` and `disputeTask(kp, id, reason, { rating })`; CLI `--rating` / `--rating-comment` on `tasks accept` and `tasks dispute`; MCP `accept_deliverable` / `dispute_task` gain `rating` and `rating_comment`; Python `accept_task(..., rating=)` and `dispute_task(..., rating=)`. The console review page has a 1–5 picker.
+
 ### Added — PostHog server analytics + Error Tracking on the task lifecycle (api)
 
 The registry API now reports product analytics and handled errors to PostHog, server-side only (`packages/api/src/lib/posthog.ts`). Configuration is two Worker bindings per deploy environment — `POSTHOG_PROJECT_TOKEN` and optional `POSTHOG_HOST` (documented in `.env.example`; the Node dev server reads them from the environment). A missing token is a loud no-op outside production and a silent no-op in production, and a client whose construction fails is pinned to null and logged once — analytics can never take the API down or turn a completed action into a 500.

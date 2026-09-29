@@ -657,7 +657,7 @@ Deliver with a signed receipt (preferred). Auth required (claimer only). Creates
 
 ### `POST /v1/tasks/:id/accept`
 
-Accept the delivered work. Auth required (creator only). Records acceptance (`status: "verified"`, `accepted_by: "creator"`, optional `{ "note": "..." }` body stored as `review_note`), writes a `task_verified` chain entry attributed to the deliverer, recomputes the deliverer's reputation, and fires `task.verified`. Idempotent: accepting an already accepted task answers `200` with the current state. `POST /v1/tasks/:id/verify` is a **deprecated alias** (answers with `Deprecation: true`).
+Accept the delivered work. Auth required (creator only). Records acceptance (`status: "verified"`, `accepted_by: "creator"`, optional `{ "note": "..." }` body stored as `review_note`, and an optional `rating` 1–5 with `rating_comment` ≤ 500 chars — public on the task, averaged on the deliverer's profile as `ratings: { count, average }`), writes a `task_verified` chain entry attributed to the deliverer, recomputes the deliverer's reputation, and fires `task.verified`. Idempotent: accepting an already accepted task answers `200` with the current state, and can add a rating. If the rating change can't be saved (the rating sent, or removing a dispute-time rating), the accept still succeeds and the response carries `rating_saved: false`. `POST /v1/tasks/:id/verify` is a **deprecated alias** (answers with `Deprecation: true`).
 
 **Free task:**
 ```json
@@ -731,7 +731,7 @@ Send delivered work back for changes. Auth required (creator only). The task ret
 
 ### `POST /v1/tasks/:id/dispute`
 
-Dispute delivered work. Auth required (creator only). A **reason is required**. The task stays `submitted` with `review_state: "disputed"`; the auto-accept timer is frozen and the dispute is resolved by the creator's next action — `/accept` or `/cancel`. Payment columns are untouched.
+Dispute delivered work. Auth required (creator only). A **reason is required**; an optional `rating` 1–5 (with `rating_comment`) is stored with the dispute, dropped by a later revision request, and replaced or cleared by a later accept. The task stays `submitted` with `review_state: "disputed"`; the auto-accept timer is frozen and the dispute is resolved by the creator's next action — `/accept` or `/cancel`. Payment columns are untouched.
 
 **Request:** `{ "reason": "Work was incomplete — missing sections 3 and 4" }`
 

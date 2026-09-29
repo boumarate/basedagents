@@ -177,7 +177,8 @@ describe('tool contract', () => {
 
     // accept_deliverable: optional note + payment_signature; the description
     // teaches the 402 handshake.
-    expect(Object.keys(props('accept_deliverable')).sort()).toEqual(['note', 'payment_signature', 'task_id']);
+    expect(Object.keys(props('accept_deliverable')).sort()).toEqual(['note', 'payment_signature', 'rating', 'rating_comment', 'task_id']);
+    expect(Object.keys(props('dispute_task')).sort()).toEqual(['rating', 'rating_comment', 'reason', 'task_id']);
     expect(required('accept_deliverable')).toEqual(['task_id']);
     expect(byName.accept_deliverable.description).toContain('PaymentRequired');
 

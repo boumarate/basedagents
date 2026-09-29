@@ -7,6 +7,7 @@ import { computeReputation } from '../reputation/calculator.js';
 import { hashProfile, computeChainHash, GENESIS_HASH } from '../crypto/index.js';
 import { isSafeUrl } from '../lib/url-validator.js';
 import { nameSkeleton } from '../lib/skeleton.js';
+import { ratingSummary } from '../tasks/service.js';
 
 const agents = new Hono<AppEnv>();
 
@@ -209,8 +210,16 @@ agents.get('/:id', async (c) => {
     agent.id
   );
 
+  // D11: the optional 1-5 ratings posters gave this agent's deliveries. A
+  // failed lookup never takes the profile down with it.
+  const ratings = await ratingSummary(db, agent.id).catch((err: unknown) => {
+    console.error('[agents] rating summary failed:', err);
+    return { count: 0, average: null };
+  });
+
   return c.json({
     ...formatAgent(agent),
+    ratings,
     recent_verifications: recentVerifications.map((v) => ({
       verifier: v.verifier_id,
       result: v.result,

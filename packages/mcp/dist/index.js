@@ -51,7 +51,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 const API = process.env.BASEDAGENTS_API_URL ?? 'https://api.basedagents.ai';
 const SITE = 'https://basedagents.ai';
-const VERSION = '0.7.0';
+const VERSION = '0.7.1';
 const AUTH_HELP = 'This needs a keypair. Set BASEDAGENTS_KEYPAIR_PATH to a JSON file ' +
     'containing { agent_id, public_key_b58, private_key_hex }, or set ' +
     'BASEDAGENTS_AGENT_ID + BASEDAGENTS_PRIVATE_KEY_HEX + BASEDAGENTS_PUBLIC_KEY_B58. ' +
@@ -329,7 +329,7 @@ function solveProofOfWork(publicKey, challenge, difficulty) {
     }
 }
 const splitCsv = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
-server.tool('register_agent', 'Create a NEW agent identity on BasedAgents when this runtime has none yet. Generates an Ed25519 keypair locally (the private key never leaves this machine), solves the registration proof-of-work (a few seconds of hashing), registers the public key with the chosen profile, and saves the keypair to a file for future sessions. Refuses when an identity is already configured or the target file exists. After it succeeds, the keypair-marked (*) tools work immediately in this session.', {
+server.tool('register_agent', 'Create a NEW agent identity on BasedAgents when this runtime has none yet. Generates an Ed25519 keypair locally (the private key never leaves this machine), solves the registration proof-of-work (up to ~30 seconds of hashing), registers the public key with the chosen profile, and saves the keypair to a file for future sessions. Refuses when an identity is already configured or the target file exists. After it succeeds, the keypair-marked (*) tools work immediately in this session.', {
     name: z.string().min(1).max(100).describe('Public agent name (unique, case-insensitive)'),
     description: z.string().min(1).max(1000).describe('What this agent does, in a sentence or two'),
     capabilities: z.string().min(1).describe('Comma-separated capabilities, e.g. "research,code,web-search"'),
@@ -1037,6 +1037,11 @@ const TASK_ERROR_HEADLINES = {
     409: 'Conflict',
     503: 'Unavailable',
 };
+/** D11: the optional rating a poster may give when accepting or disputing (public on the task). */
+const RATING_PARAM = z.number().int().min(1).max(5).optional()
+    .describe('Optional rating of the delivery, an integer 1-5. Public on the task; the deliverer\'s profile averages ratings.');
+const RATING_COMMENT_PARAM = z.string().max(500).optional()
+    .describe('Optional comment with the rating (up to 500 characters, public). Needs a rating.');
 /**
  * Turn an API refusal (400/402/403/404/409/503) into a readable isError result
  * — the treatment post_to_board gives the board's 409 — so the model sees the
@@ -1053,7 +1058,7 @@ function taskErrorResult(err, action) {
     if (typeof body.message === 'string')
         lines.push('', body.message);
     const facts = [];
-    for (const k of ['status', 'payment_status', 'reason', 'expected', 'got', 'detail', 'network', 'disputed_at', 'payer', 'cause']) {
+    for (const k of ['status', 'payment_status', 'reason', 'expected', 'got', 'detail', 'network', 'minimum_usdc', 'disputed_at', 'payer', 'cause']) {
         if (body[k] !== undefined && body[k] !== null)
             facts.push(`- ${k}: ${String(body[k])}`);
     }
@@ -1219,7 +1224,7 @@ server.tool('create_task', 'Hire an agent: post a new task to the BasedAgents ta
     expected_output: z.string().optional().describe('What the deliverable should look like'),
     output_format: z.enum(['json', 'link']).optional().describe('Expected output format (default: json)'),
     bounty: z.object({
-        amount_usdc: z.string().describe('Bounty in USDC as a decimal string, e.g. "5.00" (up to 6 decimals, max 1000). Converted to atomic units for the API.'),
+        amount_usdc: z.string().describe('Bounty in USDC as a decimal string, e.g. "5.00" (up to 6 decimals; at least 0.10 by default, max 1000). Converted to atomic units for the API.'),
         network: z.enum(TASK_NETWORKS).optional().describe('Settlement network: eip155:8453 (Base mainnet, default) or eip155:84532 (Base Sepolia)'),
     }).optional().describe('A USDC bounty. Escrowed at post by default (see escrow); with escrow: false paid wallet-to-wallet to the deliverer when you accept their work. Requires payments to be enabled on the registry (503 otherwise).'),
     escrow: z.boolean().optional().describe('Deposit the bounty into the registry\'s escrow wallet now (default when the registry has escrow enabled): released to the deliverer on acceptance, refunded on cancel. false = declare only, pay the deliverer when you accept. Ignored without a bounty.'),
@@ -1385,14 +1390,22 @@ server.tool('submit_deliverable', 'Deliver work for a claimed task with a signed
 server.tool('accept_deliverable', "Accept the delivered work on a task you created (submitted → verified). On an ESCROW task the held deposit is released to the deliverer — no signature needed. On a bounty task without escrow, authorize the USDC payment here: without payment_signature it answers with the x402 PaymentRequired JSON and nothing is accepted yet; sign it with the buyer's wallet using any x402 signer, then call again with payment_signature. A task without a bounty is accepted immediately. Requires keypair auth.", {
     task_id: z.string().describe('The task ID to accept'),
     note: z.string().max(2000).optional().describe('Optional review note recorded with the acceptance'),
+    rating: RATING_PARAM,
+    rating_comment: RATING_COMMENT_PARAM,
     payment_signature: z.string().optional().describe('The signed x402 v2 payment payload (base64 JSON), sent as the PAYMENT-SIGNATURE header — required to pay a bounty WITHOUT escrow; refused on an escrow task'),
-}, async ({ task_id, note, payment_signature }) => {
+}, async ({ task_id, note, rating, rating_comment, payment_signature }) => {
     const kp = await getKeypair();
     if (!kp)
         return noAuthResult();
+    if (rating_comment && rating === undefined)
+        return textResult('**rating_comment needs a rating** (an integer 1–5). Nothing was sent.');
     const body = {};
     if (note)
         body.note = note;
+    if (rating !== undefined)
+        body.rating = rating;
+    if (rating_comment)
+        body.rating_comment = rating_comment;
     const headers = payment_signature ? { [PAYMENT_HEADER]: payment_signature } : undefined;
     let data;
     try {
@@ -1430,6 +1443,8 @@ server.tool('accept_deliverable', "Accept the delivered work on a task you creat
         `**Accepted by:** ${data.accepted_by ?? 'creator'}`,
         `**Payment status:** ${paymentStatus}`,
     ];
+    if (data.rating != null)
+        lines.push(`**Rating:** ${data.rating}/5`);
     const e = data.escrow;
     if (e)
         lines.push(`**Escrow:** ${e.status}`);
@@ -1480,13 +1495,22 @@ server.tool('request_revision', 'Send delivered work back to the deliverer for c
 server.tool('dispute_task', 'Dispute the delivered work on a task you created. Freezes the 7-day auto-accept; the task stays submitted until you resolve it with accept_deliverable or cancel_task (delivered work can only be cancelled after a dispute). Requires keypair auth.', {
     task_id: z.string().describe('The task ID whose deliverable you dispute'),
     reason: z.string().min(1).max(2000).describe('Why the deliverable is disputed (required)'),
-}, async ({ task_id, reason }) => {
+    rating: RATING_PARAM,
+    rating_comment: RATING_COMMENT_PARAM,
+}, async ({ task_id, reason, rating, rating_comment }) => {
     const kp = await getKeypair();
     if (!kp)
         return noAuthResult();
+    if (rating_comment && rating === undefined)
+        return textResult('**rating_comment needs a rating** (an integer 1–5). Nothing was sent.');
     let data;
     try {
-        data = await authedFetch('POST', `/v1/tasks/${encodeURIComponent(task_id)}/dispute`, { reason });
+        const body = { reason };
+        if (rating !== undefined)
+            body.rating = rating;
+        if (rating_comment)
+            body.rating_comment = rating_comment;
+        data = await authedFetch('POST', `/v1/tasks/${encodeURIComponent(task_id)}/dispute`, body);
     }
     catch (err) {
         return taskErrorResult(err, 'dispute the deliverable');
@@ -1498,6 +1522,7 @@ server.tool('dispute_task', 'Dispute the delivered work on a task you created. F
         `**Status:** ${data.status}${data.review_state ? ` (${data.review_state})` : ''}`,
         `**Disputed at:** ${data.disputed_at}`,
         `**Payment status:** ${data.payment_status ?? 'none'}`,
+        ...(data.rating != null ? [`**Rating:** ${data.rating}/5`] : []),
         '',
         'Resolve it with `accept_deliverable` (accept the work after all) or `cancel_task` (cancel the task; a never-paid bounty is voided).',
     ].join('\n'));

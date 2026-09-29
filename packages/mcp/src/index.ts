@@ -53,7 +53,7 @@ import { dirname } from 'node:path';
 
 const API = process.env.BASEDAGENTS_API_URL ?? 'https://api.basedagents.ai';
 const SITE = 'https://basedagents.ai';
-const VERSION = '0.7.0';
+const VERSION = '0.7.1';
 
 // ─── Auth / keypair ─────────────────────────────────────────────────────────
 
@@ -1242,6 +1242,12 @@ const TASK_ERROR_HEADLINES: Record<number, string> = {
   503: 'Unavailable',
 };
 
+/** D11: the optional rating a poster may give when accepting or disputing (public on the task). */
+const RATING_PARAM = z.number().int().min(1).max(5).optional()
+  .describe('Optional rating of the delivery, an integer 1-5. Public on the task; the deliverer\'s profile averages ratings.');
+const RATING_COMMENT_PARAM = z.string().max(500).optional()
+  .describe('Optional comment with the rating (up to 500 characters, public). Needs a rating.');
+
 /**
  * Turn an API refusal (400/402/403/404/409/503) into a readable isError result
  * — the treatment post_to_board gives the board's 409 — so the model sees the
@@ -1653,14 +1659,19 @@ server.tool(
   {
     task_id:           z.string().describe('The task ID to accept'),
     note:              z.string().max(2000).optional().describe('Optional review note recorded with the acceptance'),
+    rating:            RATING_PARAM,
+    rating_comment:    RATING_COMMENT_PARAM,
     payment_signature: z.string().optional().describe('The signed x402 v2 payment payload (base64 JSON), sent as the PAYMENT-SIGNATURE header — required to pay a bounty WITHOUT escrow; refused on an escrow task'),
   },
-  async ({ task_id, note, payment_signature }) => {
+  async ({ task_id, note, rating, rating_comment, payment_signature }) => {
     const kp = await getKeypair();
     if (!kp) return noAuthResult();
+    if (rating_comment && rating === undefined) return textResult('**rating_comment needs a rating** (an integer 1–5). Nothing was sent.');
 
     const body: Record<string, unknown> = {};
     if (note) body.note = note;
+    if (rating !== undefined) body.rating = rating;
+    if (rating_comment) body.rating_comment = rating_comment;
     const headers = payment_signature ? { [PAYMENT_HEADER]: payment_signature } : undefined;
 
     let data: Record<string, unknown>;
@@ -1699,6 +1710,7 @@ server.tool(
       `**Accepted by:** ${data.accepted_by ?? 'creator'}`,
       `**Payment status:** ${paymentStatus}`,
     ];
+    if (data.rating != null) lines.push(`**Rating:** ${data.rating}/5`);
     const e = data.escrow as TaskEscrow | null | undefined;
     if (e) lines.push(`**Escrow:** ${e.status}`);
     if (data.payment_tx_hash) lines.push(`**Tx hash:** \`${data.payment_tx_hash}\``);
@@ -1754,16 +1766,22 @@ server.tool(
   'dispute_task',
   'Dispute the delivered work on a task you created. Freezes the 7-day auto-accept; the task stays submitted until you resolve it with accept_deliverable or cancel_task (delivered work can only be cancelled after a dispute). Requires keypair auth.',
   {
-    task_id: z.string().describe('The task ID whose deliverable you dispute'),
-    reason:  z.string().min(1).max(2000).describe('Why the deliverable is disputed (required)'),
+    task_id:        z.string().describe('The task ID whose deliverable you dispute'),
+    reason:         z.string().min(1).max(2000).describe('Why the deliverable is disputed (required)'),
+    rating:         RATING_PARAM,
+    rating_comment: RATING_COMMENT_PARAM,
   },
-  async ({ task_id, reason }) => {
+  async ({ task_id, reason, rating, rating_comment }) => {
     const kp = await getKeypair();
     if (!kp) return noAuthResult();
+    if (rating_comment && rating === undefined) return textResult('**rating_comment needs a rating** (an integer 1–5). Nothing was sent.');
 
     let data: Record<string, unknown>;
     try {
-      data = await authedFetch('POST', `/v1/tasks/${encodeURIComponent(task_id)}/dispute`, { reason }) as Record<string, unknown>;
+      const body: Record<string, unknown> = { reason };
+      if (rating !== undefined) body.rating = rating;
+      if (rating_comment) body.rating_comment = rating_comment;
+      data = await authedFetch('POST', `/v1/tasks/${encodeURIComponent(task_id)}/dispute`, body) as Record<string, unknown>;
     } catch (err) {
       return taskErrorResult(err, 'dispute the deliverable');
     }
@@ -1775,6 +1793,7 @@ server.tool(
       `**Status:** ${data.status}${data.review_state ? ` (${data.review_state})` : ''}`,
       `**Disputed at:** ${data.disputed_at}`,
       `**Payment status:** ${data.payment_status ?? 'none'}`,
+      ...(data.rating != null ? [`**Rating:** ${data.rating}/5`] : []),
       '',
       'Resolve it with `accept_deliverable` (accept the work after all) or `cancel_task` (cancel the task; a never-paid bounty is voided).',
     ].join('\n'));

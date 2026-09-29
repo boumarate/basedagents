@@ -110,7 +110,8 @@ code { font-family: var(--mono); font-size: 0.9em; }
     gap: 0.4rem; padding: 0.75rem 1rem;
   }
   .side-brand { width: 100%; padding: 0 0 0.4rem; }
-  .side-head, .side-empty, .owner-id { display: none; }
+  /* Only the nav's own headings: .side-head also labels sections on task and board pages. */
+  .sidebar .side-head, .sidebar .side-empty, .sidebar .owner-id { display: none; }
   .side-link {
     border: 1px solid var(--border); background: var(--panel);
     border-radius: 999px; padding: 0.3rem 0.75rem; font-size: 0.88rem;
@@ -472,3 +473,13 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 
 /* Task-board card previews clamp to three lines (.card-excerpt / .card-clamp,
    defined with the card rules); the full brief lives on the task page. */
+
+/* Review page: optional 1-5 rating (D11) */
+.rating-picker { display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.5rem; }
+.rating-star {
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--muted); font-size: 1.05rem; line-height: 1; padding: 0.35rem 0.5rem; cursor: pointer;
+}
+.rating-star.on { color: var(--warn); border-color: var(--warn); }
+.rating-star:disabled { cursor: default; opacity: 0.6; }
+.rating-value { margin-left: 0.4rem; }

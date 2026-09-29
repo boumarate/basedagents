@@ -34,6 +34,8 @@ export interface ApiAgent {
   registered_at: string;
   last_seen: string | null;
   recent_verifications?: ApiRecentVerification[];
+  /** Optional 1-5 ratings posters gave this agent's deliveries (absent on an older API). */
+  ratings?: { count: number; average: number | null };
 }
 
 export interface ApiRecentVerification {
@@ -206,6 +208,10 @@ export interface ApiTask {
   // Review state (D4): flags, not statuses. `review_state` is derived server-side.
   accepted_by?: 'creator' | 'auto' | null;
   review_note?: string | null;
+  /** The poster's optional 1-5 rating of the delivery, its comment, and when it was given. */
+  rating?: number | null;
+  rating_comment?: string | null;
+  rating_context?: 'accept' | 'dispute' | null;
   revision_count?: number;
   revision_requested_at?: string | null;
   disputed_at?: string | null;

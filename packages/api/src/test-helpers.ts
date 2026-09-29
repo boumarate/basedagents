@@ -125,6 +125,10 @@ CREATE INDEX IF NOT EXISTS idx_bond_events_agent ON agent_claim_bond_events(agen
 CREATE TABLE IF NOT EXISTS agent_claim_bond_withdrawals (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, amount_atomic TEXT NOT NULL, to_address TEXT NOT NULL, to_network TEXT NOT NULL, nonce TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','settled','refunded','failed')), attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, tx_hash TEXT, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_bond_withdrawals_due ON agent_claim_bond_withdrawals(state, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_claimer_status ON tasks(claimed_by_agent_id, status);
+ALTER TABLE tasks ADD COLUMN rating INTEGER CHECK (rating BETWEEN 1 AND 5);
+ALTER TABLE tasks ADD COLUMN rating_comment TEXT;
+ALTER TABLE tasks ADD COLUMN rating_context TEXT CHECK (rating_context IN ('accept', 'dispute'));
+ALTER TABLE tasks ADD COLUMN rated_at TEXT;
 `.trim();
 
 /**

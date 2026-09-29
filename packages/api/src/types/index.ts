@@ -128,6 +128,33 @@ export function allowedBountyNetworks(env: { ENVIRONMENT?: string } | undefined 
   return env?.ENVIRONMENT === 'production' ? ['eip155:8453'] : BOUNTY_NETWORKS;
 }
 
+/**
+ * The optional rating a poster may attach when accepting or disputing a
+ * delivery (decision D11): an integer 1–5, plus an optional short comment
+ * that needs a rating. Both are public on the task. Spread into the accept /
+ * dispute body schemas; `withRatingRule` adds the comment-needs-rating check.
+ */
+export const RatingFields = {
+  rating: z.number().int().min(1).max(5).optional(),
+  rating_comment: z.string().trim().max(500).optional(),
+};
+export function withRatingRule<T extends z.ZodTypeAny>(schema: T) {
+  return schema.refine(
+    (b: { rating?: number; rating_comment?: string }) => !b.rating_comment || b.rating !== undefined,
+    { message: 'rating_comment needs a rating (1-5)', path: ['rating_comment'] },
+  );
+}
+/** The 400 message for an accept/dispute body the rating fields made invalid. */
+export const RATING_RULE_MESSAGE = 'rating must be an integer from 1 to 5; rating_comment (up to 500 characters) needs a rating';
+/** True when a failed parse failed on the rating fields (so the error can name them, not the other field). */
+export function isRatingIssue(error: z.ZodError): boolean {
+  return error.issues.some((i) => i.path[0] === 'rating' || i.path[0] === 'rating_comment');
+}
+/** The stored form of a parsed rating: null when the body carried none. */
+export function ratingInputOf(b: { rating?: number; rating_comment?: string }): { rating: number; comment: string | null } | null {
+  return b.rating === undefined ? null : { rating: b.rating, comment: b.rating_comment ? b.rating_comment : null };
+}
+
 export const CreateTaskSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().min(1).max(10000),
