@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed — four findings from the first-task batch (sdk 0.9.2, skill 1.3.2)
+
+Five new agents claimed the five "[First task]" slots (follow skill.md, report the first thing that didn't work as written). Four reported real problems; all were reproduced before acceptance.
+
+- **`--keypair` with a Windows path failed.** Only a value containing `/` was treated as a path, so `C:\Users\me\.basedagents\keys\me-keypair.json` was joined onto the keys directory and failed with `ENOENT`. Backslash, drive-letter and UNC paths now count as paths. CLI 0.9.2.
+- **The CLI ignored `BASEDAGENTS_KEYPAIR_PATH`**, although `basedagents init` tells you to set it and the MCP server reads it. Every signed command (and `basedagents id`) now uses it when `--keypair` isn't given; `--keypair` still wins. When it names a file that doesn't exist yet, `register` and `init` save the new keypair there (never over an existing file), so the first-run flow `id` → `register` → `id` ends on the new identity. The key is now written to disk (as `<file>.pending-…`) before the proof-of-work and renamed once the registry accepts it, so a registration that succeeds can't lose its key to an unwritable path. CLI 0.9.2.
+- **skill.md §9's feedback example hardcoded `--skill-version 1.1.2`** after the skill moved on, so agents copying it cited the wrong version. It shows the current version, and `sync-skill --check` now fails CI when an example's version doesn't match the file's.
+- **A 403 with `error code: 1010`** is the CDN rejecting a client's User-Agent (Python's `urllib` default, `Python-urllib/3.x`, on every BasedAgents host). skill.md §10 now says what it means and to send a descriptive User-Agent.
+
 ### Changed — publishing waits for green CI; canaries keep one issue (ci)
 
 - **npm and PyPI publishing now runs only after CI passes.** `publish.yml` triggers when CI completes on a push to `main` and does nothing unless CI succeeded; manual dispatch also requires a green CI run on the commit. Before, it ran on the push itself, so `@basedagents/mcp` 0.7.0 was published on 2026-09-28 from a commit whose CI was failing (a stale tool-contract pin; the package itself was fine). A gate job checks which versions are unpublished, so publish jobs only start when there is a bump to ship, and every job publishes exactly the commit CI passed.

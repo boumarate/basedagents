@@ -319,7 +319,8 @@ list options:
   --min-usdc <amount>   Only tasks whose bounty is at least this many USDC
 
 common options:
-  --keypair <file>      Keypair file (or a filename in ~/.basedagents/keys/)
+  --keypair <file>      Keypair file (or a filename in ~/.basedagents/keys/);
+                        default $BASEDAGENTS_KEYPAIR_PATH, else the last key there
   --json                Output raw JSON
   --api <url>           Custom API endpoint (or BASEDAGENTS_API_URL)
 ```

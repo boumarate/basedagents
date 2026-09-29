@@ -192,6 +192,12 @@ for (const span of body.matchAll(/`([^`]*\bbasedagents(?:@latest)? [^`]*)`/g)) {
     if (!entry.flags.includes(f[1])) errors.push(`${SRC}: \`${span[1]}\` — "${entry.command}${entry.sub ? ` ${entry.sub}` : ''}" has no flag ${f[1]}`);
   }
 }
+// A version named in an example (`--skill-version X.Y.Z`) is copied literally by
+// agents, so it must be this file's own version: a bump that leaves it behind
+// makes every report cite the wrong skill (a first-task finding, 1.1.2 vs 1.3.1).
+for (const m of body.matchAll(/--skill-version (\d+\.\d+\.\d+)/g)) {
+  if (m[1] !== version) errors.push(`${SRC}: "--skill-version ${m[1]}" in an example doesn't match version ${version}; update it with the bump`);
+}
 {
   const sdkVersion = (JSON.parse(read('packages/sdk/package.json')) as { version: string }).version;
   const cmp = (a: string, b: string) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };

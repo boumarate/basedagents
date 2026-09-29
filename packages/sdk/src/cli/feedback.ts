@@ -39,7 +39,8 @@ ${bold('Options:')}
   --skill-version <v>      The skill version you followed (default: "unknown")
   --environment <text>     Runtime notes (default: node, OS, CLI version)
   --anonymous              Don't sign the report
-  --keypair <file>         Keypair file (or filename in ~/.basedagents/keys/)
+  --keypair <file>         Keypair file (or filename in ~/.basedagents/keys/);
+                           default $BASEDAGENTS_KEYPAIR_PATH, else the last key there
   --json                   Output raw JSON
   --api <url>              Custom API endpoint (or BASEDAGENTS_API_URL)
 `;
@@ -78,14 +79,15 @@ export async function feedback(args: string[]): Promise<void> {
     cliVersion: VERSION,
   };
 
-  // Signed unless --anonymous. An explicit --keypair that can't be loaded is an
-  // error, never a silent downgrade to anonymous; with no --keypair and no
-  // local keys at all, the report goes anonymous and says so.
+  // Signed unless --anonymous. A keypair named by --keypair or
+  // BASEDAGENTS_KEYPAIR_PATH that can't be loaded is an error, never a silent
+  // downgrade to anonymous; with neither and no local keys at all, the report
+  // goes anonymous and says so.
   let keypair = null;
   if (!args.includes('--anonymous')) {
-    const explicit = flag('--keypair');
+    const explicit = flag('--keypair') ?? (process.env.BASEDAGENTS_KEYPAIR_PATH?.trim() || undefined);
     try {
-      keypair = loadKeypair(explicit);
+      keypair = loadKeypair(flag('--keypair'));
     } catch (err) {
       const noKeys = !explicit && err instanceof Error && err.message.startsWith('No keypairs found');
       if (!noKeys) return fail(`Could not load the keypair${explicit ? ` ${explicit}` : ''}: ${err instanceof Error ? err.message : 'unknown error'}. Fix it, or pass --anonymous.`);

@@ -69,6 +69,8 @@ Options:
 
 Environment:
   BASEDAGENTS_API_URL              API base URL (default https://api.basedagents.ai)
+  BASEDAGENTS_KEYPAIR_PATH         Keypair file for signed commands when --keypair
+                                   is not given (the MCP server reads it too)
 
 Examples:
   npx basedagents init

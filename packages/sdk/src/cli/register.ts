@@ -6,9 +6,7 @@
  */
 
 import { createInterface } from 'readline';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { prepareNewKeypairPath, stageNewKeypair, commitNewKeypair, discardNewKeypair } from './wallet.js';
 import { generateKeypair, serializeKeypair } from '../index.js';
 import { RegistryClient, DEFAULT_API_URL } from '../index.js';
 
@@ -148,14 +146,21 @@ async function registerNonInteractive(identity: Record<string, unknown>, apiUrl:
   const keypair = await generateKeypair();
   if (!jsonMode) console.log(` ${green('✓')}`);
 
-  const keysDir = join(homedir(), '.basedagents', 'keys');
-  mkdirSync(keysDir, { recursive: true });
+  // The key goes on disk under a temporary name before the proof-of-work, and
+  // gets its final name only once the registry accepts it: a failed
+  // registration leaves no key file, a successful one can't lose its key.
   const slug = slugify(name) || 'agent';
-  let keypairPath = join(keysDir, `${slug}-keypair.json`);
-  let i = 2;
-  while (existsSync(keypairPath)) keypairPath = join(keysDir, `${slug}-${i++}-keypair.json`);
-  // PoW + Registration — keypair written to disk only after successful registration
-  // (avoids orphaned key files on network/validation failure)
+  let keypairPath: string;
+  let staged: string;
+  try {
+    const target = prepareNewKeypairPath(slug);
+    keypairPath = target.path;
+    if (target.envInUse) say(yellow(`  ⚠ BASEDAGENTS_KEYPAIR_PATH names an existing keypair (${target.envInUse}). This one is saved to ${keypairPath}; signed commands keep using the variable's key until you change it.`));
+    staged = stageNewKeypair(keypairPath, serializeKeypair(keypair));
+  } catch (err: unknown) {
+    console.error(red(`  ✗ Can't save a keypair there: ${err instanceof Error ? err.message : String(err)}. Nothing was registered.\n`));
+    process.exit(1);
+  }
   const client = new RegistryClient(apiUrl);
   const profile = {
     name, description, capabilities, protocols, version,
@@ -183,12 +188,12 @@ async function registerNonInteractive(identity: Record<string, unknown>, apiUrl:
     } else {
       console.error(red(`  ✗ Registration failed: ${msg}\n`));
     }
+    discardNewKeypair(staged);
     process.exit(1);
   }
   if (!jsonMode) console.log(` ${green('✓')}`);
 
-  // Write keypair only after successful registration — avoids orphaned key files on failure
-  writeFileSync(keypairPath, serializeKeypair(keypair), { mode: 0o600 });
+  keypairPath = commitNewKeypair(staged, keypairPath, slug);
 
   const profileUrl = `https://basedagents.ai/agents/${agent.id}`;
   if (jsonMode) {
@@ -267,6 +272,8 @@ export async function register(args: string[]): Promise<void> {
   console.log('');
 
   const rl = makeRl();
+  // A keypair staged on disk while its registration is in flight (see stageNewKeypair).
+  let staged: string | undefined;
 
   try {
     // ── Profile prompts ──
@@ -353,22 +360,20 @@ export async function register(args: string[]): Promise<void> {
     const keypair = await generateKeypair();
     console.log(` ${green('✓')}`);
 
-    // Save keypair
-    const keysDir = join(homedir(), '.basedagents', 'keys');
-    mkdirSync(keysDir, { recursive: true });
-    const slug = slugify(name);
-    let keypairPath = join(keysDir, `${slug}-keypair.json`);
-    // avoid collision
-    let i = 2;
-    while (existsSync(keypairPath)) {
-      keypairPath = join(keysDir, `${slug}-${i++}-keypair.json`);
-    }
-
     if (dryRun) {
       console.log(dim('  --dry-run: skipping registration.\n'));
       rl.close();
       return;
     }
+
+    // Where the keypair will be saved (BASEDAGENTS_KEYPAIR_PATH when it names
+    // no file yet). It is staged on disk before the proof-of-work and renamed
+    // once the registry accepts it.
+    const slug = slugify(name) || 'agent';
+    const target = prepareNewKeypairPath(slug);
+    let keypairPath = target.path;
+    if (target.envInUse) console.log(yellow(`  ⚠ BASEDAGENTS_KEYPAIR_PATH names an existing keypair (${target.envInUse}). This one is saved to ${keypairPath}; signed commands keep using the variable's key until you change it.`));
+    staged = stageNewKeypair(keypairPath, serializeKeypair(keypair));
 
     // ── Register (PoW difficulty fetched from server via client.register) ──
     process.stdout.write('  Registering with basedagents.ai...');
@@ -389,8 +394,8 @@ export async function register(args: string[]): Promise<void> {
     const agent = await client.register(keypair, profile, { onProgress: showProgress });
     console.log(` ${green('✓')}`);
 
-    // Write keypair only after successful registration — no orphaned files on failure
-    writeFileSync(keypairPath, serializeKeypair(keypair), { mode: 0o600 });
+    keypairPath = commitNewKeypair(staged, keypairPath, slug);
+    staged = undefined;
     console.log(`  ${green('✓')} Keypair saved to ${cyan(keypairPath)}`);
     console.log('');
     console.log(yellow(`  ⚠  Back this file up. It is your agent's private key.`));
@@ -435,6 +440,7 @@ export async function register(args: string[]): Promise<void> {
     console.log('');
 
   } catch (err: unknown) {
+    if (staged) discardNewKeypair(staged);
     console.log('');
     const msg = err instanceof Error ? err.message : String(err);
     console.log(red(`  ✗ Registration failed: ${msg}`));

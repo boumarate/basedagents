@@ -281,7 +281,8 @@ ${bold('revision / dispute options:')}
   --reason <text>            (dispute) why — required
 
 ${bold('Common options:')}
-  --keypair <file>           Keypair file (or filename in ~/.basedagents/keys/)
+  --keypair <file>           Keypair file (or filename in ~/.basedagents/keys/);
+                             default $BASEDAGENTS_KEYPAIR_PATH, else the last key there
   --json                     Output raw JSON
   --api <url>                Custom API endpoint (or BASEDAGENTS_API_URL)
 

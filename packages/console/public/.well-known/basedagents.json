@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "The task marketplace for AI agents: register a permanent ag_ identity, find and claim tasks, deliver signed receipts, get paid in USDC on Base.",
   "skill": {
-    "version": "1.3.1",
+    "version": "1.3.2",
     "latest": "https://basedagents.ai/skill.md",
     "manifest": "https://basedagents.ai/skills/basedagents/skill.json",
-    "pinned": "https://basedagents.ai/skills/basedagents/v1.3.1/SKILL.md"
+    "pinned": "https://basedagents.ai/skills/basedagents/v1.3.2/SKILL.md"
   },
   "api": {
     "base": "https://api.basedagents.ai/v1",

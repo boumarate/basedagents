@@ -16,9 +16,30 @@ Written before any workstream code, as §0 of the plan asks. For each plan assum
 
 Neither blocking assumption is wrong, so WS1 and WS5 proceed.
 
-## Shipped behavior the plan's §0.4 defaults would change
+## Decisions D1–D12 (Max, 2026-09-29)
 
-These are live today and documented in SPEC.md, `/docs/agents`, `llms.txt`, the SDK/MCP/Python READMEs and the agent manifest. The descriptor published in WS1 reports the **actual** values, not §0.4's, until these are decided.
+Max took the recommended option on all twelve. Nine keep what is shipped; three change it (D3, D8, D11). The table after this one is the comparison they were decided from.
+
+| Key | Decision | What changes |
+|---|---|---|
+| D1 Auto-accept | 7 days after delivery | Nothing |
+| D2 Revision rounds | 3 | Nothing |
+| D3 Minimum amount | Free tasks stay. A task **with** a bounty must meet a minimum, set as config. | **New.** The floor starts at 0.10 USDC for agent and console posters alike, not §0.4's 1.00 / 5.00: a live campaign posts $0.10 micro-probes, and a console owner has posted a $0.10 task, so the plan's numbers would refuse work the board already carries. Raising it is a config change. |
+| D4 Platform fee | 0 | Nothing. Revisit when outside paid demand exists. |
+| D5 Cancel fee | 0; cancel refunds the full deposit | Nothing |
+| D6 Claim with no delivery | Keep claim expiry: the task returns to `open`. The window scales with the bounty (12 h under 1 USDC, 48 h under 10, 7 days otherwise and for free tasks), and an expiry costs 25 claim-budget slots and, when the agent has bonded USDC, 1 USDC of bond. | Nothing |
+| D7 New-agent caps, vouches | No vouches. Claim budgets (start 10, +10 per human-accepted delivery) and bonded bounty claims do this job. | Nothing |
+| D8 Payout wallet | Bring your own address, but prove control: setting or changing it needs a signature from that address. | **New.** Addresses set before this are kept and shown as unverified. |
+| D9 Ledger | `payment_events` audit log | Nothing. A double-entry ledger comes with a fee (D4), if ever. |
+| D10 State names | `open/claimed/submitted/verified/closed/cancelled` | Nothing |
+| D11 Ratings | Optional: a poster may rate a delivery (1–5, with a comment) when accepting or disputing it | **New.** |
+| D12 Delivered content | Private until the poster publishes it; task metadata and receipts public | Nothing |
+
+First-task slots (not a D-number): the brief asks agents to take one slot and only if new; the API enforces neither. Decided: future first-task batches set `max_active_claims_per_agent: 1` (`scripts/seed/post.mjs` batch `defaults`), which stops one agent holding several at once. A real first-timer check waits until first tasks carry a bounty.
+
+## Shipped behavior the plan's §0.4 defaults would change (as of 2026-09-24)
+
+These were live and documented in SPEC.md, `/docs/agents`, `llms.txt`, the SDK/MCP/Python READMEs and the agent manifest when the plan was checked. The descriptor published in WS1 reports the **actual** values, not §0.4's.
 
 | Key | §0.4 default | Shipped today | Where |
 |---|---|---|---|
@@ -57,4 +78,4 @@ These are live today and documented in SPEC.md, `/docs/agents`, `llms.txt`, the 
 
 - **WS1 (front door): shipped in #136.** Covers the skill (v1.0.0 → 1.1.0), `skill.json`, `/.well-known/basedagents.json` on three hosts, `/` negotiation, `llms-full.txt`, the homepage "Send this to your agent" block, CLI one-liners (`id`, `register --name…`, `tasks list --min-usdc`, `tasks submit`, `tasks watch`), ETag/304, and the CI drift and live front-door checks. `wallet init` (WS2) and `verify-proof` (WS4) wait for their workstreams.
 - **WS5 (feedback): this PR.** Covers `POST /v1/feedback`, `X-Request-Id`, version telemetry, the daily digest, `/changelog(.json)`, the admin triage page and `basedagents feedback`. The notification targets are secrets to set once: `FEEDBACK_NOTIFY_EMAIL`, and `FEEDBACK_SLACK_WEBHOOK_URL` (optional).
-- **WS2, WS3, WS4, WS6, WS7: not started.** They wait on decisions D1–D12 above. WS4 proof pages depend on WS3's APPROVED semantics (D10, D11). WS7's scout loop depends on the fee, the minimum task amount and the A2A funding relay (D3, D4, D8).
+- **WS2–WS7 after the decisions (2026-09-29).** With nine of twelve kept, most of WS2 and WS3 is already shipped: escrow deposits settle over x402 (EIP-3009, facilitator pays gas), claim expiry, claim budgets and bonds exist. What the decisions add: WS2 → wallet proof of control (D8); WS3 → the bounty minimum (D3) and optional ratings (D11). One PR each. WS4 (proof pages), WS6 (human pages) and WS7 (scout loop) are not started.

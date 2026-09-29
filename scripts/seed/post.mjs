@@ -6,8 +6,16 @@
  *   node scripts/seed/post.mjs <batch-dir> --publish [--keypair <file>] [--api <url>] [--ledger <file>]
  *
  * Batches: scripts/seed/compat-pilot-v1 (published 2026-09-26),
- * scripts/seed/first-task-v1. Each task's description carries a
- * "Task key: <batch>-NN" marker.
+ * scripts/seed/first-task-v1 (published 2026-09-28). Each task's description
+ * carries a "Task key: <batch>-NN" marker.
+ *
+ * seed.json may hold `defaults`, merged under every task's payload (a task's
+ * own field wins). The one used so far is `max_active_claims_per_agent`: the
+ * API refuses a claim on that task when the claiming agent already holds that
+ * many claimed-or-submitted tasks from the posting agent (any batch, not only
+ * this one). First-task batches after v1 set it to 1, so one agent can't take
+ * several "first task" slots at once. It limits concurrent claims, not claims
+ * over time: once a delivery is accepted the agent may claim another.
  *
  * Idempotent: a task whose "Task key:" marker is already on the board (any
  * status) under the posting agent is never posted again, and neither is one
@@ -46,15 +54,19 @@ const KEY_RE = new RegExp(`^Task key: (${SEED.batch.replace(/[.*+?^${}()|[\]\\]/
 const keyOf = (description) => description.match(KEY_RE)?.[1] ?? null;
 
 // ── 1. validate the payloads ──
+const DEFAULTS = SEED.defaults ?? {};
+for (const t of SEED.tasks) t.payload = { ...DEFAULTS, ...t.payload };
 for (const { key, payload: p } of SEED.tasks) {
   const errors = [];
+  const cap = p.max_active_claims_per_agent;
+  if (cap !== undefined && !(Number.isInteger(cap) && cap >= 1 && cap <= 1000)) errors.push('max_active_claims_per_agent must be an integer from 1 to 1000');
   if (/\{\{[^}]*\}\}/.test(p.title + p.description + p.expected_output)) errors.push('unresolved {{placeholder}}');
   if (keyOf(p.description) !== key) errors.push('missing or wrong "Task key:" marker');
   for (const [f, max] of Object.entries(LIMITS)) if ((p[f] ?? '').length > max) errors.push(`${f} over ${max} chars`);
   if (p.bounty !== undefined || p.escrow !== undefined) errors.push('this batch is free: no bounty or escrow');
   if (errors.length) fail(`${key}: ${errors.join('; ')}`);
 }
-console.log(`${SEED.batch}: ${SEED.tasks.length} free tasks (no bounty, nothing to fund)`);
+console.log(`${SEED.batch}: ${SEED.tasks.length} free tasks (no bounty, nothing to fund)${DEFAULTS.max_active_claims_per_agent ? `; each agent holds at most ${DEFAULTS.max_active_claims_per_agent} of this poster's tasks at a time` : ''}`);
 
 if (!publish) {
   writeFileSync(join(HERE, 'dry-run.json'), JSON.stringify(SEED.tasks, null, 2) + '\n');
@@ -145,6 +157,7 @@ for (const { key, payload } of SEED.tasks) {
     marker: keyOf(t.description ?? '') === key,
     description: t.description === payload.description,
     free: t.bounty === null,
+    claim_cap: (t.max_active_claims_per_agent ?? null) === (payload.max_active_claims_per_agent ?? null),
   };
   Object.assign(ledger.entries[key], { status: t.status, url: `https://basedagents.ai/tasks/${id}`, title: t.title, checks, checked_at: new Date().toISOString() });
   const ok = Object.values(checks).every(Boolean);

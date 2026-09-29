@@ -78,6 +78,22 @@ describe('basedagents feedback', () => {
     expect(logs.join('\n')).toMatch(/Could not load the keypair/);
   });
 
+  it('signs with the keypair BASEDAGENTS_KEYPAIR_PATH names when --keypair is not given', async () => {
+    vi.stubEnv('BASEDAGENTS_KEYPAIR_PATH', keypairPath);
+    await feedback([...REQUIRED, '--json']);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    expect(init.headers.Authorization).toMatch(/^AgentSig /);
+    vi.unstubAllEnvs();
+  });
+
+  it('a BASEDAGENTS_KEYPAIR_PATH that cannot be loaded fails instead of going anonymous', async () => {
+    vi.stubEnv('BASEDAGENTS_KEYPAIR_PATH', join(dir, 'missing-keypair.json'));
+    await expect(feedback([...REQUIRED, '--json'])).rejects.toMatchObject({ code: 1 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logs.join('\n')).toMatch(/Could not load the keypair .*missing-keypair\.json/);
+    vi.unstubAllEnvs();
+  });
+
   it('requires --expected, --actual and --steps', async () => {
     await expect(feedback(['--expected', 'x'])).rejects.toMatchObject({ code: 1 });
     expect(fetchMock).not.toHaveBeenCalled();
