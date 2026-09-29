@@ -77,6 +77,9 @@ export interface TaskRow {
   claim_expires_at: string | null;
   /** Campaign cap (migration 0044): max claimed+submitted per agent across this poster's tasks; NULL = uncapped. */
   max_active_claims_per_agent: number | null;
+  /** Open window (0047, decision D13): an `open` task past this expires (cron). NULL = never (house standing tasks). */
+  expires_at: string | null;
+  expired_at: string | null;
   // ─── Optional rating (0045, decision D11) — public, see recordRating ───
   /** 1–5, given by the poster when accepting or disputing; NULL = not rated. */
   rating: number | null;
@@ -389,9 +392,14 @@ export function escrowView(t: TaskRow): EscrowView | null {
   };
 }
 
-/** An open task an agent may claim right now: an escrow task only once its deposit has settled. */
-export function claimable(t: Pick<TaskRow, 'status' | 'escrow' | 'escrow_status'>): boolean {
-  return t.status === 'open' && (!t.escrow || t.escrow_status === 'funded');
+/**
+ * An open task an agent may claim right now: an escrow task only once its
+ * deposit has settled, and never past its open window (the claim gate refuses
+ * a lapsed task before the sweep marks it, so the shown value must agree).
+ */
+export function claimable(t: Pick<TaskRow, 'status' | 'escrow' | 'escrow_status'> & { expires_at?: string | null }): boolean {
+  return t.status === 'open' && (!t.escrow || t.escrow_status === 'funded')
+    && (!t.expires_at || t.expires_at > new Date().toISOString());
 }
 
 /** The public shape of a task row: internals stripped, derived fields added. */
@@ -516,7 +524,7 @@ export async function claimGate(db: DBAdapter, taskId: string, agentId: string, 
          < (CAST(COALESCE((SELECT balance_atomic FROM agent_claim_bonds WHERE agent_id = ?), '0') AS INTEGER) / CAST(? AS INTEGER)))`
     : '';
   const expiresAt = isoPlus(nowIso, claimWindowMsForBounty(task?.bounty_amount ?? null));
-  const params: unknown[] = [agentId, nowIso, expiresAt, acceptorSig, taskId, agentId];
+  const params: unknown[] = [agentId, nowIso, expiresAt, acceptorSig, taskId, agentId, nowIso];
   if (restrictable) params.push(agentId);
   params.push(agentId, budget, agentId);
   if (bondPredicate) params.push(agentId, agentId, cfg.bondPerSlotAtomic);
@@ -524,7 +532,8 @@ export async function claimGate(db: DBAdapter, taskId: string, agentId: string, 
     sql: `UPDATE tasks SET claimed_by_agent_id = ?, status = 'claimed', claimed_at = ?, claim_expires_at = ?, acceptor_signature = ?
      WHERE task_id = ? AND status = 'open' AND claimed_by_agent_id IS NULL
        AND (creator_agent_id IS NULL OR creator_agent_id <> ?)
-       AND (escrow = 0 OR escrow_status = 'funded')${allowlistPredicate}${budgetPredicate}${campaignPredicate}${bondPredicate}`,
+       AND (escrow = 0 OR escrow_status = 'funded')
+       AND (expires_at IS NULL OR expires_at > ?)${allowlistPredicate}${budgetPredicate}${campaignPredicate}${bondPredicate}`,
     params,
   }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
 }
@@ -688,16 +697,46 @@ export async function cancelGate(db: DBAdapter, taskId: string, nowIso: string, 
  * counters so the next claimer starts fresh). Never touches payment columns —
  * nothing is authorized at claim time, so a bounty stays `pending`. The timer is
  * part of the predicate so a delivery made after the cron's SELECT is not clobbered.
+ *
+ * `newOpenExpiresAt` re-arms the OPEN window (0047): a week spent claimed by a
+ * no-show must not expire the task the moment it returns. A NULL window
+ * (never-expiring house task, or a pre-0047 row) stays NULL.
  */
-export async function claimExpiryGate(db: DBAdapter, taskId: string, nowIso: string): Promise<boolean> {
+export async function claimExpiryGate(db: DBAdapter, taskId: string, nowIso: string, newOpenExpiresAt: string): Promise<boolean> {
   const res = await db.run(
     `UPDATE tasks SET status = 'open', claimed_by_agent_id = NULL, claimed_at = NULL, acceptor_signature = NULL,
-       claim_expires_at = NULL, revision_count = 0, review_note = NULL, revision_requested_at = NULL
+       claim_expires_at = NULL, revision_count = 0, review_note = NULL, revision_requested_at = NULL,
+       expires_at = CASE WHEN expires_at IS NULL THEN NULL ELSE ? END
      WHERE task_id = ? AND status = 'claimed'
        AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?`,
-    taskId, nowIso,
+    newOpenExpiresAt, taskId, nowIso,
   );
   return res.changes === 1;
+}
+
+/**
+ * T10 (0047): open → expired when nobody claimed within the open window
+ * (cron). Money handling mirrors cancelGate: a FUNDED escrow keeps its
+ * payment columns (the caller starts the refund leg), a deposit that was
+ * broadcast and is still moving in blocks the sweep until it resolves, a
+ * broadcast-less funding deposit is voided (`unfunded`), and a never-settled
+ * declared bounty is voided (payment_status `expired`). The window is part of
+ * the predicate so a claim racing the sweep wins cleanly.
+ */
+export async function openExpiryGate(db: DBAdapter, taskId: string, nowIso: string, notify?: GateNotify): Promise<boolean> {
+  return gateWithEvent(db, {
+    sql: `UPDATE tasks SET status = 'expired', expired_at = ?,
+       payment_status = CASE
+         WHEN escrow = 1 AND escrow_status = 'funded' THEN payment_status
+         WHEN payment_status IN ('pending','failed','expired') THEN 'expired' ELSE payment_status END,
+       escrow_status = CASE WHEN escrow = 1 AND escrow_status = 'funding' THEN 'unfunded' ELSE escrow_status END,
+       settle_next_at = CASE WHEN escrow = 1 AND escrow_status = 'funding' THEN NULL ELSE settle_next_at END
+     WHERE task_id = ? AND status = 'open'
+       AND expires_at IS NOT NULL AND expires_at <= ?
+       AND payment_status NOT IN ('authorized','settling','settled')
+       AND NOT (escrow = 1 AND escrow_status = 'funding' AND settle_broadcast = 1)`,
+    params: [nowIso, taskId, nowIso],
+  }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
 }
 
 /** Why a cancel would be refused, from the row the route read (maps to 409 codes). */
@@ -705,7 +744,7 @@ export function cancelRefusal(
   t: Pick<TaskRow, 'status' | 'disputed_at' | 'payment_status' | 'escrow' | 'escrow_status' | 'settle_broadcast'>,
 ): 'already_accepted' | 'dispute_first' | 'payment_in_flight' | 'conflict' | null {
   if (t.status === 'verified') return 'already_accepted';
-  if (t.status === 'cancelled' || t.status === 'closed') return 'conflict';
+  if (t.status === 'cancelled' || t.status === 'closed' || t.status === 'expired') return 'conflict';
   if (t.escrow) {
     // A funded deposit is refundable; one still moving in is not cancellable until it resolves.
     if (t.escrow_status === 'funding' && (['authorized', 'settling'].includes(t.payment_status) || t.settle_broadcast === 1)) return 'payment_in_flight';

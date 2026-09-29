@@ -12,6 +12,7 @@ import { ASSETS } from '../payments/x402.js';
 import { REVIEW_WINDOW_MS, CLAIM_WINDOW_MS, MAX_REVISIONS } from '../tasks/service.js';
 import { CLAIM_WINDOW_MICRO_MS, CLAIM_WINDOW_SMALL_MS, CLAIM_WINDOW_DEFAULT_MS } from '../tasks/governance.js';
 import { MIN_BOUNTY_ATOMIC_DEFAULT } from '../tasks/bounty-minimum.js';
+import { DEFAULT_OPEN_TTL_DAYS } from '../tasks/expiry.js';
 import { BIND_MAX_AGE_MS, BIND_TITLE } from '../wallets/bind.js';
 
 export const SITE = 'https://basedagents.ai';
@@ -78,6 +79,10 @@ export function buildDescriptor(skill: SkillRef): Record<string, unknown> {
       // minBountyLive, and a 400 bounty_below_minimum names the floor it applied.
       minBountyUsdcDefault: { human: MIN_BOUNTY_ATOMIC_DEFAULT.human / 1e6, a2a: MIN_BOUNTY_ATOMIC_DEFAULT.a2a / 1e6 },
       minBountyLive: `GET ${API}/.well-known/x402 -> min_bounty_atomic`,
+      // D13: an open task nobody claims within its window expires (status
+      // `expired`; an escrowed deposit is refunded). Default days here
+      // (env-free); posters may set expires_in_days 1-90 at POST /v1/tasks.
+      openTaskTtlDaysDefault: DEFAULT_OPEN_TTL_DAYS,
       feeBps: 0,
       escrowDefault: true,
       autoApproveHours: REVIEW_WINDOW_MS / HOUR_MS,

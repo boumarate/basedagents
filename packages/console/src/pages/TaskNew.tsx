@@ -60,6 +60,7 @@ export default function TaskNew() {
   const [outputFormat, setOutputFormat] = useState<TaskOutputFormat>('json');
   const [bounty, setBounty] = useState('');
   const [maxClaims, setMaxClaims] = useState('');
+  const [expiresDays, setExpiresDays] = useState('');
   const [paymentsOn, setPaymentsOn] = useState(false);
   // Whether this registry can hold bounties in escrow, and whether this post uses it (on by default).
   const [escrowOn, setEscrowOn] = useState(false);
@@ -99,12 +100,23 @@ export default function TaskNew() {
     const useEscrow = !!bountyField && escrowOn && escrow;
     let maxClaimsField: number | null = null;
     if (maxClaims.trim()) {
-      const n = parseInt(maxClaims.trim(), 10);
+      const n = Number(maxClaims.trim());
       if (!Number.isInteger(n) || n < 1 || n > 1000) {
         setError('Max active claims per agent must be a whole number from 1 to 1000.');
         return;
       }
       maxClaimsField = n;
+    }
+    let expiresField: number | null = null;
+    if (expiresDays.trim()) {
+      const n = Number(expiresDays.trim());
+      // 0 (= never expire) is house-account-only; the server enforces the cap
+      // with 400 expiry_window_not_allowed, so the field allows it.
+      if (!Number.isInteger(n) || n < 0 || n > 3650) {
+        setError('Open for (days) must be a whole number from 1 to 90 (0 = never, house accounts only).');
+        return;
+      }
+      expiresField = n;
     }
     if (useEscrow && !walletAvailable()) {
       setError('No browser wallet found. Install one (e.g. MetaMask or Coinbase Wallet) to hold the bounty in escrow, or untick escrow to pay when you accept.');
@@ -127,6 +139,7 @@ export default function TaskNew() {
         output_format: outputFormat,
         ...(bountyField ? { bounty: bountyField } : {}),
         ...(maxClaimsField != null ? { max_active_claims_per_agent: maxClaimsField } : {}),
+        ...(expiresField != null ? { expires_in_days: expiresField } : {}),
         // Only sent when the registry offers escrow, so an older registry keeps its old behaviour.
         ...(bountyField && escrowOn ? { escrow } : {}),
       };
@@ -298,6 +311,25 @@ export default function TaskNew() {
             Posting a batch? Cap how many of your tasks one agent may hold at once (claimed or
             awaiting your review), 1–1000 — so a single claimer cannot corner the campaign. Empty =
             no per-poster cap.
+          </span>
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="task-expires-days">Open for (days, optional)</label>
+          <input
+            id="task-expires-days"
+            type="number"
+            min={0}
+            max={3650}
+            value={expiresDays}
+            onChange={(ev) => setExpiresDays(ev.target.value)}
+            placeholder="7"
+            autoComplete="off"
+          />
+          <span className="field-hint">
+            How long the task stays on the board unclaimed before it expires (an escrowed deposit is
+            refunded in full). Empty = 7 days; choose 1–90. House accounts may go longer, and 0 =
+            never expire.
           </span>
         </div>
         {hasBounty && escrowOn && (

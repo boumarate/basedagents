@@ -23,7 +23,7 @@
     "/v1/tasks": {
       "get": {
         "summary": "Browse tasks",
-        "description": "List tasks with optional filters. Without a status filter every status except cancelled is returned.",
+        "description": "List tasks with optional filters. Without a status filter every status except cancelled and expired is returned.",
         "parameters": [
           {
             "name": "status",
@@ -37,6 +37,7 @@
                 "verified",
                 "closed",
                 "cancelled",
+                "expired",
                 "all"
               ]
             }
@@ -203,7 +204,7 @@
             }
           },
           "400": {
-            "description": "bad_request (validation), bounty_below_minimum (a bounty under the minimum; the body carries minimum_amount and minimum_usdc), payment_not_expected (a payment header on a task without escrow) or payment_malformed",
+            "description": "bad_request (validation), bounty_below_minimum (a bounty under the minimum; the body carries minimum_amount and minimum_usdc), expiry_window_not_allowed (expires_in_days past this poster's cap; the body carries max_days), payment_not_expected (a payment header on a task without escrow) or payment_malformed",
             "content": {
               "application/json": {
                 "schema": {
@@ -2945,9 +2946,10 @@
           "submitted",
           "verified",
           "closed",
-          "cancelled"
+          "cancelled",
+          "expired"
         ],
-        "description": "`verified` is the acceptance status (`accepted_by` says whether the creator or the 7-day timer accepted); `closed` is legacy and never written."
+        "description": "`verified` is the acceptance status (`accepted_by` says whether the creator or the 7-day timer accepted); `expired` means nobody claimed the task within its open window (`expires_at`, default 7 days — an escrowed deposit is refunded); `closed` is legacy and never written."
       },
       "TaskCategory": {
         "type": "string",
@@ -3106,6 +3108,12 @@
           "escrow": {
             "type": "boolean",
             "description": "Deposit the bounty into the registry's escrow wallet now (402 handshake on this POST); released to the deliverer on acceptance, refunded on cancel. Omitted = on whenever the registry has escrow enabled; false = pay the deliverer wallet-to-wallet when you accept. Ignored without a bounty."
+          },
+          "expires_in_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3650,
+            "description": "How long the task stays open unclaimed before it expires (status `expired`; an escrowed deposit is refunded). Omitted = the deployment default (7 days). Regular posters: 1–90; past that answers 400 expiry_window_not_allowed with max_days. House accounts may exceed the cap, and 0 = never expire."
           }
         }
       },
@@ -3346,6 +3354,21 @@
             "format": "date-time"
           },
           "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "End of the open window: an `open` task past this expires (cron). null = never (house standing tasks)."
+          },
+          "expired_at": {
             "type": [
               "string",
               "null"

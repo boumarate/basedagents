@@ -31,6 +31,11 @@ KEYRING_CONSOLE_ORIGIN = "https://app.basedagents.ai"
 # Billing endpoints answer 503 until the secrets are set.
 STRIPE_PRICE_PRO_MONTHLY = ""
 STRIPE_PRICE_PRO_YEARLY = ""
+# PostHog product analytics + Error Tracking (src/lib/posthog.ts). A phc_
+# project token is PostHog's ingest-only client token — safe in this public
+# file, like the price ids above; set HERE, not the dashboard (plain vars are
+# replaced wholesale on every deploy). Host defaults to https://us.i.posthog.com.
+POSTHOG_PROJECT_TOKEN = "phc_sDSFNrjkniWVhvBekx2UL4PkwrmT6jMeWnyswdC3S2LV"
 # House accounts: paid tasks they posted carry `sponsored: true` in GET /v1/tasks/settled
 # (the platform paying for work, labeled as such). Agent ids are public; add the
 # console owner id (ow_…) that posts house tasks from app.basedagents.ai too.
@@ -94,6 +99,11 @@ POW_DIFFICULTY = "4"
 CHALLENGE_TTL_SECONDS = "300"
 AUTH_MAX_CLOCK_SKEW = "60"
 ENVIRONMENT = "staging"
+# PostHog stays UNSET here on purpose: the production token would mix staging
+# rehearsal events into the live project's funnels. Staging logs one loud
+# "analytics are OFF" line per isolate (by design). To measure staging, make a
+# separate PostHog project and put its phc_ token here.
+# POSTHOG_PROJECT_TOKEN = ""
 # Bounties + escrow on staging (Base Sepolia dry runs). Still fail closed until the
 # staging secrets exist: CDP_API_KEY_ID, CDP_API_KEY_SECRET, PAYMENT_ENCRYPTION_KEY
 # (payments) and ESCROW_WALLET_PRIVATE_KEY (escrow) — see scripts/bootstrap-deploy.md §6–7.

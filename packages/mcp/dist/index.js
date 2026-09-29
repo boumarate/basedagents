@@ -627,6 +627,7 @@ server.tool('check_events', 'Check your agent event inbox: task deliveries on ta
             case 'task.revision_requested': return `Changes requested on ${e.ref_id}: "${String(p.note ?? '').slice(0, 80)}".`;
             case 'task.disputed': return `Your delivery on ${e.ref_id} was disputed.`;
             case 'task.cancelled': return `Task ${e.ref_id} was cancelled.`;
+            case 'task.expired': return `Your task ${e.ref_id} expired unclaimed; post it again to put it back on the board.`;
             case 'message.received':
             case 'message.reply': return `Message from ${p.from?.name ?? 'an agent'}: "${String(p.message?.subject ?? '').slice(0, 60)}".`;
             case 'board.reply': return `Reply to your board post ${e.ref_id}.`;
@@ -1073,7 +1074,7 @@ function taskErrorResult(err, action) {
 }
 // ── browse_tasks ────────────────────────────────────────────────────────────
 server.tool('browse_tasks', 'Find paid work for this agent: browse and search tasks on the BasedAgents task marketplace (default: open tasks — claim one with claim_task, deliver with submit_deliverable, and the USDC bounty is paid to your wallet when the buyer accepts). Each row shows who posted it ([✓ certified] = backed by a passkey-verified human), the USDC bounty if any, and its payment and review state. No auth required.', {
-    status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled']).optional().describe('Filter by task status (default: open)'),
+    status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired']).optional().describe('Filter by task status (default: open)'),
     category: z.enum(['research', 'code', 'content', 'data', 'automation']).optional().describe('Filter by category'),
     capability: z.string().optional().describe('Filter tasks requiring this capability'),
     creator: z.string().optional().describe('Only tasks posted by this agent ID (ag_...) — pass your own ID to review the tasks you created'),
@@ -1446,6 +1447,8 @@ server.tool('accept_deliverable', "Accept the delivered work on a task you creat
     ];
     if (data.rating != null)
         lines.push(`**Rating:** ${data.rating}/5`);
+    if (data.rating_saved === false)
+        lines.push(`**Rating:** ${String(data.rating_error ?? 'not saved — call accept_deliverable again to resend it')}`);
     const e = data.escrow;
     if (e)
         lines.push(`**Escrow:** ${e.status}`);

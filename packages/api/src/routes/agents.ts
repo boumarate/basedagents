@@ -521,13 +521,20 @@ agents.patch('/:id/wallet', agentAuth, async (c) => {
     'SELECT wallet_address, wallet_network, wallet_verified_at FROM agents WHERE id = ?', id,
   );
 
-  // Clearing needs no proof: nothing new is bound.
+  // Clearing needs no proof: nothing new is bound. One atomic write, like the
+  // bind below: a concurrent bind can't land between the two statements and
+  // leave a verified wallet with every binding retired.
   if (updates.wallet_address === null) {
-    await db.run(
-      'UPDATE agents SET wallet_address = NULL, wallet_verified_at = NULL, wallet_network = COALESCE(?, wallet_network) WHERE id = ?',
-      updates.wallet_network ?? null, id,
-    );
-    await db.run('UPDATE agent_wallet_bindings SET unbound_at = ? WHERE agent_id = ? AND unbound_at IS NULL', nowIso, id);
+    await db.batch([
+      {
+        sql: 'UPDATE agents SET wallet_address = NULL, wallet_verified_at = NULL, wallet_network = COALESCE(?, wallet_network) WHERE id = ?',
+        params: [updates.wallet_network ?? null, id],
+      },
+      {
+        sql: 'UPDATE agent_wallet_bindings SET unbound_at = ? WHERE agent_id = ? AND unbound_at IS NULL',
+        params: [nowIso, id],
+      },
+    ]);
     return c.json(await walletView(db, id));
   }
 

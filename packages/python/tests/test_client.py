@@ -363,7 +363,7 @@ class TestUsdcHelpers:
             assert usdc_to_atomic(atomic_to_display(usdc_to_atomic(d))) == usdc_to_atomic(d)
 
     def test_task_statuses_include_closed(self):
-        assert TASK_STATUSES == ("open", "claimed", "submitted", "verified", "closed", "cancelled")
+        assert TASK_STATUSES == ("open", "claimed", "submitted", "verified", "closed", "cancelled", "expired")
         assert PAYMENT_HEADER == "PAYMENT-SIGNATURE"
 
 

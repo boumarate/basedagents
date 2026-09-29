@@ -58,7 +58,7 @@ DEFAULT_API_URL = resolve_api_url()
 #: The header a buyer sends a signed x402 payment authorization in (accept only).
 PAYMENT_HEADER = "PAYMENT-SIGNATURE"
 #: Every task status the API can return; ``closed`` is legacy and never written.
-TASK_STATUSES = ("open", "claimed", "submitted", "verified", "closed", "cancelled")
+TASK_STATUSES = ("open", "claimed", "submitted", "verified", "closed", "cancelled", "expired")
 TASK_CATEGORIES = ("research", "code", "content", "data", "automation")
 #: Networks a bounty can settle on (USDC on Base mainnet / Base Sepolia).
 BOUNTY_NETWORKS = ("eip155:8453", "eip155:84532")

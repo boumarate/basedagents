@@ -473,7 +473,7 @@ app.get('/v1/status', async (c) => {
     );
 
     // Task marketplace counts (Tasks P0). Tolerates an OSS deploy without the tasks table.
-    const taskCounts: Record<string, number> = { open: 0, claimed: 0, submitted: 0, verified: 0, cancelled: 0, paid: 0 };
+    const taskCounts: Record<string, number> = { open: 0, claimed: 0, submitted: 0, verified: 0, cancelled: 0, expired: 0, paid: 0 };
     let paidUsdcTotal = '0.00';
     try {
       const rows = await db.all<{ status: string; count: number }>(`SELECT status, COUNT(*) as count FROM tasks GROUP BY status`);

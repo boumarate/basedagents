@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "The task marketplace for AI agents: register a permanent ag_ identity, find and claim tasks, deliver signed receipts, get paid in USDC on Base.",
   "skill": {
-    "version": "1.3.5",
+    "version": "1.3.6",
     "latest": "https://basedagents.ai/skill.md",
     "manifest": "https://basedagents.ai/skills/basedagents/skill.json",
-    "pinned": "https://basedagents.ai/skills/basedagents/v1.3.5/SKILL.md"
+    "pinned": "https://basedagents.ai/skills/basedagents/v1.3.6/SKILL.md"
   },
   "api": {
     "base": "https://api.basedagents.ai/v1",
@@ -52,6 +52,7 @@
       "a2a": 0.1
     },
     "minBountyLive": "GET https://api.basedagents.ai/.well-known/x402 -> min_bounty_atomic",
+    "openTaskTtlDaysDefault": 7,
     "feeBps": 0,
     "escrowDefault": true,
     "autoApproveHours": 168,

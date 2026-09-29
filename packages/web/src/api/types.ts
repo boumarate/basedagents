@@ -158,7 +158,7 @@ export interface ApiEscrowView {
   refunded_at: string | null;
 }
 
-export type ApiTaskStatus = 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled';
+export type ApiTaskStatus = 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled' | 'expired';
 
 /** Who posted the task — an agent (linkable) or a human owner (never exposed by id). */
 export interface ApiTaskCreator {
@@ -205,6 +205,9 @@ export interface ApiTask {
   submitted_at: string | null;
   verified_at: string | null;
   cancelled_at?: string | null;
+  /** End of the open window (D13): an unclaimed task expires past this; null = never. */
+  expires_at?: string | null;
+  expired_at?: string | null;
   // Review state (D4): flags, not statuses. `review_state` is derived server-side.
   accepted_by?: 'creator' | 'auto' | null;
   review_note?: string | null;
@@ -318,7 +321,7 @@ export interface ApiTaskReceiptsResponse {
 export interface ApiStatusResponse {
   status: string;
   agents?: { total: number; active: number; pending: number; suspended: number };
-  tasks?: { open: number; claimed: number; submitted: number; verified: number; cancelled: number; paid: number; paid_usdc_total?: string };
+  tasks?: { open: number; claimed: number; submitted: number; verified: number; cancelled: number; expired?: number; paid: number; paid_usdc_total?: string };
   payments?: 'enabled' | 'disabled';
 }
 

@@ -35,6 +35,7 @@ import { buildRequirements, buildPaymentRequired, isNetwork } from '../payments/
 import { acceptBountyTask, delivererWallet } from '../payments/accept.js';
 import { fundEscrowTask, acceptEscrowTask, startEscrowLeg, escrowDepositRequirements } from '../payments/escrow.js';
 import { claimBudget, slashBondForDisputedClaim } from '../tasks/governance.js';
+import { resolveOpenExpiry } from '../tasks/expiry.js';
 import { bountyMinimumRefusal } from '../tasks/bounty-minimum.js';
 import { escrowAvailable } from '../payments/house-wallet.js';
 import { settledStats, settledTasks, logSettledWithoutTx, houseAccountIds, parseCursor, DEFAULT_LIMIT, MAX_LIMIT, DEFAULT_WINDOW_DAYS, MAX_WINDOW_DAYS } from '../tasks/settled.js';
@@ -141,6 +142,17 @@ tasks.post('/', agentAuth, async (c) => {
   const now = new Date().toISOString();
   const reqCaps = parsed.data.required_capabilities ?? null;
 
+  // D13: how long the task stays open unclaimed — default 7 days; only house
+  // accounts may exceed the cap or post a never-expiring task (tasks/expiry.ts).
+  const expiry = resolveOpenExpiry(c.env, creatorId, parsed.data.expires_in_days, now);
+  if (!expiry.ok) {
+    return c.json({
+      error: 'expiry_window_not_allowed',
+      message: `expires_in_days must be between 1 and ${expiry.max} for this poster; omit it for the default window.`,
+      max_days: expiry.max,
+    }, 400);
+  }
+
   if (wantsEscrow && bounty) {
     const outcome = await fundEscrowTask(db, c.env, {
       kind: 'new',
@@ -151,6 +163,7 @@ tasks.post('/', agentAuth, async (c) => {
         category: parsed.data.category ?? null, required_capabilities: reqCaps, expected_output: parsed.data.expected_output ?? null,
         output_format: parsed.data.output_format, bounty: { amount: bounty.amount, token: bounty.token, network: bounty.network },
         max_active_claims_per_agent: parsed.data.max_active_claims_per_agent ?? null,
+        expires_at: expiry.expiresAt,
       },
     }, { rawHeader: paymentHeader(c) ?? null, nowIso: now, actor: { kind: 'agent', agentId: creatorId } });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
@@ -170,13 +183,13 @@ tasks.post('/', agentAuth, async (c) => {
   await db.run(
     `INSERT INTO tasks (task_id, creator_agent_id, creator_kind, title, description, category, required_capabilities,
        expected_output, output_format, status, created_at, proposer_signature,
-       bounty_amount, bounty_token, bounty_network, payment_status, max_active_claims_per_agent)
-     VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
+       bounty_amount, bounty_token, bounty_network, payment_status, max_active_claims_per_agent, expires_at)
+     VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`,
     taskId, creatorId, parsed.data.title, parsed.data.description, parsed.data.category ?? null,
     reqCaps ? JSON.stringify(reqCaps) : null, parsed.data.expected_output ?? null, parsed.data.output_format,
     now, agentSigFromHeader(c),
     bounty?.amount ?? null, bounty?.token ?? null, bounty?.network ?? null, paymentStatus,
-    parsed.data.max_active_claims_per_agent ?? null,
+    parsed.data.max_active_claims_per_agent ?? null, expiry.expiresAt,
   );
 
   if (bounty) {
@@ -195,7 +208,7 @@ tasks.post('/', agentAuth, async (c) => {
     required_capabilities: reqCaps, output_format: parsed.data.output_format, bounty: bountyOut,
   }, creatorId);
 
-  const response: Record<string, unknown> = { ok: true, task_id: taskId, status: 'open', payment_status: paymentStatus, escrow: null };
+  const response: Record<string, unknown> = { ok: true, task_id: taskId, status: 'open', payment_status: paymentStatus, escrow: null, expires_at: expiry.expiresAt };
   if (bountyOut) response.bounty = bountyOut;
   return c.json(response);
 });
@@ -265,8 +278,8 @@ tasks.get('/', async (c) => {
     sql += ` AND t.status = ?`;
     params.push(q.status);
   }
-  // No filter = every status except cancelled (unless explicitly requested)
-  if (!q.status) sql += ` AND t.status != 'cancelled'`;
+  // No filter = every status except the swept-away ones (unless explicitly requested)
+  if (!q.status) sql += ` AND t.status NOT IN ('cancelled','expired')`;
   if (q.category) { sql += ` AND t.category = ?`; params.push(q.category); }
   if (q.capability) { sql += ` AND t.required_capabilities LIKE ?`; params.push(`%"${q.capability}"%`); }
   if (q.creator) { sql += ` AND t.creator_agent_id = ?`; params.push(q.creator); }

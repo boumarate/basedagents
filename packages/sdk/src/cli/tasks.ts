@@ -65,6 +65,7 @@ export function statusColor(status: string): string {
     case 'submitted': return cyan(status);
     case 'verified':  return green(status);
     case 'cancelled': return red(status);
+    case 'expired':   return dim(status);
     case 'closed':    return dim(status);
     default:          return status;
   }
@@ -675,18 +676,20 @@ export async function tasksSubmit(args: string[]): Promise<void> {
 
 // ─── watch ───
 
-const TERMINAL_STATUSES = new Set(['verified', 'closed', 'cancelled']);
+const TERMINAL_STATUSES = new Set(['verified', 'closed', 'cancelled', 'expired']);
 /** Payment states after which nothing more will happen to the money. */
 const PAYMENT_FINAL = new Set(['none', 'settled', 'refunded', 'expired']);
 
 /**
- * Done watching: cancelled/closed, or accepted with the payout final. An
+ * Done watching: a terminal status with the money in a final state. An
  * accepted bounty whose transfer is still pending/settling (or failed and
- * being retried by the registry) keeps the watch going.
+ * being retried by the registry) keeps the watch going — and so does a
+ * cancelled or expired escrow task whose deposit refund has not landed yet:
+ * the buyer's watch must not report done while their money is in flight.
+ * (`failed` retries on its own; only a state nothing will move counts.)
  */
 export function watchIsDone(t: { status?: unknown; payment_status?: unknown }): boolean {
   if (!TERMINAL_STATUSES.has(String(t.status))) return false;
-  if (t.status !== 'verified') return true;
   return PAYMENT_FINAL.has(String(t.payment_status ?? 'none'));
 }
 
@@ -717,6 +720,7 @@ export function nextActionHint(t: Pick<Task, 'status'> & Partial<Task>): string 
       if (task.payment_status === 'failed') return 'accepted; payout failed and is being retried (check tasks payment)';
       return task.payment_status && task.payment_status !== 'none' ? `accepted; payout ${task.payment_status}` : 'accepted';
     case 'cancelled': return 'none (cancelled)';
+    case 'expired': return 'none (expired unclaimed)';
     case 'closed': return 'none (closed)';
     default: return 're-fetch the task';
   }
@@ -848,6 +852,7 @@ export async function tasksAccept(args: string[]): Promise<void> {
     console.log(row('Status', statusColor(result.status)));
     if (result.accepted_by) console.log(row('Accepted by', result.accepted_by));
     if (result.rating) console.log(row('Rating', `${result.rating}/5`));
+    if (result.rating_saved === false) console.log(row('Rating', yellow(result.rating_error ?? "not saved — run tasks accept again to resend it")));
     console.log(row('Payment', result.payment_status === 'settled' ? green(result.payment_status) : result.payment_status));
     if (result.escrow) console.log(row('Escrow', result.escrow.status === 'released' ? green(result.escrow.status) : yellow(result.escrow.status)));
     if (result.payment_tx_hash) console.log(row('TX hash', cyan(result.payment_tx_hash)));

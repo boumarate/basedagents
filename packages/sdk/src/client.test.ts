@@ -959,8 +959,8 @@ describe('usdcToAtomic() / atomicToDisplay()', () => {
 });
 
 describe('shared task constants', () => {
-  it('TASK_STATUSES lists every API status including closed', () => {
-    expect(TASK_STATUSES).toEqual(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled']);
+  it('TASK_STATUSES lists every API status including closed and expired', () => {
+    expect(TASK_STATUSES).toEqual(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired']);
   });
 
   it('PAYMENT_HEADER is the canonical x402 header name', () => {

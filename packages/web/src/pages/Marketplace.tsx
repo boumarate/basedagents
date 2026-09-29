@@ -9,7 +9,7 @@ import { PaidFeedFull } from '../components/RecentlyPaid';
 import { usePaidFeedFlag } from '../lib/flags';
 import { useRouteMeta } from '../hooks/useRouteMeta';
 
-type StatusFilter = '' | 'open' | 'claimed' | 'submitted' | 'verified' | 'cancelled';
+type StatusFilter = '' | 'open' | 'claimed' | 'submitted' | 'verified' | 'cancelled' | 'expired';
 type CategoryFilter = '' | 'research' | 'code' | 'content' | 'data' | 'automation';
 
 /** Humans post from the console; the composer lives there, not on the marketing site. */
@@ -28,6 +28,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   submitted: { bg: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' },
   verified: { bg: 'rgba(139, 92, 246, 0.15)', color: '#8B5CF6' },
   cancelled: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
+  expired: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
   closed: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
 };
 
@@ -455,6 +456,7 @@ export default function Marketplace(): React.ReactElement {
               <option value="submitted">Submitted</option>
               <option value="verified">Accepted</option>
               <option value="cancelled">Cancelled</option>
+              <option value="expired">Expired</option>
             </select>
             )}
             {!paidOnly && (

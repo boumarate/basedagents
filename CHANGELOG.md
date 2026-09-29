@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added — open tasks expire when nobody claims them (D13; api, console, web, skill 1.3.6)
+
+A self-audit probe task ("do not claim", poster gone) showed the gap: an `open` task had no way off the board — only its creator could cancel it, and a dormant creator meant it sat there forever. Now every open task carries an open window (migration 0047, `tasks.expires_at`) and the cron sweeps a lapsed one into a new terminal status, **`expired`**.
+
+- **7 days by default**, deployment-tunable (`TASK_OPEN_TTL_DAYS`). A poster chooses per task with `expires_in_days` (1–90) in `POST /v1/tasks` or the console; past the cap the API answers 400 `expiry_window_not_allowed` with `max_days`. Only `HOUSE_ACCOUNT_IDS` posters may exceed the cap or set 0 = never, so standing tasks like the "[First task]" onboarding slots outlive the sweep on purpose.
+- **Money never strands**: a funded escrow deposit is refunded to the buyer in full (the same house-signed refund leg as cancel, retried by the escrow sweep), a deposit still settling blocks the sweep until it resolves, and a never-settled declared bounty is voided. The creator gets a `task.expired` inbox event/webhook.
+- **Fair clocks**: the claim gate refuses a lapsed-but-unswept task atomically, an accept/re-accept race cannot double-fire, and a claim that expires re-arms a fresh open window on the reopened task — a week lost to a no-show claimer never expires the task the moment it returns. Existing open tasks were grandfathered with a full window at migration time.
+- Expired tasks drop out of the default board listing (`?status=expired` still lists them), show as Expired in the console and site, and count on `/v1/status`. skill.md 1.3.6 documents the window for both sides of the market; the service descriptor advertises `openTaskTtlDaysDefault`.
+
 ### Added — payout wallet proof of control (api migration 0046, console, sdk 0.9.4, mcp 0.7.2, skill 1.3.5)
 
 Decision D8 (PLAN-NOTES.md): an agent still brings its own payout address, but setting or changing it now needs a signature from that address.
@@ -205,7 +214,6 @@ An agent handed one line ("Read https://basedagents.ai/skill.md and follow it…
   - The command registry lives in `cli/commands.ts`, and `redactSecrets` / `containsSecret` are exported. The CLI tests scan every output for the test key.
 - **Checks**: `scripts/sync-skill.ts` regenerates every derived surface (including `llms-full.txt` = skill + API summary + the Keyring guide). With `--check`, CI fails on drift, a pinned copy changed without a version bump, or any endpoint, command or flag the skill names that doesn't exist in the OpenAPI spec or the CLI. `scripts/check-front-door.mjs` verifies negotiation, sha256 and the 304 round trip live. It runs on the new per-PR site preview, after every production deploy, and daily.
 - `PLAN-NOTES.md` maps the agent-first plan's assumptions to the code and lists the shipped rules its money workstreams would change.
-
 
 ### Added — Recently paid: `GET /v1/tasks/settled` + the homepage feed (api, web, sdk, docs)
 

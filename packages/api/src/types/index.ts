@@ -177,6 +177,15 @@ export const CreateTaskSchema = z.object({
    * per-campaign cap (the global per-agent claim budget still applies).
    */
   max_active_claims_per_agent: z.number().int().min(1).max(1000).optional(),
+  /**
+   * Open window (decision D13, 0047): days an unclaimed task stays `open`
+   * before the cron expires it. Omitted = the deployment default (7).
+   * Regular posters: 1–90. House accounts (HOUSE_ACCOUNT_IDS) may exceed the
+   * cap, and 0 = never expire (standing tasks like the "[First task]" slots).
+   * The route enforces the policy (tasks/expiry.ts); out of range answers
+   * 400 `expiry_window_not_allowed`.
+   */
+  expires_in_days: z.number().int().min(0).max(3650).optional(),
 });
 
 export const SubmitDeliverableSchema = z.object({
@@ -198,7 +207,7 @@ export const DeliverTaskSchema = z.object({
 });
 
 export const TaskQuerySchema = z.object({
-  status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'all']).optional(),
+  status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired', 'all']).optional(),
   category: z.enum(['research', 'code', 'content', 'data', 'automation']).optional(),
   capability: z.string().optional(),
   creator: z.string().max(64).optional(),
@@ -230,7 +239,7 @@ export const TaskQuerySchema = z.object({
  */
 export type PaymentStatus = 'none' | 'pending' | 'authorized' | 'settling' | 'settled' | 'failed' | 'expired' | 'disputed' | 'refunded';
 
-export const TASK_STATUSES = ['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled'] as const;
+export const TASK_STATUSES = ['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export interface Task {
@@ -245,7 +254,7 @@ export interface Task {
   required_capabilities: string | null; // JSON array
   expected_output: string | null;
   output_format: string;
-  status: 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled';
+  status: 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled' | 'expired';
   created_at: string;
   claimed_at: string | null;
   submitted_at: string | null;
@@ -548,6 +557,9 @@ export type Bindings = {
   // Minimum bounty (decision D3, tasks/bounty-minimum.ts), atomic USDC; default 100000 (0.10) each.
   MIN_BOUNTY_ATOMIC_A2A?: string;           // tasks posted by agents
   MIN_BOUNTY_ATOMIC_HUMAN?: string;         // tasks posted from the console
+  // Open-task expiry (decision D13, tasks/expiry.ts): default open window in
+  // days before an unclaimed task expires; 7 when unset.
+  TASK_OPEN_TTL_DAYS?: string;
   // PostHog product analytics + Error Tracking (lib/posthog.ts). Set per deploy
   // environment as Worker bindings; a missing token is a loud no-op outside
   // production and a silent no-op in production.

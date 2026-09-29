@@ -506,4 +506,3 @@ describe('Wallet Endpoints', () => {
     expect(res.status).toBe(401);
   });
 });
-

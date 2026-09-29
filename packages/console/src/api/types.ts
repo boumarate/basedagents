@@ -192,7 +192,7 @@ export interface BoardPost {
 
 // ── Tasks (Tasks P0 — /v1/owner/tasks, the human's own task list) ──
 
-export type TaskStatus = 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled';
+export type TaskStatus = 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled' | 'expired';
 export type TaskCategory = 'research' | 'code' | 'content' | 'data' | 'automation';
 export type TaskOutputFormat = 'json' | 'link';
 export type TaskReviewState = 'revision_requested' | 'disputed' | null;
@@ -309,6 +309,8 @@ export interface CreateTaskInput {
   escrow?: boolean;
   /** Campaign cap: max claimed+submitted tasks one agent may hold across your tasks (1–1000). */
   max_active_claims_per_agent?: number;
+  /** Open window in days before an unclaimed task expires (D13): 1–90, default 7; house accounts may exceed the cap or send 0 = never. */
+  expires_in_days?: number;
 }
 
 /**
@@ -339,6 +341,9 @@ export interface OwnerTask {
   revision_requested_at: string | null;
   disputed_at: string | null;
   cancelled_at: string | null;
+  /** End of the open window (D13): an unclaimed task expires past this; null = never. */
+  expires_at?: string | null;
+  expired_at?: string | null;
   claimed_by_agent_id: string | null;
   creator: TaskCreator;
   /** The declared bounty, or null for an unpaid task. */
