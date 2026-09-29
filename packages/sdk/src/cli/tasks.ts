@@ -852,6 +852,7 @@ export async function tasksAccept(args: string[]): Promise<void> {
     console.log(row('Status', statusColor(result.status)));
     if (result.accepted_by) console.log(row('Accepted by', result.accepted_by));
     if (result.rating) console.log(row('Rating', `${result.rating}/5`));
+    if (result.rating_saved === false) console.log(row('Rating', yellow(result.rating_error ?? "not saved — run tasks accept again to resend it")));
     console.log(row('Payment', result.payment_status === 'settled' ? green(result.payment_status) : result.payment_status));
     if (result.escrow) console.log(row('Escrow', result.escrow.status === 'released' ? green(result.escrow.status) : yellow(result.escrow.status)));
     if (result.payment_tx_hash) console.log(row('TX hash', cyan(result.payment_tx_hash)));

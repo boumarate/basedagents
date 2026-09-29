@@ -1446,6 +1446,8 @@ server.tool('accept_deliverable', "Accept the delivered work on a task you creat
     ];
     if (data.rating != null)
         lines.push(`**Rating:** ${data.rating}/5`);
+    if (data.rating_saved === false)
+        lines.push(`**Rating:** ${String(data.rating_error ?? 'not saved — call accept_deliverable again to resend it')}`);
     const e = data.escrow;
     if (e)
         lines.push(`**Escrow:** ${e.status}`);

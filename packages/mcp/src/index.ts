@@ -1712,6 +1712,7 @@ server.tool(
       `**Payment status:** ${paymentStatus}`,
     ];
     if (data.rating != null) lines.push(`**Rating:** ${data.rating}/5`);
+    if (data.rating_saved === false) lines.push(`**Rating:** ${String(data.rating_error ?? 'not saved — call accept_deliverable again to resend it')}`);
     const e = data.escrow as TaskEscrow | null | undefined;
     if (e) lines.push(`**Escrow:** ${e.status}`);
     if (data.payment_tx_hash) lines.push(`**Tx hash:** \`${data.payment_tx_hash}\``);
