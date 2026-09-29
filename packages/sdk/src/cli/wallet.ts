@@ -8,7 +8,8 @@ import { readFileSync, readdirSync, existsSync, mkdirSync, unlinkSync, openSync,
 import { randomBytes } from 'crypto';
 import { homedir } from 'os';
 import { dirname, isAbsolute, join, win32 } from 'path';
-import { RegistryClient, DEFAULT_API_URL, deserializeKeypair, publicKeyToAgentId, type AgentKeypair } from '../index.js';
+import { RegistryClient, DEFAULT_API_URL, deserializeKeypair, publicKeyToAgentId, ApiError, type AgentKeypair, type WalletInfo } from '../index.js';
+import { walletBindMessage, signWalletBindMessage, walletAddressFromPrivateKey } from '../wallet-bind.js';
 
 // ─── ANSI ───
 const R = '\x1b[0m';
@@ -163,20 +164,47 @@ export function discardNewKeypair(staged: string): void {
   try { unlinkSync(staged); } catch { /* already gone */ }
 }
 
+/** Exit code when a signature is needed before the wallet can be set (same convention as the payment flows). */
+export const EXIT_SIGNATURE_REQUIRED = 2;
+/** Where a bind message waits between `wallet set` printing it and the signed rerun. No secrets: message text only. */
+function pendingBindPath(): string {
+  return join(homedir(), '.basedagents', 'wallet-bind-pending.json');
+}
+/** The browser page that asks a wallet to sign a bind message (the message rides in the URL fragment, never sent to a server). */
+export function signPageUrl(message: string): string {
+  return `https://app.basedagents.ai/sign-wallet#m=${Buffer.from(message, 'utf8').toString('base64url')}`;
+}
+/** Read --message: literal text, @file, or - for stdin. */
+function readMessageFlag(value: string): string {
+  if (value === '-') return readFileSync(0, 'utf8').replace(/\n$/, '');
+  if (value.startsWith('@')) return readFileSync(value.slice(1), 'utf8').replace(/\n$/, '');
+  return value;
+}
+
 export async function wallet(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-${bold('basedagents wallet')} ${dim('[set <address>] [--network eip155:8453]')}
+${bold('basedagents wallet')} ${dim('[set <address> | clear]')}
 
-Get or set your agent's wallet address.
+Show, set or clear your agent's payout wallet (bounties are paid there in USDC).
+Setting it needs a signature from the wallet, which proves it is yours.
 
 ${bold('Usage:')}
-  basedagents wallet                                    Show current wallet
-  basedagents wallet set 0x1234...abcd                  Set wallet address
-  basedagents wallet set 0x1234...abcd --network eip155:8453
+  basedagents wallet                          Show the current wallet
+  basedagents wallet set 0x1234...abcd        Set it. Signs with the key in
+                                              $BASEDAGENTS_WALLET_PRIVATE_KEY when set
+                                              (read locally, never sent or printed);
+                                              otherwise prints a link and the message
+                                              to sign in your wallet, and exits ${EXIT_SIGNATURE_REQUIRED}
+  basedagents wallet set 0x1234...abcd --signature 0x...
+                                              Finish with the wallet's signature
+  basedagents wallet clear                    Remove the wallet
 
 ${bold('Options:')}
-  --network <chain>   Chain ID (default: eip155:8453 = Base mainnet)
+  --network <chain>   eip155 chain (default: eip155:8453 = Base mainnet)
+  --signature <0x..>  The wallet's personal_sign signature of the bind message
+  --message <v>       The signed bind message (text, @file or - for stdin);
+                      default: the one the last 'wallet set' printed
   --keypair <file>    Path to keypair file (or filename in ~/.basedagents/keys/);
                       default $BASEDAGENTS_KEYPAIR_PATH, else the last key there
   --json              Output raw JSON
@@ -185,80 +213,132 @@ ${bold('Options:')}
     process.exit(0);
   }
 
-  const apiUrl = args.includes('--api') ? args[args.indexOf('--api') + 1] : API_URL;
+  const flag = (f: string) => { const i = args.indexOf(f); return i !== -1 ? args[i + 1] : undefined; };
+  const apiUrl = flag('--api') ?? API_URL;
   const jsonMode = args.includes('--json');
-  const keypairFile = args.includes('--keypair') ? args[args.indexOf('--keypair') + 1] : undefined;
+  const keypairFile = flag('--keypair');
   const client = new RegistryClient(apiUrl);
-
   const subcommand = args[0];
 
-  if (subcommand === 'set') {
-    const address = args[1];
-    if (!address || !(/^0x[a-fA-F0-9]{40}$/.test(address))) {
-      console.log(red('\n  Invalid wallet address. Must be a 0x-prefixed 40-hex-char EVM address.\n'));
-      process.exit(1);
-    }
+  let kp: AgentKeypair;
+  try { kp = loadKeypair(keypairFile); } catch (err) {
+    console.log(red(`\n  ${err instanceof Error ? err.message : 'Failed to load keypair'}\n`));
+    process.exit(1);
+  }
+  const agentId = publicKeyToAgentId(kp.publicKey);
 
-    const networkIdx = args.indexOf('--network');
-    const network = networkIdx !== -1 && args[networkIdx + 1] ? args[networkIdx + 1] : undefined;
-
-    let kp;
-    try { kp = loadKeypair(keypairFile); } catch (err) {
-      console.log(red(`\n  ${err instanceof Error ? err.message : 'Failed to load keypair'}\n`));
-      process.exit(1);
-    }
-
-    try {
-      const result = await client.updateWallet(kp, {
-        wallet_address: address,
-        ...(network ? { wallet_network: network } : {}),
-      });
-
-      if (jsonMode) {
-        console.log(JSON.stringify(result, null, 2));
-        return;
-      }
-
-      console.log('');
-      console.log(`  ${green('✓')} Wallet updated`);
-      console.log(`  ${dim('Agent ID')}   ${cyan(result.agent_id)}`);
+  const printWallet = (result: WalletInfo, heading?: string) => {
+    if (jsonMode) { console.log(JSON.stringify(result, null, 2)); return; }
+    console.log('');
+    if (heading) console.log(`  ${green('✓')} ${heading}`);
+    console.log(`  ${dim('Agent ID')}   ${cyan(result.agent_id)}`);
+    if (result.wallet_address) {
       console.log(`  ${dim('Address')}    ${result.wallet_address}`);
       console.log(`  ${dim('Network')}    ${result.wallet_network ?? 'eip155:8453'}`);
-      console.log('');
-    } catch (err) {
-      console.log(red(`\n  Failed to update wallet: ${err instanceof Error ? err.message : 'unknown error'}\n`));
-      process.exit(1);
+      console.log(`  ${dim('Verified')}   ${result.wallet_verified ? green('yes (signed by the wallet)') : yellow('no — set it again to prove control')}`);
+    } else {
+      console.log(`  ${dim('No wallet set. Use:')} basedagents wallet set 0x...`);
     }
-  } else {
-    // Show wallet for current agent
-    let kp;
-    try { kp = loadKeypair(keypairFile); } catch (err) {
-      console.log(red(`\n  ${err instanceof Error ? err.message : 'Failed to load keypair'}\n`));
-      process.exit(1);
-    }
+    console.log('');
+  };
 
-    const agentId = publicKeyToAgentId(kp.publicKey);
-
+  if (subcommand === 'clear') {
     try {
-      const result = await client.getWallet(agentId);
+      printWallet(await client.clearWallet(kp), 'Wallet removed');
+    } catch (err) {
+      console.log(red(`\n  Failed to clear wallet: ${err instanceof Error ? err.message : 'unknown error'}\n`));
+      process.exit(1);
+    }
+    return;
+  }
 
-      if (jsonMode) {
-        console.log(JSON.stringify(result, null, 2));
-        return;
-      }
-
-      console.log('');
-      console.log(`  ${dim('Agent ID')}   ${cyan(result.agent_id)}`);
-      if (result.wallet_address) {
-        console.log(`  ${dim('Address')}    ${result.wallet_address}`);
-        console.log(`  ${dim('Network')}    ${result.wallet_network ?? 'eip155:8453'}`);
-      } else {
-        console.log(`  ${dim('No wallet set. Use:')} basedagents wallet set 0x...`);
-      }
-      console.log('');
+  if (subcommand !== 'set') {
+    try {
+      printWallet(await client.getWallet(agentId));
     } catch (err) {
       console.log(red(`\n  Failed to fetch wallet: ${err instanceof Error ? err.message : 'unknown error'}\n`));
       process.exit(1);
     }
+    return;
+  }
+
+  const address = args[1];
+  if (!address || !(/^0x[a-fA-F0-9]{40}$/.test(address))) {
+    console.log(red('\n  Invalid wallet address. Must be a 0x-prefixed 40-hex-char EVM address.\n'));
+    process.exit(1);
+  }
+  const network = flag('--network') ?? 'eip155:8453';
+  if (!/^eip155:\d+$/.test(network)) {
+    console.log(red(`\n  --network must be an EVM chain like eip155:8453 (got ${network}).\n`));
+    process.exit(1);
+  }
+
+  // The proof: an explicit signature (with the message it signs), a local key, or neither yet.
+  let proof: { message: string; signature: string } | null = null;
+  const signature = flag('--signature');
+  const walletKey = process.env.BASEDAGENTS_WALLET_PRIVATE_KEY?.trim();
+  if (signature) {
+    let message: string | undefined;
+    const messageFlag = flag('--message');
+    if (messageFlag) {
+      message = readMessageFlag(messageFlag);
+    } else if (existsSync(pendingBindPath())) {
+      const pending = JSON.parse(readFileSync(pendingBindPath(), 'utf8')) as { agent_id: string; address: string; network: string; message: string };
+      if (pending.agent_id === agentId && pending.address.toLowerCase() === address.toLowerCase() && pending.network === network) message = pending.message;
+    }
+    if (!message) {
+      console.log(red(`\n  No bind message for ${address} on ${network}. Run: basedagents wallet set ${address}${network !== 'eip155:8453' ? ` --network ${network}` : ''} (it prints one to sign), or pass --message.\n`));
+      process.exit(1);
+    }
+    proof = { message, signature };
+  } else if (walletKey) {
+    let keyAddress: string;
+    try { keyAddress = walletAddressFromPrivateKey(walletKey); } catch {
+      console.log(red('\n  BASEDAGENTS_WALLET_PRIVATE_KEY is not a 32-byte hex secp256k1 key.\n'));
+      process.exit(1);
+    }
+    if (keyAddress.toLowerCase() !== address.toLowerCase()) {
+      console.log(red(`\n  BASEDAGENTS_WALLET_PRIVATE_KEY is the key of ${keyAddress}, not ${address}.\n`));
+      process.exit(1);
+    }
+    const message = walletBindMessage({ agentId, address, network });
+    proof = { message, signature: signWalletBindMessage(message, walletKey) };
+  }
+
+  if (!proof) {
+    const message = walletBindMessage({ agentId, address, network });
+    mkdirSync(dirname(pendingBindPath()), { recursive: true });
+    writeFileSync(pendingBindPath(), JSON.stringify({ agent_id: agentId, address, network, message, created_at: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
+    const url = signPageUrl(message);
+    if (jsonMode) {
+      console.log(JSON.stringify({ signature_required: true, message, sign_url: url, next: `basedagents wallet set ${address}${network !== 'eip155:8453' ? ` --network ${network}` : ''} --signature <0x...>` }, null, 2));
+    } else {
+      console.error('');
+      console.error(`  ${bold('Sign to prove this wallet is yours.')} It costs nothing and moves no funds.`);
+      console.error(`  Open this link and sign with the wallet (MetaMask, Coinbase Wallet, Rabby...):`);
+      console.error(`    ${cyan(url)}`);
+      console.error(`  ${dim('Or sign this exact message with personal_sign anywhere (it is valid for 15 minutes):')}`);
+      console.error('');
+      console.log(message);
+      console.error('');
+      console.error(`  Then run: ${cyan(`basedagents wallet set ${address}${network !== 'eip155:8453' ? ` --network ${network}` : ''} --signature 0x...`)}`);
+      console.error(`  ${dim('An agent with the wallet key can instead set BASEDAGENTS_WALLET_PRIVATE_KEY and rerun.')}`);
+      console.error('');
+    }
+    process.exit(EXIT_SIGNATURE_REQUIRED);
+  }
+
+  try {
+    const result = await client.setWallet(kp, { address, network, proof });
+    try { unlinkSync(pendingBindPath()); } catch { /* none pending */ }
+    printWallet(result, 'Wallet set and verified');
+  } catch (err) {
+    const body = err instanceof ApiError ? (err.body as { error?: string; reason?: string; message?: string } | undefined) : undefined;
+    if (body?.error === 'wallet_proof_invalid' && body.reason === 'expired') {
+      console.log(red(`\n  The signed message expired (15 minutes). Run basedagents wallet set ${address} again for a fresh one.\n`));
+    } else {
+      console.log(red(`\n  Failed to set wallet: ${err instanceof Error ? err.message : 'unknown error'}\n`));
+    }
+    process.exit(1);
   }
 }

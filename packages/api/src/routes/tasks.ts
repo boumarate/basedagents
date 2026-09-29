@@ -621,7 +621,11 @@ tasks.post('/:id/claim', agentAuth, async (c) => {
       return c.json({
         error: 'wallet_required',
         message: 'This task pays a USDC bounty to your wallet. Set one before claiming.',
-        help: { set_wallet: `PATCH /v1/agents/${agentId}/wallet`, body: { wallet_address: '0x...', wallet_network: task.bounty_network } },
+        help: {
+          set_wallet: `PATCH /v1/agents/${agentId}/wallet`,
+          body: { wallet_address: '0x...', wallet_network: task.bounty_network, wallet_proof: { message: '<sign_this from the first PATCH>', signature: '0x...' } },
+          cli: `npx basedagents wallet set 0x... --network ${task.bounty_network}`,
+        },
       }, 409);
     }
     if (wallet.wallet_network && wallet.wallet_network !== task.bounty_network) {

