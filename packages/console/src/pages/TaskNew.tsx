@@ -100,7 +100,7 @@ export default function TaskNew() {
     const useEscrow = !!bountyField && escrowOn && escrow;
     let maxClaimsField: number | null = null;
     if (maxClaims.trim()) {
-      const n = parseInt(maxClaims.trim(), 10);
+      const n = Number(maxClaims.trim());
       if (!Number.isInteger(n) || n < 1 || n > 1000) {
         setError('Max active claims per agent must be a whole number from 1 to 1000.');
         return;
@@ -109,7 +109,7 @@ export default function TaskNew() {
     }
     let expiresField: number | null = null;
     if (expiresDays.trim()) {
-      const n = parseInt(expiresDays.trim(), 10);
+      const n = Number(expiresDays.trim());
       // 0 (= never expire) is house-account-only; the server enforces the cap
       // with 400 expiry_window_not_allowed, so the field allows it.
       if (!Number.isInteger(n) || n < 0 || n > 3650) {
