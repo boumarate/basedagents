@@ -297,6 +297,9 @@ export const ownerSession: MiddlewareHandler<AppEnv> = async (c, next) => {
   await store.touchSession(session.id, nowIso());
   setOwnerId(c, session.owner_id);
   (c.set as (k: string, v: unknown) => void)('sessionMethod', session.method);
+  // Analytics identity — the stable owner id (never the email; PII stays out
+  // of PostHog).
+  c.set('posthogDistinctId', session.owner_id);
   await next();
 };
 

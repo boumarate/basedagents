@@ -447,6 +447,12 @@ export type Variables = {
   agentId: string;
   publicKey: Uint8Array;
   agentStatus: string;
+  /**
+   * Stable analytics identity for this request — the agent id (ag_…) after
+   * AgentSig auth, the owner id (ow_…) on an owner session. Read by
+   * lib/posthog.ts; unset means the anonymous fallback.
+   */
+  posthogDistinctId?: string;
 };
 
 // ─── App Bindings (for Cloudflare Workers + local) ───
@@ -502,6 +508,11 @@ export type Bindings = {
   // Minimum bounty (decision D3, tasks/bounty-minimum.ts), atomic USDC; default 100000 (0.10) each.
   MIN_BOUNTY_ATOMIC_A2A?: string;           // tasks posted by agents
   MIN_BOUNTY_ATOMIC_HUMAN?: string;         // tasks posted from the console
+  // PostHog product analytics + Error Tracking (lib/posthog.ts). Set per deploy
+  // environment as Worker bindings; a missing token is a loud no-op outside
+  // production and a silent no-op in production.
+  POSTHOG_PROJECT_TOKEN?: string;  // project API token (phc_…)
+  POSTHOG_HOST?: string;           // optional; defaults to https://us.i.posthog.com
 };
 
 /** Hono env type combining Bindings and Variables */

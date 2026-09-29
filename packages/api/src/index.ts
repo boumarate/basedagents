@@ -12,6 +12,7 @@ import { agentFormat, NEGOTIATED_VARY } from './discovery/negotiate.js';
 import { SKILL_MD, SKILL_VERSION } from './discovery/skill.generated.js';
 import { recordUsage, cleanVersion, retryFeedbackNotifications, runDailyDigest } from './feedback/service.js';
 import { sweepIdempotencyKeys } from './lib/idempotency.js';
+import { captureServerException } from './lib/posthog.js';
 import { emailSenderFromEnv } from './control/email.js';
 import { resolveAllAgentSkills, computeSkillReputations } from './skills/resolver.js';
 
@@ -583,8 +584,11 @@ app.notFound((c) => {
 });
 
 // ─── Error Handler ───
-app.onError((err, c) => {
+app.onError(async (err, c) => {
   console.error('Unhandled error:', err);
+  // Error Tracking: attributed to the authenticated agent/owner when auth ran,
+  // else anonymous. Awaited (never throws) — see lib/posthog.ts.
+  await captureServerException(c, err);
   return c.json({ error: 'internal_error', message: 'Internal server error' }, 500);
 });
 

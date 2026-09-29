@@ -40,6 +40,7 @@ import { ownerSession, verifyAndRecordAction, AssertionSchema } from './routes.j
 import { canonicalJsonStringify, sha256, bytesToHex } from '../crypto/index.js';
 import { checkRateLimit } from '../lib/rate-limiter.js';
 import { generatePublicId } from '../lib/ids.js';
+import { captureServerEvent } from '../lib/posthog.js';
 import { sanitizeDisplayName } from '../lib/display-name.js';
 import {
   type Actor, type TaskRow, loadTask, creatorMatches, logPaymentEvent, recordFunnel, publicTaskShape, paymentView,
@@ -261,6 +262,14 @@ app.post('/tasks', ownerSession, async (c) => {
       },
     }, { rawHeader, nowIso: now, actor: { kind: 'owner', ownerId } });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
+    // 200 = the task exists with its deposit taken (the stateless challenge
+    // above and every refusal create nothing) — same rule as the agent route.
+    if (outcome.status === 200) {
+      await captureServerEvent(c, 'task_created', {
+        has_bounty: true, escrow: true, category: fields.category ?? null,
+        output_format: fields.output_format, bounty_network: bounty.network,
+      });
+    }
     return c.json(outcome.body, outcome.status);
   }
 
@@ -279,6 +288,10 @@ app.post('/tasks', ownerSession, async (c) => {
     await logPaymentEvent(db, taskId, 'bounty_declared', { amount_atomic: bounty.amount, token: bounty.token, network: bounty.network }, now);
   }
   await recordFunnel(db, 'task_posted', taskId, 'human');
+  await captureServerEvent(c, 'task_created', {
+    has_bounty: !!bounty, escrow: false, category: fields.category ?? null,
+    output_format: fields.output_format, bounty_network: bounty?.network ?? null,
+  });
   const bountyOut = bountyView({ bounty_amount: bounty?.amount ?? null, bounty_token: bounty?.token ?? null, bounty_network: bounty?.network ?? null });
   await notifyMatchingAgents(db, {
     task_id: taskId, title: fields.title, description: fields.description, category: fields.category ?? null,
@@ -375,6 +388,14 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
   const task = mine.task;
   const note = parsed.data.note ?? null;
 
+  // Analytics: a fresh acceptance always starts from `submitted` — a task
+  // already `verified` here is an idempotent re-accept (or a payment retry)
+  // and must not count twice. Same rule as the agent route.
+  const wasSubmitted = task.status === 'submitted';
+  const acceptedProps = {
+    has_bounty: !!task.bounty_amount, escrow: !!task.escrow, revision_count: task.revision_count,
+  };
+
   // ─── Escrow task: the deposit is held; accepting releases it to the deliverer.
   // No wallet signature is needed (nothing leaves the buyer's wallet now), so
   // the passkey ceremony stays optional-and-recorded like the unpaid accept;
@@ -385,6 +406,7 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
     if (!cer.ok) return cer.res;
     const outcome = await acceptEscrowTask(db, c.env, task, { note, actor, nowIso: new Date().toISOString(), assertionId: cer.assertionId });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
+    if (outcome.status === 200 && wasSubmitted) await captureServerEvent(c, 'task_accepted', acceptedProps);
     return c.json(outcome.body, outcome.status);
   }
 
@@ -415,6 +437,7 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
     }
     const outcome = await acceptBountyTask(db, c.env, task, { note, rawHeader, actor, nowIso, assertionId });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
+    if (outcome.status === 200 && wasSubmitted) await captureServerEvent(c, 'task_accepted', acceptedProps);
     return c.json(outcome.body, outcome.status);
   }
 
@@ -427,6 +450,7 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
   }
   const fresh = (await loadTask(db, taskId)) as TaskRow;
   const side = await afterAccept(db, fresh, { acceptedBy: 'creator', by: actor, nowIso: now, paymentStatus: fresh.payment_status });
+  await captureServerEvent(c, 'task_accepted', acceptedProps);
   return c.json({
     ok: true, task_id: taskId, status: 'verified', accepted_by: 'creator',
     chain_sequence: side.chain?.sequence ?? null, chain_entry_hash: side.chain?.entry_hash ?? null,
@@ -457,6 +481,9 @@ app.post('/tasks/:id/revision', ownerSession, async (c) => {
   const revisionCount = task.revision_count + 1;
   if (task.claimed_by_agent_id) await recordEvent(db, task.claimed_by_agent_id, { type: 'task.revision_requested', agent_id: task.claimed_by_agent_id, task_id: taskId, note: parsed.data.note, revision_count: revisionCount }, now);
   await recordFunnel(db, 'task_revision_requested', taskId, null);
+  await captureServerEvent(c, 'task_revision_requested', {
+    revision_count: revisionCount, has_bounty: !!task.bounty_amount,
+  });
   return c.json({ ok: true, task_id: taskId, status: 'claimed', review_state: 'revision_requested', revision_count: revisionCount });
 });
 
@@ -490,6 +517,10 @@ app.post('/tasks/:id/dispute', ownerSession, async (c) => {
   if (task.claimed_by_agent_id && task.bounty_amount && Number(task.bounty_amount) > 0) {
     bondSlashed = await slashBondForDisputedClaim(db, c.env, task.claimed_by_agent_id, taskId, now);
   }
+  await captureServerEvent(c, 'task_disputed', {
+    has_bounty: !!task.bounty_amount, escrow: !!task.escrow,
+    revision_count: task.revision_count, bond_slashed: bondSlashed !== '0',
+  });
   return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now, bond_slashed_atomic: bondSlashed });
 });
 
@@ -529,6 +560,10 @@ app.post('/tasks/:id/cancel', ownerSession, async (c) => {
   }
   if (task.disputed_at && task.claimed_by_agent_id) await recomputeReputation(db, task.claimed_by_agent_id);
   await recordFunnel(db, 'task_cancelled', taskId, null);
+  await captureServerEvent(c, 'task_cancelled', {
+    status_before: task.status, has_bounty: !!task.bounty_amount,
+    escrow: !!task.escrow, was_disputed: !!task.disputed_at,
+  });
   const after = await loadTask(db, taskId);
   const body: Record<string, unknown> = { ok: true, task_id: taskId, status: 'cancelled', payment_status: after?.payment_status ?? task.payment_status };
   if (after?.escrow) {
@@ -569,6 +604,7 @@ app.post('/tasks/:id/publish', ownerSession, async (c) => {
   const publishedAt = parsed.data.publish ? new Date().toISOString() : null;
   await db.run('UPDATE submissions SET published_at = ? WHERE submission_id = ?', publishedAt, submission.submission_id);
   await recordFunnel(db, parsed.data.publish ? 'task_delivery_published' : 'task_delivery_unpublished', taskId, null);
+  await captureServerEvent(c, parsed.data.publish ? 'task_submission_published' : 'task_submission_unpublished');
   return c.json({ ok: true, task_id: taskId, submission_public: parsed.data.publish, published_at: publishedAt });
 });
 
