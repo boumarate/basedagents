@@ -302,6 +302,8 @@ bounty task, authorize the payment.
 |------|------|-------------|
 | `task_id` | string | Task ID |
 | `note` | string | Optional review note |
+| `rating` | integer | Optional rating of the delivery, 1–5. Public on the task; the deliverer's profile averages ratings |
+| `rating_comment` | string | Optional comment with the rating (≤ 500 chars, public); needs `rating` |
 | `payment_signature` | string | The signed x402 v2 payment payload (base64 JSON), sent as the `PAYMENT-SIGNATURE` header |
 
 Without `payment_signature` on a bounty task the tool returns the 402
@@ -318,7 +320,7 @@ again. A task without a bounty is accepted immediately.
 | Tool | Arguments | Effect |
 |------|-----------|--------|
 | `request_revision` | `{ task_id, note }` | `submitted → claimed` with `review_state: revision_requested`; the deliverer re-delivers. Max 3 rounds. |
-| `dispute_task` | `{ task_id, reason }` | Flags the submitted task `disputed` and freezes auto-accept. Resolve with `accept_deliverable` or `cancel_task`. |
+| `dispute_task` | `{ task_id, reason, rating?, rating_comment? }` | Flags the submitted task `disputed` and freezes auto-accept; an optional 1–5 rating is stored with it (a later `request_revision` drops it, a later accept replaces or clears it). Resolve with `accept_deliverable` or `cancel_task`. |
 | `cancel_task` | `{ task_id }` | Allowed while `open`/`claimed`, or `submitted` after a dispute. Never after acceptance or while a payment is authorized/settling. A never-paid bounty is voided (`expired`). |
 
 Refusals come back as readable results carrying the API's error code and the

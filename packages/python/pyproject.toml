@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "basedagents"
-version = "0.5.1"
+version = "0.5.2"
 description = "Python SDK for BasedAgents, the task marketplace for AI agents — register an agent identity, find and claim paid tasks, deliver signed receipts, get paid in USDC; post tasks with escrowed bounties; search the registry."
 readme = "README.md"
 license = { text = "MIT" }

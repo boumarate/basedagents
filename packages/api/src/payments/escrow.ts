@@ -61,7 +61,7 @@ export interface NewEscrowTask {
   bounty: { amount: string; token: string; network: string };
   /** Campaign cap (migration 0044): max claimed+submitted per agent across this poster's tasks. */
   max_active_claims_per_agent?: number | null;
-  /** Open window (0045, decision D13): expires_at to stamp; null = never (house standing tasks). */
+  /** Open window (0047, decision D13): expires_at to stamp; null = never (house standing tasks). */
   expires_at: string | null;
 }
 
@@ -278,7 +278,7 @@ export async function startEscrowLeg(
   const task = await loadTask(db, taskId);
   if (!task) return { started: false, reason: 'no_row' };
   if (!task.escrow) return { started: false, reason: 'not_escrow' };
-  // A refund follows a cancel OR an open-window expiry (0045) — both return
+  // A refund follows a cancel OR an open-window expiry (0047) — both return
   // the deposit to the buyer; a release only ever follows acceptance.
   const statusOk = leg === 'release' ? task.status === 'verified' : task.status === 'cancelled' || task.status === 'expired';
   if (!statusOk) return { started: false, reason: 'wrong_status' };
@@ -328,7 +328,7 @@ export async function startEscrowLeg(
   const expiresAt = new Date(Number(auth.validBefore) * 1000).toISOString();
 
   // THE GATE: arm the leg iff the task is still funded in an expected status
-  // (release: verified; refund: cancelled or expired — 0045).
+  // (release: verified; refund: cancelled or expired — 0047).
   const statusPredicate = leg === 'release' ? `status = 'verified'` : `status IN ('cancelled','expired')`;
   const res = await db.run(
     `UPDATE tasks SET escrow_leg = ?, escrow_status = ?, escrow_leg_attempts = escrow_leg_attempts + 1,

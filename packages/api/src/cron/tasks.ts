@@ -36,7 +36,7 @@ import { settleDueBondWithdrawals } from '../tasks/bonds.js';
 export interface TaskCronSummary {
   auto_accepted: number;
   claims_expired: number;
-  /** Open-task expiry (0045): `open` tasks whose window lapsed unclaimed this tick. */
+  /** Open-task expiry (0047): `open` tasks whose window lapsed unclaimed this tick. */
   open_expired: number;
   settle_attempted: number;
   settled: number;
@@ -129,7 +129,7 @@ export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string =
     }
   }
 
-  // 1c. Open-task expiry (0045, decision D13): an `open` task nobody claimed
+  // 1c. Open-task expiry (0047, decision D13): an `open` task nobody claimed
   // within its window becomes `expired` (terminal). The creator is told; a
   // FUNDED escrow deposit goes back to the buyer (house-signed refund leg —
   // the same money path as cancel; escrowSweep retries a refused start), and

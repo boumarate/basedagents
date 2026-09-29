@@ -438,7 +438,7 @@ export default function AgentProfile(): React.ReactElement {
 
         {/* Trust & Safety */}
         {repData && (
-          <TrustSafetyCard rep={repData} verifications={verifications} />
+          <TrustSafetyCard rep={repData} verifications={verifications} ratings={agent?.ratings} />
         )}
 
         {/* Capabilities */}

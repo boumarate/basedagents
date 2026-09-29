@@ -1,5 +1,5 @@
 /**
- * Open-task expiry (migration 0045, decision D13): the posted window, the
+ * Open-task expiry (migration 0047, decision D13): the posted window, the
  * poster cap and house exemption, the cron sweep to `expired` with its money
  * handling, the claim-gate hardening, and the claim-expiry re-stamp.
  */
@@ -25,7 +25,7 @@ const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-describe('open-task expiry (0045)', () => {
+describe('open-task expiry (0047)', () => {
   let db: SQLiteAdapter;
   let app: ReturnType<typeof createTestApp>;
   let creator: TestKeypair & { name: string };
@@ -210,7 +210,7 @@ describe('open-task expiry (0045)', () => {
   });
 });
 
-describe('migration 0045_task_expiry.sql', () => {
+describe('migration 0047_task_expiry.sql', () => {
   function schemaSql(): string {
     return readFileSync(join(__dirname, '..', 'db', 'schema.sql'), 'utf-8');
   }
@@ -227,7 +227,7 @@ describe('migration 0045_task_expiry.sql', () => {
   }
 
   it('grandfathers open rows with a 7-day window and leaves other statuses NULL', () => {
-    const db = replayTo('0045', (d) => {
+    const db = replayTo('0047', (d) => {
       d.prepare(`INSERT INTO agents (id, public_key, name, description, capabilities, protocols) VALUES ('ag_pre', ?, 'a', 'd', '[]', '[]')`).run(Buffer.from('k'.repeat(32)));
       d.prepare(`INSERT INTO tasks (task_id, creator_agent_id, title, description, status, created_at) VALUES ('task_pre_open', 'ag_pre', 't', 'd', 'open', '2026-01-01T00:00:00Z')`).run();
       d.prepare(`INSERT INTO tasks (task_id, creator_agent_id, claimed_by_agent_id, title, description, status, created_at) VALUES ('task_pre_claimed', 'ag_pre', 'ag_pre', 't', 'd', 'claimed', '2026-01-01T00:00:00Z')`).run();

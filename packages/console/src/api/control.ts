@@ -40,6 +40,9 @@ import type {
 import type { RegistrationResult } from '../lib/webauthn.js';
 import { atomicToDisplay } from '../lib/money.js';
 
+/** An optional 1-5 rating sent with an accept or a dispute (public on the task). */
+export interface TaskRating { rating: number; rating_comment?: string }
+
 // VITE_API_URL='' (empty, set — dev/E2E) means same-origin relative requests,
 // served through the vite proxy; unset means the production API.
 export const API_BASE = import.meta.env.VITE_API_URL ?? 'https://api.basedagents.ai';
@@ -335,14 +338,17 @@ export const control = {
     note?: string,
     signed?: SignedAction,
     paymentHeader?: string,
+    rating?: TaskRating,
   ): Promise<{
     ok: true; task_id: string; status: 'verified'; accepted_by: 'creator';
-    payment_status?: string; payment_tx_hash?: string;
+    payment_status?: string; payment_tx_hash?: string; rating?: number;
+    /** false when the accept went through but its rating change wasn't saved. */
+    rating_saved?: false; rating_error?: string;
   }> {
     return request(
       'POST',
       `/tasks/${encodeURIComponent(taskId)}/accept`,
-      { ...(note !== undefined ? { note } : {}), ...(signed ?? {}) },
+      { ...(note !== undefined ? { note } : {}), ...(rating ?? {}), ...(signed ?? {}) },
       paymentHeader ? { 'PAYMENT-SIGNATURE': paymentHeader } : undefined,
     );
   },
@@ -357,8 +363,9 @@ export const control = {
     taskId: string,
     reason: string,
     signed?: SignedAction,
-  ): Promise<{ ok: true; task_id: string; status: 'submitted'; review_state: 'disputed'; disputed_at: string }> {
-    return request('POST', `/tasks/${encodeURIComponent(taskId)}/dispute`, { reason, ...(signed ?? {}) });
+    rating?: TaskRating,
+  ): Promise<{ ok: true; task_id: string; status: 'submitted'; review_state: 'disputed'; disputed_at: string; rating?: number }> {
+    return request('POST', `/tasks/${encodeURIComponent(taskId)}/dispute`, { reason, ...(rating ?? {}), ...(signed ?? {}) });
   },
   cancelTask(
     taskId: string,

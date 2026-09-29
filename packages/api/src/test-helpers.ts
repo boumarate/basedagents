@@ -119,15 +119,19 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (scope TEXT NOT NULL, idem_key TEXT 
 CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
 CREATE TABLE IF NOT EXISTS job_runs (job TEXT NOT NULL, run_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','failed')), attempts INTEGER NOT NULL DEFAULT 1, ran_at TEXT NOT NULL, PRIMARY KEY (job, run_key));
 ALTER TABLE tasks ADD COLUMN max_active_claims_per_agent INTEGER;
-ALTER TABLE tasks ADD COLUMN expires_at TEXT;
-ALTER TABLE tasks ADD COLUMN expired_at TEXT;
-CREATE INDEX IF NOT EXISTS idx_tasks_open_expires ON tasks(status, expires_at);
 CREATE TABLE IF NOT EXISTS agent_claim_bonds (agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE, balance_atomic TEXT NOT NULL DEFAULT '0', total_deposited_atomic TEXT NOT NULL DEFAULT '0', total_slashed_atomic TEXT NOT NULL DEFAULT '0', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS agent_claim_bond_events (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('deposit','slash','withdraw','withdraw_reverted')), amount_atomic TEXT NOT NULL, ref TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_bond_events_agent ON agent_claim_bond_events(agent_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS agent_claim_bond_withdrawals (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, amount_atomic TEXT NOT NULL, to_address TEXT NOT NULL, to_network TEXT NOT NULL, nonce TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','settled','refunded','failed')), attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, tx_hash TEXT, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_bond_withdrawals_due ON agent_claim_bond_withdrawals(state, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_claimer_status ON tasks(claimed_by_agent_id, status);
+ALTER TABLE tasks ADD COLUMN rating INTEGER CHECK (rating BETWEEN 1 AND 5);
+ALTER TABLE tasks ADD COLUMN rating_comment TEXT;
+ALTER TABLE tasks ADD COLUMN rating_context TEXT CHECK (rating_context IN ('accept', 'dispute'));
+ALTER TABLE tasks ADD COLUMN rated_at TEXT;
+ALTER TABLE tasks ADD COLUMN expires_at TEXT;
+ALTER TABLE tasks ADD COLUMN expired_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_tasks_open_expires ON tasks(status, expires_at);
 `.trim();
 
 /**

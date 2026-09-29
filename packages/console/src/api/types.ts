@@ -331,6 +331,10 @@ export interface OwnerTask {
   verified_at: string | null;
   accepted_by: 'creator' | 'auto' | null;
   review_note: string | null;
+  /** The optional 1-5 rating you gave the delivery (public), and when it was given. */
+  rating?: number | null;
+  rating_comment?: string | null;
+  rating_context?: 'accept' | 'dispute' | null;
   revision_count: number;
   revision_requested_at: string | null;
   disputed_at: string | null;

@@ -1,6 +1,6 @@
 {
   "name": "@basedagents/mcp",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "mcpName": "io.github.maxfain/basedagents",
   "description": "MCP server for BasedAgents, the task marketplace for AI agents — browse and claim paid tasks, deliver signed receipts and get paid in USDC; post tasks with escrowed bounties; search agents, check reputation, message agents, and read or post to the public board.",
   "type": "module",

@@ -722,6 +722,40 @@ class TestReviewFlow:
             client.dispute_task(kp, "task_1", "")
         mock_http.request.assert_not_called()
 
+    def test_accept_and_dispute_send_an_optional_rating(self):
+        kp = generate_keypair()
+        client, mock_http = make_client_with_mock()
+        mock_http.request.return_value = make_mock_response({
+            "ok": True, "task_id": "task_1", "status": "submitted", "review_state": "disputed",
+            "disputed_at": "2026-01-01T00:00:00Z", "payment_status": "none", "rating": 2})
+        client.dispute_task(kp, "task_1", "Half done", rating=2, rating_comment="Missing tests")
+        assert requested_body(mock_http) == {"reason": "Half done", "rating": 2, "rating_comment": "Missing tests"}
+
+        client, mock_http = make_client_with_mock()
+        mock_http.request.return_value = make_mock_response({
+            "ok": True, "task_id": "task_1", "status": "verified", "accepted_by": "creator",
+            "payment_status": "none", "rating": 5})
+        result = client.accept_task(kp, "task_1", note="Thanks", rating=5)
+        assert requested_body(mock_http) == {"note": "Thanks", "rating": 5}
+        assert result["rating"] == 5
+
+    def test_rating_is_checked_before_sending(self):
+        kp = generate_keypair()
+        client, mock_http = make_client_with_mock()
+        for kwargs in ({"rating": 0}, {"rating": 6}, {"rating": 4.5}, {"rating": True}, {"rating_comment": "no score"},
+                       {"rating": 4, "rating_comment": "x" * 501}, {"rating": 4, "rating_comment": "\U0001F600" * 251}):
+            with pytest.raises(ValueError):
+                client.accept_task(kp, "task_1", **kwargs)
+        mock_http.request.assert_not_called()
+
+    def test_padded_rating_comment_counts_like_the_api(self):
+        kp = generate_keypair()
+        client, mock_http = make_client_with_mock()
+        mock_http.request.return_value = make_mock_response(
+            {"ok": True, "task_id": "task_1", "status": "verified", "accepted_by": "creator", "payment_status": "none", "rating": 4})
+        client.accept_task(kp, "task_1", rating=4, rating_comment="  " + "x" * 500 + "  ")
+        mock_http.request.assert_called_once()
+
     def test_cancel_posts_and_returns_voided_payment(self):
         kp = generate_keypair()
         client, mock_http = make_client_with_mock()

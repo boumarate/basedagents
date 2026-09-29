@@ -574,6 +574,22 @@ describe('Owner task routes', () => {
     expect((await ownerPost(`/v1/owner/tasks/${taskId}/accept`, {}, cookie)).status).toBe(200);
   });
 
+  it('accept and dispute take an optional rating (D11); unknown fields are still refused', async () => {
+    const { cookie } = await ownerSession();
+    const taskId = await compose(cookie);
+    await claimAndDeliver(taskId);
+    expect((await ownerPost(`/v1/owner/tasks/${taskId}/dispute`, { reason: 'Missing tests', rating: 9 }, cookie)).status).toBe(400);
+    const disputed = await ownerPost(`/v1/owner/tasks/${taskId}/dispute`, { reason: 'Missing tests', rating: 2 }, cookie);
+    expect(disputed.status).toBe(200);
+    expect(((await disputed.json()) as Record<string, unknown>).rating).toBe(2);
+    const res = await ownerPost(`/v1/owner/tasks/${taskId}/accept`, { note: 'Fine after all', rating: 4, rating_comment: 'Good once fixed' }, cookie);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Record<string, unknown>).rating).toBe(4);
+    const row = await db.get<Record<string, unknown>>('SELECT rating, rating_comment, rating_context FROM tasks WHERE task_id = ?', taskId);
+    expect(row).toEqual({ rating: 4, rating_comment: 'Good once fixed', rating_context: 'accept' });
+    expect((await ownerPost(`/v1/owner/tasks/${taskId}/accept`, { rating: 4, stars: 5 }, cookie)).status).toBe(400);
+  });
+
   it('request changes → claimed + review_state; a second delivery adds a receipt; the 4th round is refused', async () => {
     const { cookie } = await ownerSession();
     const taskId = await compose(cookie);

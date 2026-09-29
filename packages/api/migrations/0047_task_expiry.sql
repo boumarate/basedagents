@@ -1,4 +1,4 @@
--- 0045: open-task expiry (decision D13). An `open` task nobody claims within
+-- 0047: open-task expiry (decision D13). An `open` task nobody claims within
 -- its open window becomes `expired` (new terminal status; swept by the cron).
 -- Two new columns: expires_at (the window's end, stamped at post; NULL =
 -- never, house standing tasks) and expired_at (when the sweep fired).
@@ -84,7 +84,12 @@ CREATE TABLE tasks (
   escrow_refund_tx_hash TEXT,
   escrow_refunded_at TEXT,
   max_active_claims_per_agent INTEGER,                   -- 0044: campaign cap
-  -- ─── Open-task expiry (0045) ───
+  -- ─── Optional rating (0045) — see tasks/service.ts recordRating ───
+  rating INTEGER CHECK (rating BETWEEN 1 AND 5),
+  rating_comment TEXT,
+  rating_context TEXT CHECK (rating_context IN ('accept', 'dispute')),
+  rated_at TEXT,
+  -- ─── Open-task expiry (0047) ───
   expires_at TEXT,                                       -- end of the open window; NULL = never (house standing tasks)
   expired_at TEXT,
   CHECK ((creator_agent_id IS NULL) <> (creator_owner_id IS NULL))
@@ -100,7 +105,8 @@ INSERT INTO tasks (task_id, creator_agent_id, creator_owner_id, creator_kind, cr
   last_settle_error, last_settle_class, claim_expires_at,
   escrow, escrow_status, escrow_leg, escrow_leg_attempts, escrow_wallet, escrow_deposit_payer,
   escrow_deposit_nonce, escrow_deposit_tx_hash, escrow_funded_at, escrow_release_tx_hash, escrow_released_at,
-  escrow_refund_tx_hash, escrow_refunded_at, max_active_claims_per_agent, expires_at, expired_at)
+  escrow_refund_tx_hash, escrow_refunded_at, max_active_claims_per_agent,
+  rating, rating_comment, rating_context, rated_at, expires_at, expired_at)
 SELECT task_id, creator_agent_id, creator_owner_id, creator_kind, creator_assertion_id, claimed_by_agent_id,
   title, description, category, required_capabilities, expected_output, output_format, status, created_at,
   claimed_at, submitted_at, verified_at, accepted_by, review_note, review_assertion_id, revision_count,
@@ -112,6 +118,7 @@ SELECT task_id, creator_agent_id, creator_owner_id, creator_kind, creator_assert
   escrow, escrow_status, escrow_leg, escrow_leg_attempts, escrow_wallet, escrow_deposit_payer,
   escrow_deposit_nonce, escrow_deposit_tx_hash, escrow_funded_at, escrow_release_tx_hash, escrow_released_at,
   escrow_refund_tx_hash, escrow_refunded_at, max_active_claims_per_agent,
+  rating, rating_comment, rating_context, rated_at,
   CASE WHEN status = 'open' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+7 days') END,
   NULL
 FROM tasks_backup;

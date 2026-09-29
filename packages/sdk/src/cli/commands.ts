@@ -33,9 +33,9 @@ export const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'tasks', sub: 'deliver', flags: ['--summary', '--pr-url', '--content', '--artifact', '--type', '--commit', ...TASK_COMMON] },
   { command: 'tasks', sub: 'submit', flags: ['--file', '--note', '--type', '--force', ...TASK_COMMON] },
   { command: 'tasks', sub: 'watch', flags: ['--max-hours', '--once', '--json', '--api'] },
-  { command: 'tasks', sub: 'accept', flags: ['--note', '--payment-signature', ...TASK_COMMON] },
+  { command: 'tasks', sub: 'accept', flags: ['--note', '--rating', '--rating-comment', '--payment-signature', ...TASK_COMMON] },
   { command: 'tasks', sub: 'revision', flags: ['--note', ...TASK_COMMON] },
-  { command: 'tasks', sub: 'dispute', flags: ['--reason', ...TASK_COMMON] },
+  { command: 'tasks', sub: 'dispute', flags: ['--reason', '--rating', '--rating-comment', ...TASK_COMMON] },
   { command: 'tasks', sub: 'cancel', flags: [...TASK_COMMON] },
   { command: 'tasks', sub: 'payment', flags: [...TASK_COMMON] },
 ];

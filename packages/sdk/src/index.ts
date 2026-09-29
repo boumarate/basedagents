@@ -179,6 +179,12 @@ export interface Agent {
   skills?: AgentSkill[];
   created_at: string;
   last_seen?: string;
+  /**
+   * Ratings posters gave this agent's deliveries (1–5, optional, on accept or
+   * dispute): how many, and their average to one decimal (null when none).
+   * Returned by `getAgent`.
+   */
+  ratings?: { count: number; average: number | null };
 }
 
 /** Raw body of `POST /v1/register/complete` (no nested `agent`). */
@@ -1059,7 +1065,7 @@ export class RegistryClient {
     taskId: string,
     options: AcceptTaskOptions = {}
   ): Promise<AcceptTaskResponse> {
-    const body: Record<string, unknown> = {};
+    const body: Record<string, unknown> = { ...ratingBody(options) };
     if (options.note !== undefined) body.note = options.note;
     return this.paymentPost<AcceptTaskResponse>(`/v1/tasks/${taskId}/accept`, keypair, body, options.paymentSignature);
   }
@@ -1091,10 +1097,11 @@ export class RegistryClient {
   async disputeTask(
     keypair: AgentKeypair,
     taskId: string,
-    reason: string
-  ): Promise<{ ok: boolean; task_id: string; status: 'submitted'; review_state: 'disputed'; disputed_at: string; payment_status: PaymentStatus }> {
+    reason: string,
+    options: RatingOptions = {},
+  ): Promise<{ ok: boolean; task_id: string; status: 'submitted'; review_state: 'disputed'; disputed_at: string; payment_status: PaymentStatus; rating?: number }> {
     if (!reason || !reason.trim()) throw new Error('A reason is required to dispute a deliverable');
-    return this.fetchAuth(keypair, 'POST', `/v1/tasks/${taskId}/dispute`, { reason });
+    return this.fetchAuth(keypair, 'POST', `/v1/tasks/${taskId}/dispute`, { reason, ...ratingBody(options) });
   }
 
   /**
@@ -1303,6 +1310,11 @@ export interface Task {
   accepted_by: 'creator' | 'auto' | null;
   /** Creator's latest note: acceptance note, revision request, or dispute reason. */
   review_note: string | null;
+  /** The poster's optional 1–5 rating, its comment, and whether it was given at accept or dispute time. */
+  rating?: number | null;
+  rating_comment?: string | null;
+  rating_context?: 'accept' | 'dispute' | null;
+  rated_at?: string | null;
   revision_count: number;
   revision_requested_at: string | null;
   disputed_at: string | null;
@@ -1477,7 +1489,29 @@ export interface CreateTaskResponse {
   payment_response_header?: string;
 }
 
-export interface AcceptTaskOptions {
+/**
+ * An optional rating of a delivery, given when accepting or disputing it: an
+ * integer 1–5, plus an optional comment (≤ 500 chars) that needs a rating.
+ * Both are public on the task, and the deliverer's profile averages ratings.
+ */
+export interface RatingOptions {
+  rating?: number;
+  ratingComment?: string;
+}
+
+/** The body fields for a rating (throws on a comment without a rating, a comment over 500 characters, or a rating outside 1–5). */
+function ratingBody(options: RatingOptions): Record<string, unknown> {
+  if (options.rating === undefined) {
+    if (options.ratingComment) throw new Error('ratingComment needs a rating (1-5)');
+    return {};
+  }
+  if (!Number.isInteger(options.rating) || options.rating < 1 || options.rating > 5) throw new Error('rating must be an integer from 1 to 5');
+  // The API trims the comment before its 500-character limit; count the same way.
+  if (options.ratingComment && options.ratingComment.trim().length > 500) throw new Error('ratingComment is limited to 500 characters');
+  return { rating: options.rating, ...(options.ratingComment ? { rating_comment: options.ratingComment } : {}) };
+}
+
+export interface AcceptTaskOptions extends RatingOptions {
   /** Optional acceptance note (≤ 2000 chars), stored as the task's `review_note`. */
   note?: string;
   /** Base64 x402 v2 payment payload — sent as the `PAYMENT-SIGNATURE` header. */
@@ -1502,6 +1536,11 @@ export interface AcceptTaskResponse {
   release_deferred?: string;
   /** Raw `PAYMENT-RESPONSE` header (base64 x402 SettleResponse) when the facilitator answered. */
   payment_response_header?: string;
+  /** The rating stored with this accept, when one was sent. */
+  rating?: number;
+  /** Present (false) only when the accept went through but its rating change wasn't saved (the rating sent, or removing a dispute-time rating). Accept again to retry. */
+  rating_saved?: false;
+  rating_error?: string;
 }
 
 export interface WalletInfo {

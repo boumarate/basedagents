@@ -44,7 +44,7 @@ from .auth import build_headers as build_auth_headers
 from .easy import register_or_load
 from .middleware import require_agent, verify_request, fetch_attestation, VerifiedAgent
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 __all__ = [
     "register_or_load",
     "require_agent",

@@ -53,6 +53,7 @@ export function mapApiAgentToAgent(a: ApiAgent): Agent {
     xHandle: a.x_handle ?? null,
     contactEmail: a.contact_email ?? null,
     contactEndpoint: a.contact_endpoint ?? null,
+    ratings: a.ratings,
   };
 }
 

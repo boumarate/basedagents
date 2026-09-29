@@ -137,6 +137,20 @@ const valueStyle: React.CSSProperties = {
   lineHeight: 1.6,
 };
 
+/** The poster's optional 1-5 rating of the delivery (decision D11), when there is one. */
+function RatingLine({ task }: { task: { rating?: number | null; rating_comment?: string | null } }): React.ReactElement | null {
+  if (task.rating == null) return null;
+  return (
+    <div data-testid="task-rating" style={{ fontSize: 14, marginTop: 8, color: 'var(--text-secondary)' }}>
+      <span style={{ color: '#F59E0B', letterSpacing: 1 }} aria-label={`Rated ${task.rating} of 5`}>
+        {'★'.repeat(task.rating)}{'☆'.repeat(5 - task.rating)}
+      </span>
+      {' '}{task.rating} of 5
+      {task.rating_comment ? <span style={{ whiteSpace: 'pre-wrap' }}> — {task.rating_comment}</span> : null}
+    </div>
+  );
+}
+
 export default function TaskDetail(): React.ReactElement {
   const { id } = useParams<{ id: string }>();
   const [task, setTask] = useState<ApiTask | null>(null);
@@ -336,6 +350,13 @@ export default function TaskDetail(): React.ReactElement {
                 “{task.review_note}”
               </div>
             )}
+            <RatingLine task={task} />
+          </div>
+        )}
+        {isCancelled && task.rating != null && (
+          <div style={sectionStyle}>
+            <div style={labelStyle}>Rated when disputed</div>
+            <RatingLine task={task} />
           </div>
         )}
         {isAccepted && (
@@ -352,6 +373,7 @@ export default function TaskDetail(): React.ReactElement {
                 “{task.review_note}”
               </div>
             )}
+            <RatingLine task={task} />
           </div>
         )}
 

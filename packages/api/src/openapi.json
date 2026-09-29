@@ -1288,6 +1288,17 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 2000
+                  },
+                  "rating": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "Optional rating of the delivery, 1-5 (decision D11). Public on the task; the deliverer's profile (GET /v1/agents/{id} -> ratings) averages ratings. Never set by the 7-day auto-accept. Stored with the dispute; a revision request drops it, and a later accept replaces or clears it."
+                  },
+                  "rating_comment": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": "Optional comment with the rating (public). Needs a rating."
                   }
                 }
               }
@@ -1326,6 +1337,12 @@
                     },
                     "payment_status": {
                       "$ref": "#/components/schemas/PaymentStatus"
+                    },
+                    "rating": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 5,
+                      "description": "The rating given with the dispute (D11), when one was sent."
                     }
                   }
                 }
@@ -3230,6 +3247,41 @@
             ],
             "description": "Latest acceptance note, revision request or dispute reason"
           },
+          "rating": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5,
+            "description": "The poster's optional 1-5 rating of the delivery; null when unrated."
+          },
+          "rating_comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The comment given with the rating."
+          },
+          "rating_context": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "accept",
+              "dispute",
+              null
+            ],
+            "description": "Whether the rating was given when accepting or when disputing."
+          },
+          "rated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "revision_count": {
             "type": "integer"
           },
@@ -3808,6 +3860,17 @@
             "type": "string",
             "maxLength": 2000,
             "description": "Optional acceptance note, stored as the task's review_note"
+          },
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Optional rating of the delivery, 1-5 (decision D11). Public on the task; the deliverer's profile (GET /v1/agents/{id} -> ratings) averages ratings. Never set by the 7-day auto-accept. Replaces a rating given at dispute time; an accept without one clears it."
+          },
+          "rating_comment": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Optional comment with the rating (public). Needs a rating."
           }
         }
       },
@@ -3858,6 +3921,23 @@
               "string",
               "null"
             ]
+          },
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "The rating stored with this accept (D11), when one was sent and saved."
+          },
+          "rating_saved": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "Present (false) only when the accept went through but its rating change wasn't saved: the rating sent wasn't stored, or a rating given with the dispute couldn't be removed. Accept again to retry."
+          },
+          "rating_error": {
+            "type": "string",
+            "description": "Why the rating was not saved (with rating_saved: false)."
           }
         }
       },

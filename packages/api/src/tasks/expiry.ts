@@ -1,5 +1,5 @@
 /**
- * Open-task expiry policy (decision D13, migration 0045).
+ * Open-task expiry policy (decision D13, migration 0047).
  *
  * An `open` task nobody claims within its open window becomes `expired` — a
  * terminal status swept by the cron (openExpiryGate in service.ts). The

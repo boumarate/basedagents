@@ -77,9 +77,16 @@ export interface TaskRow {
   claim_expires_at: string | null;
   /** Campaign cap (migration 0044): max claimed+submitted per agent across this poster's tasks; NULL = uncapped. */
   max_active_claims_per_agent: number | null;
-  /** Open window (0045, decision D13): an `open` task past this expires (cron). NULL = never (house standing tasks). */
+  /** Open window (0047, decision D13): an `open` task past this expires (cron). NULL = never (house standing tasks). */
   expires_at: string | null;
   expired_at: string | null;
+  // ─── Optional rating (0045, decision D11) — public, see recordRating ───
+  /** 1–5, given by the poster when accepting or disputing; NULL = not rated. */
+  rating: number | null;
+  rating_comment: string | null;
+  /** Which judgment the rating belongs to. */
+  rating_context: 'accept' | 'dispute' | null;
+  rated_at: string | null;
   settle_attempts: number;
   settle_broadcast: number;
   settle_started_at: string | null;
@@ -563,23 +570,92 @@ export async function autoAcceptGate(db: DBAdapter, taskId: string, nowIso: stri
   return res.changes === 1;
 }
 
-/** T6: submitted → claimed (request changes), capped at MAX_REVISIONS. Re-arms the claim timer for the re-delivery. */
+/**
+ * T6: submitted → claimed (request changes), capped at MAX_REVISIONS. Re-arms the claim timer for the re-delivery.
+ * Asking for changes withdraws a dispute, and with it any rating given at dispute time (a submitted task has no other).
+ */
 export async function revisionGate(db: DBAdapter, taskId: string, note: string, nowIso: string, notify?: GateNotify): Promise<boolean> {
   return gateWithEvent(db, {
     sql: `UPDATE tasks SET status = 'claimed', review_note = ?, revision_count = revision_count + 1,
-       revision_requested_at = ?, auto_release_at = NULL, claim_expires_at = ?, disputed_at = NULL
+       revision_requested_at = ?, auto_release_at = NULL, claim_expires_at = ?, disputed_at = NULL,
+       rating = NULL, rating_comment = NULL, rating_context = NULL, rated_at = NULL
      WHERE task_id = ? AND status = 'submitted' AND revision_count < ?`,
     params: [note, nowIso, isoPlus(nowIso, CLAIM_WINDOW_MS), taskId, MAX_REVISIONS],
   }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
 }
 
-/** T7: dispute flag on a submitted task; freezes auto-accept, touches no payment column. */
-export async function disputeGate(db: DBAdapter, taskId: string, reason: string, nowIso: string, notify?: GateNotify): Promise<boolean> {
+/**
+ * T7: dispute flag on a submitted task; freezes auto-accept, touches no payment column.
+ * D11: a rating given with the dispute is written by the same UPDATE, so it can't
+ * land after a concurrent revision request has withdrawn the dispute.
+ */
+export async function disputeGate(
+  db: DBAdapter, taskId: string, reason: string, nowIso: string, notify?: GateNotify, rating?: RatingInput | null,
+): Promise<boolean> {
+  const rated = rating
+    ? { sql: `, rating = ?, rating_comment = ?, rating_context = 'dispute', rated_at = ?`, params: [rating.rating, rating.comment, nowIso] }
+    : { sql: '', params: [] };
   return gateWithEvent(db, {
-    sql: `UPDATE tasks SET disputed_at = ?, review_note = ?, auto_release_at = NULL
+    sql: `UPDATE tasks SET disputed_at = ?, review_note = ?, auto_release_at = NULL${rated.sql}
      WHERE task_id = ? AND status = 'submitted' AND disputed_at IS NULL`,
-    params: [nowIso, reason, taskId],
+    params: [nowIso, reason, ...rated.params, taskId],
   }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
+}
+
+/** D11: the poster's optional rating of a delivery. Validated by the routes (integer 1–5, comment ≤ 500 chars). */
+export interface RatingInput {
+  rating: number;
+  comment: string | null;
+}
+
+const RATING_NOT_SAVED = "The accept went through, but the rating wasn't saved. Send it again with a repeat accept.";
+const RATING_NOT_CLEARED = 'The accept went through, but a rating given with the dispute may still show. Accept again to remove it.';
+
+/**
+ * After the creator accepts: a rating sent with the accept is stored; an
+ * accept without one clears a rating left at dispute time (the dispute is
+ * over). A rating given at an earlier accept stays. Ratings are public, like
+ * `review_note`, and the agent profile averages them. Called only from the
+ * creator's accept routes, never from the auto-accept timer.
+ *
+ * Never throws: the accept has already happened (and may have paid), so a
+ * failed rating write is logged and reported instead of turning a completed
+ * accept into an error. Returns the response fields: `{ rating }` when the
+ * rating was stored, `{ rating_saved: false, rating_error }` when the rating
+ * sent wasn't stored or a dispute-time rating couldn't be removed.
+ */
+export async function settleRatingAfterAccept(
+  db: DBAdapter, taskId: string, input: RatingInput | null, nowIso: string,
+): Promise<Record<string, unknown>> {
+  try {
+    if (!input) {
+      await db.run(
+        `UPDATE tasks SET rating = NULL, rating_comment = NULL, rating_context = NULL, rated_at = NULL
+         WHERE task_id = ? AND status = 'verified' AND rating_context = 'dispute'`,
+        taskId,
+      );
+      return {};
+    }
+    const res = await db.run(
+      `UPDATE tasks SET rating = ?, rating_comment = ?, rating_context = 'accept', rated_at = ?
+       WHERE task_id = ? AND status = 'verified'`,
+      input.rating, input.comment, nowIso, taskId,
+    );
+    if (res.changes === 1) return { rating: input.rating };
+  } catch (err) {
+    console.error(`[tasks] rating write failed for ${taskId} after the accept:`, err);
+  }
+  return { rating_saved: false, rating_error: input ? RATING_NOT_SAVED : RATING_NOT_CLEARED };
+}
+
+/** Ratings an agent received on tasks it delivered: `{ count, average }` (average to one decimal; null when unrated). */
+export async function ratingSummary(db: DBAdapter, agentId: string): Promise<{ count: number; average: number | null }> {
+  const row = await db.get<{ n: number; avg: number | null }>(
+    'SELECT COUNT(rating) AS n, AVG(rating) AS avg FROM tasks WHERE claimed_by_agent_id = ? AND rating IS NOT NULL',
+    agentId,
+  );
+  const count = row?.n ?? 0;
+  return { count, average: count && row?.avg != null ? Math.round(row.avg * 10) / 10 : null };
 }
 
 /**
@@ -617,9 +693,9 @@ export async function cancelGate(db: DBAdapter, taskId: string, nowIso: string, 
  * nothing is authorized at claim time, so a bounty stays `pending`. The timer is
  * part of the predicate so a delivery made after the cron's SELECT is not clobbered.
  *
- * `newOpenExpiresAt` re-arms the OPEN window (0045): a week spent claimed by a
+ * `newOpenExpiresAt` re-arms the OPEN window (0047): a week spent claimed by a
  * no-show must not expire the task the moment it returns. A NULL window
- * (never-expiring house task, or a pre-0045 row) stays NULL.
+ * (never-expiring house task, or a pre-0047 row) stays NULL.
  */
 export async function claimExpiryGate(db: DBAdapter, taskId: string, nowIso: string, newOpenExpiresAt: string): Promise<boolean> {
   const res = await db.run(
@@ -634,7 +710,7 @@ export async function claimExpiryGate(db: DBAdapter, taskId: string, nowIso: str
 }
 
 /**
- * T10 (0045): open → expired when nobody claimed within the open window
+ * T10 (0047): open → expired when nobody claimed within the open window
  * (cron). Money handling mirrors cancelGate: a FUNDED escrow keeps its
  * payment columns (the caller starts the refund leg), a deposit that was
  * broadcast and is still moving in blocks the sweep until it resolves, a

@@ -34,7 +34,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../types/index.js';
-import { CreateTaskSchema, allowedBountyNetworks } from '../types/index.js';
+import { CreateTaskSchema, allowedBountyNetworks, RatingFields, withRatingRule, ratingInputOf, isRatingIssue, RATING_RULE_MESSAGE } from '../types/index.js';
 import type { DBAdapter } from '../db/adapter.js';
 import { ownerSession, verifyAndRecordAction, AssertionSchema } from './routes.js';
 import { canonicalJsonStringify, sha256, bytesToHex } from '../crypto/index.js';
@@ -46,6 +46,7 @@ import {
   type Actor, type TaskRow, loadTask, creatorMatches, logPaymentEvent, recordFunnel, publicTaskShape, paymentView,
   creatorSqlParts, recomputeReputation, notifyMatchingAgents, bountyView,
   acceptUnpaidGate, revisionGate, disputeGate, cancelGate, cancelRefusal, afterAccept, MAX_REVISIONS,
+  settleRatingAfterAccept,
 } from '../tasks/service.js';
 import { paymentProviderFor } from '../payments/index.js';
 import { acceptBountyTask } from '../payments/accept.js';
@@ -89,9 +90,11 @@ async function readJson(c: Ctx): Promise<{ ok: true; body: Record<string, unknow
 
 const Ceremony = { nonce: z.string().min(1).optional(), assertion: AssertionSchema.optional() };
 const OwnerCreateSchema = CreateTaskSchema.extend(Ceremony).strict();
-const AcceptSchema = z.object({ note: z.string().max(2000).optional(), ...Ceremony }).strict();
+// D11: accept and dispute take an optional rating. The passkey ceremony signs the note / reason as before;
+// the rating is not money and not part of the signed action.
+const AcceptSchema = withRatingRule(z.object({ note: z.string().max(2000).optional(), ...RatingFields, ...Ceremony }).strict());
 const RevisionSchema = z.object({ note: z.string().min(1).max(2000), ...Ceremony }).strict();
-const DisputeSchema = z.object({ reason: z.string().min(1).max(2000), ...Ceremony }).strict();
+const DisputeSchema = withRatingRule(z.object({ reason: z.string().min(1).max(2000), ...RatingFields, ...Ceremony }).strict());
 const CancelSchema = z.object({ reason: z.string().max(2000).optional(), ...Ceremony }).strict();
 const PublishSchema = z.object({ publish: z.boolean(), ...Ceremony }).strict();
 
@@ -393,11 +396,12 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
   const json = await readJson(c);
   if (!json.ok) return err(c, 400, 'bad_request', 'invalid JSON body');
   const parsed = AcceptSchema.safeParse(json.body);
-  if (!parsed.success) return err(c, 400, 'bad_request', 'validation failed');
+  if (!parsed.success) return err(c, 400, 'bad_request', isRatingIssue(parsed.error) ? RATING_RULE_MESSAGE : 'validation failed');
   const mine = await loadMine(c, db, ownerId, taskId);
   if ('res' in mine) return mine.res;
   const task = mine.task;
   const note = parsed.data.note ?? null;
+  const rating = ratingInputOf(parsed.data);
 
   // Analytics: a fresh acceptance always starts from `submitted` — a task
   // already `verified` here is an idempotent re-accept (or a payment retry)
@@ -415,14 +419,18 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
     if (paymentHeader(c)) return err(c, 400, 'payment_not_expected', 'This task is in escrow: the deposit is released to the deliverer when you accept. Omit the payment header.');
     const cer = await ceremony(c, ownerId, `task.accept:${taskId}:${sha256hex(note ?? '')}`, parsed.data);
     if (!cer.ok) return cer.res;
-    const outcome = await acceptEscrowTask(db, c.env, task, { note, actor, nowIso: new Date().toISOString(), assertionId: cer.assertionId });
+    const nowIso = new Date().toISOString();
+    const outcome = await acceptEscrowTask(db, c.env, task, { note, actor, nowIso, assertionId: cer.assertionId });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
-    if (outcome.status === 200 && wasSubmitted) await captureServerEvent(c, 'task_accepted', acceptedProps);
-    return c.json(outcome.body, outcome.status);
+    if (outcome.status !== 200) return c.json(outcome.body, outcome.status);
+    const rated = await settleRatingAfterAccept(db, taskId, rating, nowIso);
+    if (wasSubmitted) await captureServerEvent(c, 'task_accepted', acceptedProps);
+    return c.json({ ...(outcome.body as Record<string, unknown>), ...rated }, 200);
   }
 
   if (task.status === 'verified') {
-    return c.json({ ok: true, task_id: taskId, status: 'verified', accepted_by: task.accepted_by });
+    const rated = await settleRatingAfterAccept(db, taskId, rating, new Date().toISOString());
+    return c.json({ ok: true, task_id: taskId, status: 'verified', accepted_by: task.accepted_by, ...rated });
   }
   if (task.status !== 'submitted') return err(c, 409, 'invalid_state', `Task is ${task.status}; only delivered work can be accepted`, { status: task.status });
 
@@ -448,8 +456,10 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
     }
     const outcome = await acceptBountyTask(db, c.env, task, { note, rawHeader, actor, nowIso, assertionId });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
-    if (outcome.status === 200 && wasSubmitted) await captureServerEvent(c, 'task_accepted', acceptedProps);
-    return c.json(outcome.body, outcome.status);
+    if (outcome.status !== 200) return c.json(outcome.body, outcome.status);
+    const rated = await settleRatingAfterAccept(db, taskId, rating, nowIso);
+    if (wasSubmitted) await captureServerEvent(c, 'task_accepted', acceptedProps);
+    return c.json({ ...(outcome.body as Record<string, unknown>), ...rated }, 200);
   }
 
   const cer = await ceremony(c, ownerId, `task.accept:${taskId}:${sha256hex(note ?? '')}`, parsed.data);
@@ -461,10 +471,11 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
   }
   const fresh = (await loadTask(db, taskId)) as TaskRow;
   const side = await afterAccept(db, fresh, { acceptedBy: 'creator', by: actor, nowIso: now, paymentStatus: fresh.payment_status });
+  const rated = await settleRatingAfterAccept(db, taskId, rating, now);
   await captureServerEvent(c, 'task_accepted', acceptedProps);
   return c.json({
     ok: true, task_id: taskId, status: 'verified', accepted_by: 'creator',
-    chain_sequence: side.chain?.sequence ?? null, chain_entry_hash: side.chain?.entry_hash ?? null,
+    chain_sequence: side.chain?.sequence ?? null, chain_entry_hash: side.chain?.entry_hash ?? null, ...rated,
   });
 });
 
@@ -506,7 +517,7 @@ app.post('/tasks/:id/dispute', ownerSession, async (c) => {
   const json = await readJson(c);
   if (!json.ok) return err(c, 400, 'bad_request', 'invalid JSON body');
   const parsed = DisputeSchema.safeParse(json.body);
-  if (!parsed.success) return err(c, 400, 'bad_request', 'A reason is required to dispute delivered work');
+  if (!parsed.success) return err(c, 400, 'bad_request', isRatingIssue(parsed.error) ? RATING_RULE_MESSAGE : 'A reason is required to dispute delivered work');
   const mine = await loadMine(c, db, ownerId, taskId);
   if ('res' in mine) return mine.res;
   const task = mine.task;
@@ -517,7 +528,8 @@ app.post('/tasks/:id/dispute', ownerSession, async (c) => {
   if (!cer.ok) return cer.res;
 
   const now = new Date().toISOString();
-  if (!(await disputeGate(db, taskId, parsed.data.reason, now))) return err(c, 409, 'conflict', 'Task changed while you were reviewing it');
+  const rating = ratingInputOf(parsed.data);
+  if (!(await disputeGate(db, taskId, parsed.data.reason, now, undefined, rating))) return err(c, 409, 'conflict', 'Task changed while you were reviewing it');
   if (cer.assertionId) await db.run('UPDATE tasks SET review_assertion_id = ? WHERE task_id = ?', cer.assertionId, taskId);
   await logPaymentEvent(db, taskId, 'disputed', { reason: parsed.data.reason, disputed_by: 'owner', payment_status: task.payment_status }, now);
   if (task.claimed_by_agent_id) await recordEvent(db, task.claimed_by_agent_id, { type: 'task.disputed', agent_id: task.claimed_by_agent_id, task_id: taskId, reason: parsed.data.reason }, now);
@@ -532,7 +544,7 @@ app.post('/tasks/:id/dispute', ownerSession, async (c) => {
     has_bounty: !!task.bounty_amount, escrow: !!task.escrow,
     revision_count: task.revision_count, bond_slashed: bondSlashed !== '0',
   });
-  return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now, bond_slashed_atomic: bondSlashed });
+  return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now, bond_slashed_atomic: bondSlashed, ...(rating ? { rating: rating.rating } : {}) });
 });
 
 /** POST /v1/owner/tasks/:id/cancel — cancel (T8; delivered work only after a dispute). */

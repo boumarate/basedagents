@@ -131,7 +131,7 @@ export type WebhookEvent =
       task_id: string;
     }
   | {
-      /** The open window lapsed: nobody claimed the task, so it expired (0045). Sent to the creator; an escrow deposit is refunded. */
+      /** The open window lapsed: nobody claimed the task, so it expired (0047). Sent to the creator; an escrow deposit is refunded. */
       type: 'task.expired';
       agent_id: string;
       task_id: string;
