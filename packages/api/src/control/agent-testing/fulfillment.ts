@@ -406,6 +406,10 @@ export async function executePublishOperation(db: DBAdapter, env: unknown, op: O
         expected_output: fields.expected_output,
         output_format: fields.output_format,
         bounty: { amount: quote.worker_bounty_usdc_atomic, token: 'USDC', network: BOUNTY_NETWORK },
+        // Managed audit tasks never hit the marketplace's open-window sweep
+        // (0045): their lifecycle (commitment windows, re-enqueue, expiry)
+        // belongs to the testing jobs, which must not race a second timer.
+        expires_at: null,
       },
     }, { rawHeader, nowIso: new Date().toISOString(), actor: { kind: 'agent', agentId: principal.agentId } });
 

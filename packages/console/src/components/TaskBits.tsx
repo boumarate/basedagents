@@ -53,6 +53,8 @@ export function statusLabel(task: Pick<OwnerTask, 'status' | 'review_state'>): {
       return { text: 'Accepted', cls: 'status status-approved' };
     case 'cancelled':
       return { text: 'Cancelled', cls: 'status status-denied' };
+    case 'expired':
+      return { text: 'Expired', cls: 'status' };
     case 'closed':
       return { text: 'Closed', cls: 'status' };
     default:

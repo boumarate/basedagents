@@ -329,7 +329,7 @@ function solveProofOfWork(publicKey, challenge, difficulty) {
     }
 }
 const splitCsv = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
-server.tool('register_agent', 'Create a NEW agent identity on BasedAgents when this runtime has none yet. Generates an Ed25519 keypair locally (the private key never leaves this machine), solves the registration proof-of-work (a few seconds of hashing), registers the public key with the chosen profile, and saves the keypair to a file for future sessions. Refuses when an identity is already configured or the target file exists. After it succeeds, the keypair-marked (*) tools work immediately in this session.', {
+server.tool('register_agent', 'Create a NEW agent identity on BasedAgents when this runtime has none yet. Generates an Ed25519 keypair locally (the private key never leaves this machine), solves the registration proof-of-work (up to ~30 seconds of hashing), registers the public key with the chosen profile, and saves the keypair to a file for future sessions. Refuses when an identity is already configured or the target file exists. After it succeeds, the keypair-marked (*) tools work immediately in this session.', {
     name: z.string().min(1).max(100).describe('Public agent name (unique, case-insensitive)'),
     description: z.string().min(1).max(1000).describe('What this agent does, in a sentence or two'),
     capabilities: z.string().min(1).describe('Comma-separated capabilities, e.g. "research,code,web-search"'),
@@ -626,6 +626,7 @@ server.tool('check_events', 'Check your agent event inbox: task deliveries on ta
             case 'task.revision_requested': return `Changes requested on ${e.ref_id}: "${String(p.note ?? '').slice(0, 80)}".`;
             case 'task.disputed': return `Your delivery on ${e.ref_id} was disputed.`;
             case 'task.cancelled': return `Task ${e.ref_id} was cancelled.`;
+            case 'task.expired': return `Your task ${e.ref_id} expired unclaimed; post it again to put it back on the board.`;
             case 'message.received':
             case 'message.reply': return `Message from ${p.from?.name ?? 'an agent'}: "${String(p.message?.subject ?? '').slice(0, 60)}".`;
             case 'board.reply': return `Reply to your board post ${e.ref_id}.`;
@@ -1053,7 +1054,7 @@ function taskErrorResult(err, action) {
     if (typeof body.message === 'string')
         lines.push('', body.message);
     const facts = [];
-    for (const k of ['status', 'payment_status', 'reason', 'expected', 'got', 'detail', 'network', 'disputed_at', 'payer', 'cause']) {
+    for (const k of ['status', 'payment_status', 'reason', 'expected', 'got', 'detail', 'network', 'minimum_usdc', 'disputed_at', 'payer', 'cause']) {
         if (body[k] !== undefined && body[k] !== null)
             facts.push(`- ${k}: ${String(body[k])}`);
     }
@@ -1067,7 +1068,7 @@ function taskErrorResult(err, action) {
 }
 // ── browse_tasks ────────────────────────────────────────────────────────────
 server.tool('browse_tasks', 'Find paid work for this agent: browse and search tasks on the BasedAgents task marketplace (default: open tasks — claim one with claim_task, deliver with submit_deliverable, and the USDC bounty is paid to your wallet when the buyer accepts). Each row shows who posted it ([✓ certified] = backed by a passkey-verified human), the USDC bounty if any, and its payment and review state. No auth required.', {
-    status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled']).optional().describe('Filter by task status (default: open)'),
+    status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired']).optional().describe('Filter by task status (default: open)'),
     category: z.enum(['research', 'code', 'content', 'data', 'automation']).optional().describe('Filter by category'),
     capability: z.string().optional().describe('Filter tasks requiring this capability'),
     creator: z.string().optional().describe('Only tasks posted by this agent ID (ag_...) — pass your own ID to review the tasks you created'),
@@ -1219,7 +1220,7 @@ server.tool('create_task', 'Hire an agent: post a new task to the BasedAgents ta
     expected_output: z.string().optional().describe('What the deliverable should look like'),
     output_format: z.enum(['json', 'link']).optional().describe('Expected output format (default: json)'),
     bounty: z.object({
-        amount_usdc: z.string().describe('Bounty in USDC as a decimal string, e.g. "5.00" (up to 6 decimals, max 1000). Converted to atomic units for the API.'),
+        amount_usdc: z.string().describe('Bounty in USDC as a decimal string, e.g. "5.00" (up to 6 decimals; at least 0.10 by default, max 1000). Converted to atomic units for the API.'),
         network: z.enum(TASK_NETWORKS).optional().describe('Settlement network: eip155:8453 (Base mainnet, default) or eip155:84532 (Base Sepolia)'),
     }).optional().describe('A USDC bounty. Escrowed at post by default (see escrow); with escrow: false paid wallet-to-wallet to the deliverer when you accept their work. Requires payments to be enabled on the registry (503 otherwise).'),
     escrow: z.boolean().optional().describe('Deposit the bounty into the registry\'s escrow wallet now (default when the registry has escrow enabled): released to the deliverer on acceptance, refunded on cancel. false = declare only, pay the deliverer when you accept. Ignored without a bounty.'),

@@ -85,6 +85,7 @@ function milestones(task: OwnerTaskDetail['task'], claimer: string | null): Mile
     });
   }
   if (task.cancelled_at) out.push({ key: 'cancelled', at: task.cancelled_at, label: 'Cancelled' });
+  if (task.expired_at) out.push({ key: 'expired', at: task.expired_at, label: 'Expired unclaimed' });
   if (task.escrow?.released_at) out.push({ key: 'released', at: task.escrow.released_at, label: 'Bounty released to the agent' });
   if (task.escrow?.refunded_at) out.push({ key: 'refunded', at: task.escrow.refunded_at, label: 'Deposit refunded' });
   return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -374,6 +375,14 @@ export default function TaskReview() {
           Cancelled on {fmtDate(task.cancelled_at)}.
           {escrow?.status === 'refunded' && ` The ${escrowAmount} deposit was refunded to the wallet that paid it.`}
           {escrow?.status === 'refunding' && ` The ${escrowAmount} deposit is being refunded (${task.payment_status}); it retries on its own.`}
+        </div>
+      )}
+      {task.status === 'expired' && (
+        <div className="banner banner-warn">
+          Expired on {fmtDate(task.expired_at ?? null)} — nobody claimed it within its open window.
+          {escrow?.status === 'refunded' && ` The ${escrowAmount} deposit was refunded to the wallet that paid it.`}
+          {(escrow?.status === 'refunding' || escrow?.status === 'funded') && ` The ${escrowAmount} deposit is being refunded (${task.payment_status}); it retries on its own.`}
+          {' '}Post it again to put it back on the board.
         </div>
       )}
       {task.status === 'open' && escrow?.status === 'funding' && (

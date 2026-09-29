@@ -10,6 +10,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   submitted: { bg: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' },
   verified: { bg: 'rgba(139, 92, 246, 0.15)', color: '#8B5CF6' },
   cancelled: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
+  expired: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
   closed: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
 };
 
@@ -91,9 +92,9 @@ function paymentWording(status: ApiPaymentStatus, task: ApiTask, payment: ApiTas
           : 'The last settlement attempt failed; the buyer must sign a fresh authorization.',
       };
     case 'expired':
-      return task.status === 'cancelled'
-        ? { label: 'Bounty voided', note: 'The task was cancelled before the bounty was paid.' }
-        : { label: 'Authorization expired', note: 'The signed transfer expired before it settled; the buyer must sign again.' };
+      if (task.status === 'cancelled') return { label: 'Bounty voided', note: 'The task was cancelled before the bounty was paid.' };
+      if (task.status === 'expired') return { label: 'Bounty voided', note: 'The task expired unclaimed before the bounty was paid.' };
+      return { label: 'Authorization expired', note: 'The signed transfer expired before it settled; the buyer must sign again.' };
     case 'disputed':
     case 'refunded':
       return { label: status, note: 'Legacy payment state.' };

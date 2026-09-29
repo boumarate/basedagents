@@ -54,7 +54,7 @@ export const DEFAULT_API_URL = resolveApiUrl();
 export const PAYMENT_HEADER = 'PAYMENT-SIGNATURE';
 
 /** Every task status the API can return; `closed` is legacy and never written. */
-export const TASK_STATUSES = ['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled'] as const;
+export const TASK_STATUSES = ['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export const TASK_CATEGORIES = ['research', 'code', 'content', 'data', 'automation'] as const;
@@ -1307,6 +1307,9 @@ export interface Task {
   revision_requested_at: string | null;
   disputed_at: string | null;
   cancelled_at: string | null;
+  /** End of the open window (D13): an unclaimed `open` task expires past this; null = never. */
+  expires_at?: string | null;
+  expired_at?: string | null;
   proposer_signature: string | null;
   acceptor_signature: string | null;
   bounty: BountyView | null;

@@ -25,9 +25,10 @@ import { paymentProviderFor } from '../payments/index.js';
 import { settleTask, UNKNOWN_OUTCOME_MAX_MS, escrowLegFailedSql } from '../payments/settle.js';
 import { startEscrowLeg, escrowSweep } from '../payments/escrow.js';
 import {
-  loadTask, autoAcceptGate, claimExpiryGate, afterAccept, logPaymentEvent, agentTarget, creatorTarget, isoPlus,
-  bountyView, notifyMatchingAgents,
+  loadTask, autoAcceptGate, claimExpiryGate, openExpiryGate, afterAccept, logPaymentEvent, agentTarget, creatorTarget, isoPlus,
+  bountyView, notifyMatchingAgents, recordFunnel,
 } from '../tasks/service.js';
+import { defaultOpenExpiresAt } from '../tasks/expiry.js';
 import { recordEvent, drainOutbox } from '../events/service.js';
 import { slashBondForExpiredClaim } from '../tasks/governance.js';
 import { settleDueBondWithdrawals } from '../tasks/bonds.js';
@@ -35,6 +36,8 @@ import { settleDueBondWithdrawals } from '../tasks/bonds.js';
 export interface TaskCronSummary {
   auto_accepted: number;
   claims_expired: number;
+  /** Open-task expiry (0045): `open` tasks whose window lapsed unclaimed this tick. */
+  open_expired: number;
   settle_attempted: number;
   settled: number;
   expired: number;
@@ -54,7 +57,7 @@ const BATCH = 50;
 
 export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string = new Date().toISOString()): Promise<TaskCronSummary> {
   const summary: TaskCronSummary = {
-    auto_accepted: 0, claims_expired: 0, settle_attempted: 0, settled: 0, expired: 0, recovered: 0, capped: 0, settle_skipped_reason: null,
+    auto_accepted: 0, claims_expired: 0, open_expired: 0, settle_attempted: 0, settled: 0, expired: 0, recovered: 0, capped: 0, settle_skipped_reason: null,
     bonds_slashed: 0, bond_withdrawals_settled: 0, bond_withdrawals_refunded: 0,
     escrow_swept: 0, escrow_stuck: 0,
   };
@@ -101,7 +104,8 @@ export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string =
       const task = await loadTask(db, task_id);
       const exClaimer = task?.claimed_by_agent_id ?? null;
       // Gate is authoritative: false if the claimer delivered between SELECT and now.
-      if (!(await claimExpiryGate(db, task_id, nowIso))) continue;
+      // The reopened task gets a fresh open window (a NULL/never window stays NULL).
+      if (!(await claimExpiryGate(db, task_id, nowIso, defaultOpenExpiresAt(env, nowIso)))) continue;
       summary.claims_expired++;
       if (exClaimer) await recordEvent(db, exClaimer, { type: 'task.claim_expired', agent_id: exClaimer, task_id }, nowIso);
       // Sitting on a claim until it expires is the one abuse a bond exists
@@ -122,6 +126,40 @@ export async function runTaskCron(db: DBAdapter, env: Bindings, nowIso: string =
       }
     } catch (err) {
       console.error(`[cron] claim-expiry failed for ${task_id}:`, err);
+    }
+  }
+
+  // 1c. Open-task expiry (0045, decision D13): an `open` task nobody claimed
+  // within its window becomes `expired` (terminal). The creator is told; a
+  // FUNDED escrow deposit goes back to the buyer (house-signed refund leg —
+  // the same money path as cancel; escrowSweep retries a refused start), and
+  // the gate voids a never-settled declared bounty. The window is part of the
+  // gate's predicate, so a claim racing the sweep wins cleanly.
+  const staleOpen = await db.all<{ task_id: string }>(
+    `SELECT task_id FROM tasks WHERE status = 'open'
+       AND expires_at IS NOT NULL AND expires_at <= ? LIMIT ?`,
+    nowIso, BATCH,
+  );
+  for (const { task_id } of staleOpen) {
+    try {
+      const task = await loadTask(db, task_id);
+      if (!task) continue;
+      const creator = await creatorTarget(db, task);
+      const expired = await openExpiryGate(db, task_id, nowIso, {
+        recipientAgentId: creator?.id ?? null,
+        event: { type: 'task.expired', agent_id: creator?.id ?? '', task_id },
+      });
+      if (!expired) continue;
+      summary.open_expired++;
+      if (task.escrow && task.escrow_status === 'funded') {
+        await logPaymentEvent(db, task_id, 'escrow_refund_requested', { reason: 'task_expired' }, nowIso);
+        await startEscrowLeg(db, env, task_id, 'refund', 'cron', nowIso);
+      } else if (task.bounty_amount && ['pending', 'failed'].includes(task.payment_status)) {
+        await logPaymentEvent(db, task_id, 'expired', { reason: 'task_expired' }, nowIso);
+      }
+      await recordFunnel(db, 'task_expired', task_id, null);
+    } catch (err) {
+      console.error(`[cron] open-expiry failed for ${task_id}:`, err);
     }
   }
 

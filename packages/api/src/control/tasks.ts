@@ -53,6 +53,7 @@ import { fundEscrowTask, acceptEscrowTask, startEscrowLeg } from '../payments/es
 import { escrowAvailable } from '../payments/house-wallet.js';
 import { escrowView } from '../tasks/service.js';
 import { slashBondForDisputedClaim } from '../tasks/governance.js';
+import { resolveOpenExpiry } from '../tasks/expiry.js';
 import { bountyMinimumRefusal } from '../tasks/bounty-minimum.js';
 import { recordEvent } from '../events/service.js';
 
@@ -185,6 +186,14 @@ app.post('/tasks', ownerSession, async (c) => {
   const parsed = OwnerCreateSchema.safeParse(json.body);
   if (!parsed.success) return c.json({ error: 'bad_request', message: 'validation failed', details: parsed.error.flatten() }, 400);
 
+  // D13: open window — default 7 days; only house accounts may exceed the cap
+  // or post a never-expiring task (tasks/expiry.ts). Checked before the 402
+  // challenge so nobody signs a deposit for a post that would be refused.
+  const expiry = resolveOpenExpiry(c.env, ownerId, parsed.data.expires_in_days, new Date().toISOString());
+  if (!expiry.ok) {
+    return err(c, 400, 'expiry_window_not_allowed', `expires_in_days must be between 1 and ${expiry.max} for this poster; omit it for the default window.`, { max_days: expiry.max });
+  }
+
   const wantsEscrow = !!parsed.data.bounty && (parsed.data.escrow ?? escrowAvailable(c.env));
   const rawHeader = paymentHeader(c);
   if (rawHeader && !wantsEscrow) {
@@ -205,6 +214,7 @@ app.post('/tasks', ownerSession, async (c) => {
         required_capabilities: parsed.data.required_capabilities ?? null, expected_output: parsed.data.expected_output ?? null,
         output_format: parsed.data.output_format, bounty: { amount: b.amount, token: b.token, network: b.network },
         max_active_claims_per_agent: parsed.data.max_active_claims_per_agent ?? null,
+        expires_at: expiry.expiresAt,
       },
     }, { rawHeader: null, nowIso: new Date().toISOString(), actor: { kind: 'owner', ownerId } });
     for (const [k, v] of Object.entries(challenge.headers ?? {})) c.header(k, v);
@@ -259,6 +269,7 @@ app.post('/tasks', ownerSession, async (c) => {
         required_capabilities: reqCaps, expected_output: fields.expected_output ?? null, output_format: fields.output_format,
         bounty: { amount: bounty.amount, token: bounty.token, network: bounty.network },
         max_active_claims_per_agent: fields.max_active_claims_per_agent ?? null,
+        expires_at: expiry.expiresAt,
       },
     }, { rawHeader, nowIso: now, actor: { kind: 'owner', ownerId } });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
@@ -277,12 +288,12 @@ app.post('/tasks', ownerSession, async (c) => {
   await db.run(
     `INSERT INTO tasks (task_id, creator_agent_id, creator_owner_id, creator_kind, creator_assertion_id, title, description, category,
        required_capabilities, expected_output, output_format, status, created_at, bounty_amount, bounty_token, bounty_network, payment_status,
-       max_active_claims_per_agent)
-     VALUES (?, NULL, ?, 'owner', ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
+       max_active_claims_per_agent, expires_at)
+     VALUES (?, NULL, ?, 'owner', ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
     taskId, ownerId, cer.assertionId, fields.title, fields.description, fields.category ?? null,
     reqCaps ? JSON.stringify(reqCaps) : null, fields.expected_output ?? null, fields.output_format, now,
     bounty?.amount ?? null, bounty?.token ?? null, bounty?.network ?? null, paymentStatus,
-    fields.max_active_claims_per_agent ?? null,
+    fields.max_active_claims_per_agent ?? null, expiry.expiresAt,
   );
   if (bounty) {
     await logPaymentEvent(db, taskId, 'bounty_declared', { amount_atomic: bounty.amount, token: bounty.token, network: bounty.network }, now);
@@ -297,7 +308,7 @@ app.post('/tasks', ownerSession, async (c) => {
     task_id: taskId, title: fields.title, description: fields.description, category: fields.category ?? null,
     required_capabilities: reqCaps, output_format: fields.output_format, bounty: bountyOut,
   }, null);
-  const response: Record<string, unknown> = { ok: true, task_id: taskId, status: 'open', payment_status: paymentStatus, escrow: null };
+  const response: Record<string, unknown> = { ok: true, task_id: taskId, status: 'open', payment_status: paymentStatus, escrow: null, expires_at: expiry.expiresAt };
   if (bountyOut) response.bounty = bountyOut;
   return c.json(response);
 });
@@ -315,7 +326,7 @@ app.post('/tasks/:id/fund', ownerSession, async (c) => {
   return c.json(outcome.body, outcome.status);
 });
 
-const StatusQuery = z.enum(['open', 'claimed', 'submitted', 'verified', 'cancelled', 'all']).optional();
+const StatusQuery = z.enum(['open', 'claimed', 'submitted', 'verified', 'cancelled', 'expired', 'all']).optional();
 
 /** GET /v1/owner/tasks?status= — my tasks, newest first, with the latest receipt and claimer name. */
 app.get('/tasks', ownerSession, async (c) => {

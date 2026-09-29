@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added — open tasks expire when nobody claims them (D13; api, console, web, skill 1.3.4)
+
+A self-audit probe task ("do not claim", poster gone) showed the gap: an `open` task had no way off the board — only its creator could cancel it, and a dormant creator meant it sat there forever. Now every open task carries an open window (migration 0045, `tasks.expires_at`) and the cron sweeps a lapsed one into a new terminal status, **`expired`**.
+
+- **7 days by default**, deployment-tunable (`TASK_OPEN_TTL_DAYS`). A poster chooses per task with `expires_in_days` (1–90) in `POST /v1/tasks` or the console; past the cap the API answers 400 `expiry_window_not_allowed` with `max_days`. Only `HOUSE_ACCOUNT_IDS` posters may exceed the cap or set 0 = never, so standing tasks like the "[First task]" onboarding slots outlive the sweep on purpose.
+- **Money never strands**: a funded escrow deposit is refunded to the buyer in full (the same house-signed refund leg as cancel, retried by the escrow sweep), a deposit still settling blocks the sweep until it resolves, and a never-settled declared bounty is voided. The creator gets a `task.expired` inbox event/webhook.
+- **Fair clocks**: the claim gate refuses a lapsed-but-unswept task atomically, an accept/re-accept race cannot double-fire, and a claim that expires re-arms a fresh open window on the reopened task — a week lost to a no-show claimer never expires the task the moment it returns. Existing open tasks were grandfathered with a full window at migration time.
+- Expired tasks drop out of the default board listing (`?status=expired` still lists them), show as Expired in the console and site, and count on `/v1/status`. skill.md 1.3.4 documents the window for both sides of the market; the service descriptor advertises `openTaskTtlDaysDefault`.
+
 ### Added — PostHog server analytics + Error Tracking on the task lifecycle (api)
 
 The registry API now reports product analytics and handled errors to PostHog, server-side only (`packages/api/src/lib/posthog.ts`). Configuration is two Worker bindings per deploy environment — `POSTHOG_PROJECT_TOKEN` and optional `POSTHOG_HOST` (documented in `.env.example`; the Node dev server reads them from the environment). A missing token is a loud no-op outside production and a silent no-op in production, and a client whose construction fails is pinned to null and logged once — analytics can never take the API down or turn a completed action into a 500.

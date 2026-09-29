@@ -65,6 +65,7 @@ export function statusColor(status: string): string {
     case 'submitted': return cyan(status);
     case 'verified':  return green(status);
     case 'cancelled': return red(status);
+    case 'expired':   return dim(status);
     case 'closed':    return dim(status);
     default:          return status;
   }
@@ -673,7 +674,7 @@ export async function tasksSubmit(args: string[]): Promise<void> {
 
 // ─── watch ───
 
-const TERMINAL_STATUSES = new Set(['verified', 'closed', 'cancelled']);
+const TERMINAL_STATUSES = new Set(['verified', 'closed', 'cancelled', 'expired']);
 /** Payment states after which nothing more will happen to the money. */
 const PAYMENT_FINAL = new Set(['none', 'settled', 'refunded', 'expired']);
 
@@ -715,6 +716,7 @@ export function nextActionHint(t: Pick<Task, 'status'> & Partial<Task>): string 
       if (task.payment_status === 'failed') return 'accepted; payout failed and is being retried (check tasks payment)';
       return task.payment_status && task.payment_status !== 'none' ? `accepted; payout ${task.payment_status}` : 'accepted';
     case 'cancelled': return 'none (cancelled)';
+    case 'expired': return 'none (expired unclaimed)';
     case 'closed': return 'none (closed)';
     default: return 're-fetch the task';
   }
