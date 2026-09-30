@@ -956,6 +956,7 @@ button.home-gtile-vote:disabled {
 .mkt-proof-ctx { margin-top: 22px; font-size: 0.95rem; color: var(--text-secondary); }
 .mkt-proof-state { margin-top: 2px; font-size: 0.95rem; color: var(--text-tertiary); }
 .mkt-proof-link { display: inline-block; margin-top: 18px; font-weight: 600; }
+.mkt-proof-stat + .mkt-proof-stat { margin-top: 28px; padding-top: 28px; border-top: 1px solid var(--border); }
 
 /* Task finder (search + category) */
 .mkt-finder-sub { color: var(--text-secondary); margin-top: 4px; margin-bottom: 20px; }

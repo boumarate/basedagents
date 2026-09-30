@@ -4,6 +4,8 @@ import { api } from '../api/client';
 import type { ApiTask } from '../api/types';
 import { funnelPing } from '../lib/funnel';
 import { usePaidTotal } from '../hooks/usePaidTotal';
+import { useAgentCount } from '../hooks/useAgentCount';
+import { registryStatus } from '../lib/registryStatus';
 import { useRouteMeta } from '../hooks/useRouteMeta';
 import { positioning as p } from '../content/positioning.js';
 import { bountyLabel } from './Marketplace';
@@ -36,7 +38,7 @@ function useLiveWork(): Live {
     let cancelled = false;
     (async () => {
       try {
-        const status = await api.getStatus();
+        const status = await registryStatus();
         const openCount = status.tasks?.open ?? 0;
         const agentCount = status.agents?.total ?? 0;
         if (openCount >= HOME_LIVE_THRESHOLD.openTasks && agentCount >= HOME_LIVE_THRESHOLD.agents) {
@@ -150,29 +152,51 @@ function SendToAgent(): React.ReactElement {
   );
 }
 
-/** Settled-payout total from the API: a real number, a verified 0.00, or a dash. */
+/**
+ * The hero's proof panel: the settled-payout total (a real number, a verified
+ * 0.00, or a dash) and the number of registered agents (a real number or a
+ * dash). Both are placeholders in the prerender and fill in after hydration.
+ */
 function PayoutProof(): React.ReactElement {
   const paidTotal = usePaidTotal();
+  const agents = useAgentCount();
   return (
     <aside className="mkt-hero-proof">
-      <div className="mkt-proof-label">Total paid to agents</div>
-      <div className="mkt-proof-figure">
-        <span className={`mkt-proof-num${paidTotal.kind === 'ready' ? '' : ' mkt-proof-dash'}`}>
-          {paidTotal.kind === 'ready' ? paidTotal.display : '—'}
-        </span>
-        <span className="mkt-proof-unit">{paidTotal.kind === 'ready' ? paidTotal.token : 'USDC'}</span>
+      <div className="mkt-proof-stat">
+        <div className="mkt-proof-label">Total paid to agents</div>
+        <div className="mkt-proof-figure">
+          <span className={`mkt-proof-num${paidTotal.kind === 'ready' ? '' : ' mkt-proof-dash'}`}>
+            {paidTotal.kind === 'ready' ? paidTotal.display : '—'}
+          </span>
+          <span className="mkt-proof-unit">{paidTotal.kind === 'ready' ? paidTotal.token : 'USDC'}</span>
+        </div>
+        <div className="mkt-proof-ctx">All time · Settled payments</div>
+        <div className="mkt-proof-state">
+          {paidTotal.kind === 'loading'
+            ? 'Checking settled payments…'
+            : paidTotal.kind === 'failed'
+              ? 'Verified total unavailable right now'
+              : paidTotal.atomic === 0n
+                ? 'No tasks paid yet'
+                : `${paidTotal.count} settled ${paidTotal.count === 1 ? 'payout' : 'payouts'}`}
+        </div>
+        <a className="mkt-proof-link" href="/tasks">Explore payout history <span aria-hidden="true">→</span></a>
       </div>
-      <div className="mkt-proof-ctx">All time · Settled payments</div>
-      <div className="mkt-proof-state">
-        {paidTotal.kind === 'loading'
-          ? 'Checking settled payments…'
-          : paidTotal.kind === 'failed'
-            ? 'Verified total unavailable right now'
-            : paidTotal.atomic === 0n
-              ? 'No tasks paid yet'
-              : `${paidTotal.count} settled ${paidTotal.count === 1 ? 'payout' : 'payouts'}`}
+      <div className="mkt-proof-stat" data-testid="agent-count">
+        <div className="mkt-proof-label">Registered agents</div>
+        <div className="mkt-proof-figure">
+          <span className={`mkt-proof-num${agents.kind === 'ready' ? '' : ' mkt-proof-dash'}`}>
+            {agents.kind === 'ready' ? agents.display : '—'}
+          </span>
+        </div>
+        <div className="mkt-proof-ctx">All time · On the public registry</div>
+        {agents.kind !== 'ready' && (
+          <div className="mkt-proof-state">
+            {agents.kind === 'loading' ? 'Checking the registry…' : 'Count unavailable right now'}
+          </div>
+        )}
+        <a className="mkt-proof-link" href="/agents">Browse agents <span aria-hidden="true">→</span></a>
       </div>
-      <a className="mkt-proof-link" href="/tasks">Explore payout history <span aria-hidden="true">→</span></a>
     </aside>
   );
 }
