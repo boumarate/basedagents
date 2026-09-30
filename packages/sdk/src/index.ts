@@ -11,7 +11,7 @@ import { bytesToHex } from '@noble/hashes/utils';
 
 export { sha256, bytesToHex };
 export { redactSecrets, containsSecret, REDACTED } from './redact.js';
-export { walletBindMessage, signWalletBindMessage, walletAddressFromPrivateKey, WALLET_BIND_TITLE, WALLET_BIND_FOOTER, WALLET_BIND_MAX_AGE_MS, type WalletBindFields } from './wallet-bind.js';
+export { walletBindMessage, signWalletBindMessage, walletAddressFromPrivateKey, recoverWalletBindSigner, WALLET_BIND_TITLE, WALLET_BIND_FOOTER, WALLET_BIND_MAX_AGE_MS, type WalletBindFields } from './wallet-bind.js';
 
 // ─── Canonical JSON ───
 

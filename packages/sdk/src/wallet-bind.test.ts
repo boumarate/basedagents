@@ -5,7 +5,7 @@
  * the same ones.
  */
 import { describe, it, expect } from 'vitest';
-import { walletBindMessage, signWalletBindMessage, walletAddressFromPrivateKey } from './wallet-bind.js';
+import { walletBindMessage, signWalletBindMessage, walletAddressFromPrivateKey, recoverWalletBindSigner } from './wallet-bind.js';
 
 const PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const AGENT = 'ag_7Xk9mP2qR8nK4vL3aB5cD6eF7gH8jK9mN2pQ3rS4tU5v';
@@ -39,5 +39,11 @@ describe('wallet bind (D8)', () => {
   it('signs like personal_sign (byte-identical to viem, deterministic)', () => {
     expect(signWalletBindMessage(EXPECTED, PK)).toBe(VIEM_SIG);
     expect(signWalletBindMessage(EXPECTED, PK.slice(2))).toBe(VIEM_SIG);
+  });
+  it('recovers the signer of a plain-key signature; a smart-wallet signature recovers to nothing', () => {
+    const message = EXPECTED;
+    expect(recoverWalletBindSigner(message, signWalletBindMessage(message, PK))).toBe('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266');
+    expect(recoverWalletBindSigner(message + ' ', signWalletBindMessage(message, PK))).not.toBe('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266');
+    expect(recoverWalletBindSigner(message, '0x' + 'cd'.repeat(200))).toBeNull();
   });
 });

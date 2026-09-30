@@ -235,7 +235,7 @@ export function readBindLink(hash: string): { message: string; fields: BindField
 export function bindCommand(fields: BindFields, signature: string): string | null {
   if (!SIGNATURE_RE.test(signature)) return null;
   const network = fields.network !== 'eip155:8453' ? ` --network ${fields.network}` : '';
-  return `basedagents wallet set ${fields.wallet}${network} --signature ${signature}`;
+  return `basedagents wallet set ${fields.wallet}${network} --nonce ${fields.nonce} --signature ${signature}`;
 }
 
 /**

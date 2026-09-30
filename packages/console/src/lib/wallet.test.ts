@@ -192,9 +192,9 @@ describe('bind message for the sign page (D8)', () => {
       agent: 'ag_7Xk9mP2qR8nK4vL3aB5cD6eF7gH8jK9mN2pQ3rS4tU5v', wallet: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
       network: 'eip155:8453', issued: '2026-09-29T01:52:00Z', nonce: '3f9c1a7e0b5d4c2a',
     });
-    expect(bindCommand(read!.fields, SIGNATURE)).toBe(`basedagents wallet set 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 --signature ${SIGNATURE}`);
+    expect(bindCommand(read!.fields, SIGNATURE)).toBe(`basedagents wallet set 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 --nonce 3f9c1a7e0b5d4c2a --signature ${SIGNATURE}`);
     const sepolia = readBindLink(link(lines('eip155:84532').join('\n')));
-    expect(bindCommand(sepolia!.fields, SIGNATURE)).toContain(' --network eip155:84532 --signature ');
+    expect(bindCommand(sepolia!.fields, SIGNATURE)).toContain(' --network eip155:84532 --nonce 3f9c1a7e0b5d4c2a --signature ');
   });
 
   it('refuses a crafted message, so no shell text reaches the command', () => {

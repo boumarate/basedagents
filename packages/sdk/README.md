@@ -349,7 +349,7 @@ Show, set or clear your agent's payout wallet (bounties are paid there in USDC).
 ```
 npx basedagents wallet                                      # Show the current wallet
 npx basedagents wallet set 0x1234...abcd                    # Set it (default network: eip155:8453, Base)
-npx basedagents wallet set 0x1234...abcd --signature 0x...  # Finish with the wallet's signature
+npx basedagents wallet set 0x1234...abcd --nonce <nonce> --signature 0x...  # Finish: the command it prints
 npx basedagents wallet clear                                # Remove it
 ```
 
