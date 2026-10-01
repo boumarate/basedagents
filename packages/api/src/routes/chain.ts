@@ -1,8 +1,18 @@
 import { Hono } from 'hono';
 import type { AppEnv, ChainEntry } from '../types/index.js';
-import { GENESIS_HASH, bytesToHex } from '../crypto/index.js';
+import { GENESIS_HASH, CHAIN_CHECKPOINTS, bytesToHex } from '../crypto/index.js';
 
 const chain = new Hono<AppEnv>();
+
+/**
+ * The public verification contract, served beside the data it governs:
+ * recompute every entry_hash from its public fields, hash-link from the
+ * head down to the highest checkpoint, and take the links at or below a
+ * checkpoint's sequence as attested by the registry (see CHAIN_CHECKPOINTS
+ * in crypto/index.ts for the documented dev-era seam).
+ */
+const VERIFICATION =
+  'Recompute each entry_hash from its public fields — sha256 over length-prefixed (4-byte big-endian) parts [previous_hash, public_key bytes, nonce, profile_hash, timestamp]; the earliest entries use the pre-migration raw concatenation of the same parts — and check previous_hash equals the prior entry_hash from the head down to the highest checkpoint. Links whose sequence is at or below a checkpoint are attested by the registry via `checkpoints` instead of hash linkage.';
 
 /**
  * Format a chain entry row for API response.
@@ -43,10 +53,12 @@ chain.get('/latest', async (c) => {
       sequence: 0,
       entry_hash: GENESIS_HASH,
       message: 'Chain is empty — genesis state',
+      checkpoints: CHAIN_CHECKPOINTS,
+      verification: VERIFICATION,
     });
   }
 
-  return c.json(formatChainEntry(latest));
+  return c.json({ ...formatChainEntry(latest), checkpoints: CHAIN_CHECKPOINTS, verification: VERIFICATION });
 });
 
 /**
@@ -70,6 +82,8 @@ chain.get('/', async (c) => {
     return c.json({
       entries: entries.map(formatChainEntry),
       total: countRow?.count ?? 0,
+      checkpoints: CHAIN_CHECKPOINTS,
+      verification: VERIFICATION,
     });
   }
 
@@ -93,6 +107,8 @@ chain.get('/', async (c) => {
     entries: entries.map(formatChainEntry),
     from,
     to: cappedTo,
+    checkpoints: CHAIN_CHECKPOINTS,
+    verification: VERIFICATION,
   });
 });
 

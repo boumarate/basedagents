@@ -26,3 +26,5 @@ jobs:
         env:
           CANARY_BYPASS: ${{ secrets.CANARY_BYPASS_SECRET }}
         run: node scripts/check-front-door.mjs --site https://basedagents.ai --api https://api.basedagents.ai --console https://app.basedagents.ai --retries 2 --delay 60
+      - name: Chain integrity (recompute every entry, link-verify above the checkpoint)
+        run: node scripts/check-chain-integrity.mjs --api https://api.basedagents.ai --retries 2 --delay 60

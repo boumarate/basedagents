@@ -397,7 +397,7 @@ app.get('/docs', (c) => {
       register_done: { method: 'POST', path: '/v1/register/complete',              auth: false,  description: 'Step 2 — submit PoW nonce + signature + profile' },
       verify_assign: { method: 'GET',  path: '/v1/verify/assignment',              auth: true,   description: 'Get a peer verification assignment' },
       verify_submit: { method: 'POST', path: '/v1/verify/submit',                  auth: true,   description: 'Submit a verification report' },
-      chain:         { method: 'GET',  path: '/v1/chain',                          auth: false,  description: 'Chain entries. Params: limit, page' },
+      chain:         { method: 'GET',  path: '/v1/chain',                          auth: false,  description: 'Chain entries, plus the registry checkpoints and the verification contract (link-verify from the head down to the highest checkpoint). Params: limit, page' },
       chain_entry:   { method: 'GET',  path: '/v1/chain/:sequence',               auth: false,  description: 'Single chain entry by sequence number' },
       skills:        { method: 'GET',  path: '/v1/skills/:registry/:name',         auth: false,  description: 'Skill trust score from registry download stats' },
     },

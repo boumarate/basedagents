@@ -25,6 +25,7 @@ import eventRoutes from './routes/events.js';
 import boardRoutes from './routes/board.js';
 import feedRoutes from './routes/feed.js';
 import taskRoutes from './routes/tasks.js';
+import chainRoutes from './routes/chain.js';
 import claimBondRoutes from './routes/claim-bond.js';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { freshBindMessage, personalMessageDigest } from './wallets/bind.js';
@@ -340,6 +341,7 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
   app.route('/v1/board', boardRoutes);
   app.route('/v1/board', feedRoutes);
   app.route('/v1/tasks', taskRoutes);
+  app.route('/v1/chain', chainRoutes);
 
   return app;
 }

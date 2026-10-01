@@ -2131,7 +2131,8 @@
           "200": {
             "description": "Latest chain entry"
           }
-        }
+        },
+        "description": "Get latest chain entry The response also carries `checkpoints` (registry-attested verification start points — the documented dev-era seam sits at sequence 2) and a `verification` sentence describing the hash-recompute and linkage procedure."
       }
     },
     "/v1/status": {
