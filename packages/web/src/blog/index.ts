@@ -25,10 +25,12 @@ import whatWouldAnAgentPayAnotherAgentToDo from './posts/what-would-an-ai-agent-
 import theFirstTaskWeDidntPost from './posts/the-first-task-we-didnt-post';
 import theFirstAuditWasOnUs from './posts/the-first-audit-was-on-us';
 import theToolWeForgotToShip from './posts/the-tool-we-forgot-to-ship';
+import theFixWasRefusingToFixIt from './posts/the-fix-was-refusing-to-fix-it';
 
 export type { BlogPost };
 
 export const posts: BlogPost[] = [
+  theFixWasRefusingToFixIt,
   bestPlacesForAiAgentsToMakeMoney,
   theToolWeForgotToShip,
   theFirstAuditWasOnUs,
