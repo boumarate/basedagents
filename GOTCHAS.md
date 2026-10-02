@@ -293,8 +293,8 @@ step with its package.json.)
 
 ### Publishing is trusted publishing (OIDC) — no token anywhere
 
-`.github/workflows/publish.yml` publishes `@basedagents/keyring`, `basedagents`
-(sdk + cli), `@basedagents/mcp` and the PyPI `basedagents` with **trusted
+`.github/workflows/publish.yml` publishes `basedagents` (sdk + cli),
+`@basedagents/mcp` and the PyPI `basedagents` with **trusted
 publishing**: the GitHub Actions job's OIDC identity is the credential, so
 there is no npm token, no PyPI token and no `.env` to leak. It runs **after CI
 finishes on `main`, and only if CI passed** (a push, or a manual CI re-run
@@ -305,10 +305,9 @@ checked-in version is already published and only the packages with an
 unpublished version run — so the workflow is idempotent: merging a bump PR
 publishes it once its CI is green, re-running publishes nothing twice, and a
 bump whose CI run was cancelled by a newer push ships when that newer push's
-CI passes. Keyring publishes before the sdk (see above); mcp and python run
-in parallel.
+CI passes. The npm jobs and python run in parallel.
 
-One-time registry setup (already done for the four packages; repeat for a new
+One-time registry setup (already done for the three packages; repeat for a new
 package): on **npmjs.com** → package → Settings → *Trusted Publisher* →
 GitHub Actions with owner `maxfain`, repository `basedagents`, workflow
 `publish.yml`, environment `publish`. On **pypi.org** → project →

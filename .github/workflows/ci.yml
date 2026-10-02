@@ -81,11 +81,6 @@ jobs:
             exit 1
           }
 
-      # The MCP server ships a vendored (esbuild-bundled) stdio slice of the
-      # MCP SDK. Unit tests exercise src against the devDependency, so drive
-      # the BUILT server over real stdio to prove the bundle actually runs.
-      - name: MCP stdio smoke (vendored SDK bundle)
-        run: npm run smoke:mcp --workspace=packages/keyring
 
   smoke:
     name: Clean-container smoke (packed npx install)
