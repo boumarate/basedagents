@@ -8,6 +8,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Removed — Keyring is being retired; step 1: the sdk no longer bundles it
+
+The credential vault never found users while the task marketplace did, so
+Keyring is being removed from the repo in stages. This step decouples the
+published `basedagents` package (**0.10.0**):
+
+- `basedagents` no longer depends on `@basedagents/keyring` — an install of the
+  sdk/CLI no longer pulls in undici and playwright-core through it.
+- `basedagents keyring …` prints a retirement notice and exits 1 instead of
+  forwarding to the vault CLI (agents run cached commands for months; a
+  signpost beats a 404). `npx @basedagents/keyring` still runs the standalone
+  package, which is deprecated on npm.
+- `basedagents register` now hands off to the task board (set a wallet, find
+  open tasks) instead of "set up key custody".
+- The clean-container smoke test packs and drives the sdk alone.
+
 ### Added — Circle agent wallets work as payout wallets (api, sdk 0.9.6, skill 1.3.7)
 
 Circle agent wallets are smart-contract wallets on Base that aren't deployed until their first transaction, so their signature is wrapped per ERC-6492. The wallet proof (D8) used to refuse those with `undeployed_smart_wallet`.

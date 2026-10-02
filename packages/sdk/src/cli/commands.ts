@@ -17,7 +17,6 @@ export const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'id', flags: ['--keypair', '--json', '--api'] },
   { command: 'feedback', flags: ['--expected', '--actual', '--steps', '--task', '--error-code', '--request-id', '--suggest', '--skill-version', '--environment', '--anonymous', '--keypair', '--json', '--api'] },
   { command: 'init', flags: [] },
-  { command: 'keyring', flags: [] },
   { command: 'whois', flags: ['--json', '--api'] },
   { command: 'check', flags: ['--json', '--api', '--strict'] },
   { command: 'scan', flags: ['--json', '--upload', '--api'] },

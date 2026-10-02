@@ -308,11 +308,10 @@ Your agents already have identities. Keyring is what those identities are truste
 **Set it up (the canonical command, and its equivalent alias):**
 
 ```bash
-npx basedagents keyring init      # canonical — subcommand of the basedagents CLI
-npx @basedagents/keyring init     # equivalent alias — the keyring package's own bin
+npx @basedagents/keyring init     # the keyring package's own bin
 ```
 
-Both do the same thing; agents running either (from cached docs) succeed. Power-user commands via the `based` CLI (bundled with the keyring package):
+Power-user commands via the `based` CLI (bundled with the keyring package):
 
 ```bash
 based add "Supabase service-role key (acme-prod)"                      # paste a secret (sealed on entry)
@@ -322,7 +321,7 @@ based run --agent ci-bot -- npm run deploy                             # leases 
 based doctor                                                          # sweep for ambient access outside Keyring
 ```
 
-MCP: `npx basedagents keyring mcp` (or `npx @basedagents/keyring mcp`) gives Claude Code, Claude Desktop, and Cursor identity-bound access. Primary tools: `keyring_run` (run a command with secrets injected into its environment) and `keyring_render` (fill `{{keyring:REF}}` placeholders) — the secret never reaches the model. Plus `keyring_list`, `keyring_request`, `invite_owner`. `keyring_lease` (raw value into the transcript) is off unless the owner sets `unsafe_value_release` on the grant.
+MCP: `npx @basedagents/keyring mcp` gives Claude Code, Claude Desktop, and Cursor identity-bound access. Primary tools: `keyring_run` (run a command with secrets injected into its environment) and `keyring_render` (fill `{{keyring:REF}}` placeholders) — the secret never reaches the model. Plus `keyring_list`, `keyring_request`, `invite_owner`. `keyring_lease` (raw value into the transcript) is off unless the owner sets `unsafe_value_release` on the grant.
 
 Revoking a grant is instant on the vault side — no new leases, sealed copy deleted, outstanding leases dead within 15 minutes. Rotating the key at the provider stays manual until the Provisioner ships.
 
