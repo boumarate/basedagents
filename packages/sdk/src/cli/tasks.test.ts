@@ -486,6 +486,29 @@ describe('tasks dispute', () => {
     await expectExit(tasksDispute(auth(['task_1'])), 1);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('sends an optional --rating and --rating-comment', async () => {
+    fetchMock.mockResolvedValueOnce(mockResponse({ ok: true, task_id: 'task_1', status: 'submitted', review_state: 'disputed', disputed_at: '2026-01-01T00:00:00Z', payment_status: 'none', rating: 2 }));
+    await tasksDispute(auth(['task_1', '--reason', 'Incomplete', '--rating', '2', '--rating-comment', 'Half done']));
+    expect(JSON.parse(requestOf().init.body as string)).toEqual({ reason: 'Incomplete', rating: 2, rating_comment: 'Half done' });
+    expect(plain(stdout())).toContain('2/5');
+  });
+});
+
+describe('tasks accept --rating', () => {
+  it('sends the rating with the note and prints it', async () => {
+    fetchMock.mockResolvedValueOnce(mockResponse({ ok: true, task_id: 'task_1', status: 'verified', accepted_by: 'creator', payment_status: 'none', rating: 5 }));
+    await tasksAccept(auth(['task_1', '--note', 'Thanks', '--rating', '5']));
+    expect(JSON.parse(requestOf().init.body as string)).toEqual({ note: 'Thanks', rating: 5 });
+    expect(plain(stdout())).toContain('5/5');
+  });
+
+  it('exits 1 before any request on a rating outside 1-5, or a comment without a rating', async () => {
+    for (const bad of [['--rating', '0'], ['--rating', '6'], ['--rating', '4.5'], ['--rating', 'five'], ['--rating-comment', 'no score']]) {
+      await expectExit(tasksAccept(auth(['task_1', ...bad])), 1);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('tasks cancel', () => {

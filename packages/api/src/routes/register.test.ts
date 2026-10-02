@@ -168,7 +168,7 @@ describe('POST /v1/register/complete', () => {
     expect(completeRes.status).toBe(201);
     const data = await completeRes.json() as Record<string, unknown>;
     expect(data.agent_id).toBeDefined();
-    expect(data.status).toBe('active'); // Bootstrap mode: auto-activated when < 100 agents
+    expect(data.status).toBe('active'); // every registration is active
     expect(data.chain_sequence).toBeDefined();
     expect(data.entry_hash).toBeDefined();
   });
@@ -286,7 +286,7 @@ describe('POST /v1/register/complete', () => {
     expect((data.embed_html as string)).toContain(data.profile_url as string);
   });
 
-  it('after 100 agents, registration without contact_endpoint returns 400', async () => {
+  it('with 100+ active agents, registration without contact_endpoint is still active (no bootstrap threshold)', async () => {
     // Insert 100 active agents directly into the database
     for (let i = 0; i < 100; i++) {
       const pk = utils.randomPrivateKey();
@@ -299,11 +299,15 @@ describe('POST /v1/register/complete', () => {
       );
     }
 
-    // Now try to register without contact_endpoint — should fail
+    // Registering without contact_endpoint still succeeds, active, with no
+    // pending state or first-verification assignment.
     const { completeRes } = await doFullRegistration(app, { name: 'NoEndpointAgent' });
-    expect(completeRes.status).toBe(400);
-    const data = await completeRes.json() as { message: string };
-    expect(data.message).toContain('contact_endpoint');
+    expect(completeRes.status).toBe(201);
+    const data = await completeRes.json() as Record<string, unknown>;
+    expect(data.status).toBe('active');
+    expect(data.message).toBe('Registration complete. Agent is active.');
+    expect(data).not.toHaveProperty('bootstrap_mode');
+    expect(data).not.toHaveProperty('first_verification');
   });
 
   it('duplicate name → 409', async () => {

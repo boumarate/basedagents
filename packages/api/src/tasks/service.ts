@@ -23,6 +23,7 @@ import type { PaymentStatus, TaskStatus } from '../types/index.js';
 import { computeChainHash, GENESIS_HASH, sha256, bytesToHex, canonicalJsonStringify } from '../crypto/index.js';
 import { fireWebhook, type WebhookEvent } from '../lib/webhooks.js';
 import { gateWithEvent, recordEvent } from '../events/service.js';
+import { claimBudget, claimGovernanceConfig, claimWindowMsForBounty } from './governance.js';
 import { computeReputation } from '../reputation/calculator.js';
 import { generatePublicId } from '../lib/ids.js';
 import { atomicToDisplay } from '../payments/x402.js';
@@ -74,6 +75,18 @@ export interface TaskRow {
   auto_release_at: string | null;
   /** Claim-delivery timer: a `claimed` task past this returns to `open` (cron). Cleared on delivery/cancel. */
   claim_expires_at: string | null;
+  /** Campaign cap (migration 0044): max claimed+submitted per agent across this poster's tasks; NULL = uncapped. */
+  max_active_claims_per_agent: number | null;
+  /** Open window (0047, decision D13): an `open` task past this expires (cron). NULL = never (house standing tasks). */
+  expires_at: string | null;
+  expired_at: string | null;
+  // ─── Optional rating (0045, decision D11) — public, see recordRating ───
+  /** 1–5, given by the poster when accepting or disputing; NULL = not rated. */
+  rating: number | null;
+  rating_comment: string | null;
+  /** Which judgment the rating belongs to. */
+  rating_context: 'accept' | 'dispute' | null;
+  rated_at: string | null;
   settle_attempts: number;
   settle_broadcast: number;
   settle_started_at: string | null;
@@ -112,6 +125,48 @@ export interface TaskRow {
  */
 export type EscrowStatus = 'funding' | 'unfunded' | 'funded' | 'releasing' | 'released' | 'refunding' | 'refunded';
 export type EscrowLeg = 'deposit' | 'release' | 'refund';
+
+// ─── Restricted tasks (task_claim_allowlist, 0042) ───
+//
+// A task that has rows in task_claim_allowlist is claimable only by a listed
+// agent. Generic marketplace feature: any creator-side policy can populate the
+// table; tasks with no rows behave exactly as before. The check lives INSIDE
+// the atomic claim UPDATE, so eligibility is re-verified at the claim boundary,
+// not just at read time. Deploys without the table (pre-0042) skip the
+// fragment via the same lazy per-isolate probe pattern as certification.
+
+let allowlistPresent: boolean | null = null;
+
+export async function claimAllowlistTablePresent(db: DBAdapter): Promise<boolean> {
+  if (allowlistPresent !== null) return allowlistPresent;
+  const row = await db.get<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_claim_allowlist'`,
+  );
+  allowlistPresent = row !== null;
+  return allowlistPresent;
+}
+
+/** Test-only: reset the per-isolate probe (fresh in-memory DBs per test). */
+export function resetClaimAllowlistProbeForTests(): void {
+  allowlistPresent = null;
+}
+
+/**
+ * Whether `agentId` may claim `taskId` under the allowlist: true when the
+ * task is unrestricted (no rows) or the agent is listed. Read-side helper for
+ * friendly route errors — the authoritative check is inside claimGate.
+ */
+export async function claimAllowedFor(db: DBAdapter, taskId: string, agentId: string): Promise<boolean> {
+  if (!(await claimAllowlistTablePresent(db))) return true;
+  const restricted = await db.get<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM task_claim_allowlist WHERE task_id = ?', taskId,
+  );
+  if (!restricted || restricted.n === 0) return true;
+  const listed = await db.get<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM task_claim_allowlist WHERE task_id = ? AND agent_id = ?', taskId, agentId,
+  );
+  return (listed?.n ?? 0) > 0;
+}
 
 /** Buyer review window: a delivered task is auto-accepted after this long (N3). */
 export const REVIEW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -337,9 +392,14 @@ export function escrowView(t: TaskRow): EscrowView | null {
   };
 }
 
-/** An open task an agent may claim right now: an escrow task only once its deposit has settled. */
-export function claimable(t: Pick<TaskRow, 'status' | 'escrow' | 'escrow_status'>): boolean {
-  return t.status === 'open' && (!t.escrow || t.escrow_status === 'funded');
+/**
+ * An open task an agent may claim right now: an escrow task only once its
+ * deposit has settled, and never past its open window (the claim gate refuses
+ * a lapsed task before the sweep marks it, so the shown value must agree).
+ */
+export function claimable(t: Pick<TaskRow, 'status' | 'escrow' | 'escrow_status'> & { expires_at?: string | null }): boolean {
+  return t.status === 'open' && (!t.escrow || t.escrow_status === 'funded')
+    && (!t.expires_at || t.expires_at > new Date().toISOString());
 }
 
 /** The public shape of a task row: internals stripped, derived fields added. */
@@ -418,14 +478,63 @@ export function paymentView(t: TaskRow): Record<string, unknown> {
 /** A recipient agent id + the event to drop in its inbox atomically with the gate. */
 export interface GateNotify { recipientAgentId: string | null; event: WebhookEvent | null }
 
-/** T2: open → claimed. The creator can never claim their own task. Arms the claim-delivery timer. */
-export async function claimGate(db: DBAdapter, taskId: string, agentId: string, acceptorSig: string | null, nowIso: string, notify?: GateNotify): Promise<boolean> {
+/**
+ * T2: open → claimed. The creator can never claim their own task. Arms the
+ * claim-delivery timer. When the task is restricted (task_claim_allowlist has
+ * rows for it), only a listed agent wins the gate — checked inside the same
+ * atomic UPDATE so a revoked listing loses the race, not just the pre-read.
+ */
+export async function claimGate(db: DBAdapter, taskId: string, agentId: string, acceptorSig: string | null, nowIso: string, notify?: GateNotify, env?: unknown): Promise<boolean> {
+  const restrictable = await claimAllowlistTablePresent(db);
+  const allowlistPredicate = restrictable
+    ? ` AND (NOT EXISTS (SELECT 1 FROM task_claim_allowlist w WHERE w.task_id = tasks.task_id)
+         OR EXISTS (SELECT 1 FROM task_claim_allowlist w WHERE w.task_id = tasks.task_id AND w.agent_id = ?))`
+    : '';
+  // Claim governance (migration 0044): the window scales with the bounty (a
+  // $0.10 task is not lockable for a week), the agent's GLOBAL budget bounds
+  // how many 'claimed' tasks they hold at once, and the poster's per-campaign
+  // cap bounds claimed+submitted across THIS creator's tasks. The counts run
+  // inside this single UPDATE, so racing claims cannot both squeeze under a
+  // cap. The budget VALUE is read just before — a stale read only ever errs
+  // by the one in-flight reputational event, never by concurrent claims.
+  const task = await db.get<{ bounty_amount: string | null }>(
+    'SELECT bounty_amount FROM tasks WHERE task_id = ?', taskId,
+  );
+  const budget = (await claimBudget(db, env, agentId)).budget;
+  const budgetPredicate =
+    ` AND (SELECT COUNT(*) FROM tasks b WHERE b.claimed_by_agent_id = ? AND b.status = 'claimed') < ?`;
+  const campaignPredicate =
+    ` AND (tasks.max_active_claims_per_agent IS NULL OR (
+         SELECT COUNT(*) FROM tasks p WHERE p.claimed_by_agent_id = ?
+           AND p.status IN ('claimed','submitted')
+           AND ((tasks.creator_agent_id IS NOT NULL AND p.creator_agent_id = tasks.creator_agent_id)
+             OR (tasks.creator_owner_id IS NOT NULL AND p.creator_owner_id = tasks.creator_owner_id))
+       ) < tasks.max_active_claims_per_agent)`;
+  // Capital at risk for BOUNTY claims: one bonded bondPerSlotAtomic backs one
+  // concurrent bounty claim, occupied through claimed AND submitted (so a
+  // junk-submit does not free the slot — only acceptance or resolution does).
+  // Applied only when THIS task pays a bounty; free tasks stay bond-free.
+  // Counted inside the same atomic UPDATE for the same race-safety reasons.
+  const cfg = claimGovernanceConfig(env);
+  const targetHasBounty = !!task?.bounty_amount && /^[0-9]{1,15}$/.test(task.bounty_amount) && Number(task.bounty_amount) > 0;
+  const bondPredicate = cfg.bondRequiredForBounty && targetHasBounty
+    ? ` AND ((SELECT COUNT(*) FROM tasks bb WHERE bb.claimed_by_agent_id = ?
+           AND bb.status IN ('claimed','submitted')
+           AND bb.bounty_amount IS NOT NULL AND CAST(bb.bounty_amount AS INTEGER) > 0)
+         < (CAST(COALESCE((SELECT balance_atomic FROM agent_claim_bonds WHERE agent_id = ?), '0') AS INTEGER) / CAST(? AS INTEGER)))`
+    : '';
+  const expiresAt = isoPlus(nowIso, claimWindowMsForBounty(task?.bounty_amount ?? null));
+  const params: unknown[] = [agentId, nowIso, expiresAt, acceptorSig, taskId, agentId, nowIso];
+  if (restrictable) params.push(agentId);
+  params.push(agentId, budget, agentId);
+  if (bondPredicate) params.push(agentId, agentId, cfg.bondPerSlotAtomic);
   return gateWithEvent(db, {
     sql: `UPDATE tasks SET claimed_by_agent_id = ?, status = 'claimed', claimed_at = ?, claim_expires_at = ?, acceptor_signature = ?
      WHERE task_id = ? AND status = 'open' AND claimed_by_agent_id IS NULL
        AND (creator_agent_id IS NULL OR creator_agent_id <> ?)
-       AND (escrow = 0 OR escrow_status = 'funded')`,
-    params: [agentId, nowIso, isoPlus(nowIso, CLAIM_WINDOW_MS), acceptorSig, taskId, agentId],
+       AND (escrow = 0 OR escrow_status = 'funded')
+       AND (expires_at IS NULL OR expires_at > ?)${allowlistPredicate}${budgetPredicate}${campaignPredicate}${bondPredicate}`,
+    params,
   }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
 }
 
@@ -466,23 +575,92 @@ export async function autoAcceptGate(db: DBAdapter, taskId: string, nowIso: stri
   return res.changes === 1;
 }
 
-/** T6: submitted → claimed (request changes), capped at MAX_REVISIONS. Re-arms the claim timer for the re-delivery. */
+/**
+ * T6: submitted → claimed (request changes), capped at MAX_REVISIONS. Re-arms the claim timer for the re-delivery.
+ * Asking for changes withdraws a dispute, and with it any rating given at dispute time (a submitted task has no other).
+ */
 export async function revisionGate(db: DBAdapter, taskId: string, note: string, nowIso: string, notify?: GateNotify): Promise<boolean> {
   return gateWithEvent(db, {
     sql: `UPDATE tasks SET status = 'claimed', review_note = ?, revision_count = revision_count + 1,
-       revision_requested_at = ?, auto_release_at = NULL, claim_expires_at = ?, disputed_at = NULL
+       revision_requested_at = ?, auto_release_at = NULL, claim_expires_at = ?, disputed_at = NULL,
+       rating = NULL, rating_comment = NULL, rating_context = NULL, rated_at = NULL
      WHERE task_id = ? AND status = 'submitted' AND revision_count < ?`,
     params: [note, nowIso, isoPlus(nowIso, CLAIM_WINDOW_MS), taskId, MAX_REVISIONS],
   }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
 }
 
-/** T7: dispute flag on a submitted task; freezes auto-accept, touches no payment column. */
-export async function disputeGate(db: DBAdapter, taskId: string, reason: string, nowIso: string, notify?: GateNotify): Promise<boolean> {
+/**
+ * T7: dispute flag on a submitted task; freezes auto-accept, touches no payment column.
+ * D11: a rating given with the dispute is written by the same UPDATE, so it can't
+ * land after a concurrent revision request has withdrawn the dispute.
+ */
+export async function disputeGate(
+  db: DBAdapter, taskId: string, reason: string, nowIso: string, notify?: GateNotify, rating?: RatingInput | null,
+): Promise<boolean> {
+  const rated = rating
+    ? { sql: `, rating = ?, rating_comment = ?, rating_context = 'dispute', rated_at = ?`, params: [rating.rating, rating.comment, nowIso] }
+    : { sql: '', params: [] };
   return gateWithEvent(db, {
-    sql: `UPDATE tasks SET disputed_at = ?, review_note = ?, auto_release_at = NULL
+    sql: `UPDATE tasks SET disputed_at = ?, review_note = ?, auto_release_at = NULL${rated.sql}
      WHERE task_id = ? AND status = 'submitted' AND disputed_at IS NULL`,
-    params: [nowIso, reason, taskId],
+    params: [nowIso, reason, ...rated.params, taskId],
   }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
+}
+
+/** D11: the poster's optional rating of a delivery. Validated by the routes (integer 1–5, comment ≤ 500 chars). */
+export interface RatingInput {
+  rating: number;
+  comment: string | null;
+}
+
+const RATING_NOT_SAVED = "The accept went through, but the rating wasn't saved. Send it again with a repeat accept.";
+const RATING_NOT_CLEARED = 'The accept went through, but a rating given with the dispute may still show. Accept again to remove it.';
+
+/**
+ * After the creator accepts: a rating sent with the accept is stored; an
+ * accept without one clears a rating left at dispute time (the dispute is
+ * over). A rating given at an earlier accept stays. Ratings are public, like
+ * `review_note`, and the agent profile averages them. Called only from the
+ * creator's accept routes, never from the auto-accept timer.
+ *
+ * Never throws: the accept has already happened (and may have paid), so a
+ * failed rating write is logged and reported instead of turning a completed
+ * accept into an error. Returns the response fields: `{ rating }` when the
+ * rating was stored, `{ rating_saved: false, rating_error }` when the rating
+ * sent wasn't stored or a dispute-time rating couldn't be removed.
+ */
+export async function settleRatingAfterAccept(
+  db: DBAdapter, taskId: string, input: RatingInput | null, nowIso: string,
+): Promise<Record<string, unknown>> {
+  try {
+    if (!input) {
+      await db.run(
+        `UPDATE tasks SET rating = NULL, rating_comment = NULL, rating_context = NULL, rated_at = NULL
+         WHERE task_id = ? AND status = 'verified' AND rating_context = 'dispute'`,
+        taskId,
+      );
+      return {};
+    }
+    const res = await db.run(
+      `UPDATE tasks SET rating = ?, rating_comment = ?, rating_context = 'accept', rated_at = ?
+       WHERE task_id = ? AND status = 'verified'`,
+      input.rating, input.comment, nowIso, taskId,
+    );
+    if (res.changes === 1) return { rating: input.rating };
+  } catch (err) {
+    console.error(`[tasks] rating write failed for ${taskId} after the accept:`, err);
+  }
+  return { rating_saved: false, rating_error: input ? RATING_NOT_SAVED : RATING_NOT_CLEARED };
+}
+
+/** Ratings an agent received on tasks it delivered: `{ count, average }` (average to one decimal; null when unrated). */
+export async function ratingSummary(db: DBAdapter, agentId: string): Promise<{ count: number; average: number | null }> {
+  const row = await db.get<{ n: number; avg: number | null }>(
+    'SELECT COUNT(rating) AS n, AVG(rating) AS avg FROM tasks WHERE claimed_by_agent_id = ? AND rating IS NOT NULL',
+    agentId,
+  );
+  const count = row?.n ?? 0;
+  return { count, average: count && row?.avg != null ? Math.round(row.avg * 10) / 10 : null };
 }
 
 /**
@@ -519,16 +697,46 @@ export async function cancelGate(db: DBAdapter, taskId: string, nowIso: string, 
  * counters so the next claimer starts fresh). Never touches payment columns —
  * nothing is authorized at claim time, so a bounty stays `pending`. The timer is
  * part of the predicate so a delivery made after the cron's SELECT is not clobbered.
+ *
+ * `newOpenExpiresAt` re-arms the OPEN window (0047): a week spent claimed by a
+ * no-show must not expire the task the moment it returns. A NULL window
+ * (never-expiring house task, or a pre-0047 row) stays NULL.
  */
-export async function claimExpiryGate(db: DBAdapter, taskId: string, nowIso: string): Promise<boolean> {
+export async function claimExpiryGate(db: DBAdapter, taskId: string, nowIso: string, newOpenExpiresAt: string): Promise<boolean> {
   const res = await db.run(
     `UPDATE tasks SET status = 'open', claimed_by_agent_id = NULL, claimed_at = NULL, acceptor_signature = NULL,
-       claim_expires_at = NULL, revision_count = 0, review_note = NULL, revision_requested_at = NULL
+       claim_expires_at = NULL, revision_count = 0, review_note = NULL, revision_requested_at = NULL,
+       expires_at = CASE WHEN expires_at IS NULL THEN NULL ELSE ? END
      WHERE task_id = ? AND status = 'claimed'
        AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?`,
-    taskId, nowIso,
+    newOpenExpiresAt, taskId, nowIso,
   );
   return res.changes === 1;
+}
+
+/**
+ * T10 (0047): open → expired when nobody claimed within the open window
+ * (cron). Money handling mirrors cancelGate: a FUNDED escrow keeps its
+ * payment columns (the caller starts the refund leg), a deposit that was
+ * broadcast and is still moving in blocks the sweep until it resolves, a
+ * broadcast-less funding deposit is voided (`unfunded`), and a never-settled
+ * declared bounty is voided (payment_status `expired`). The window is part of
+ * the predicate so a claim racing the sweep wins cleanly.
+ */
+export async function openExpiryGate(db: DBAdapter, taskId: string, nowIso: string, notify?: GateNotify): Promise<boolean> {
+  return gateWithEvent(db, {
+    sql: `UPDATE tasks SET status = 'expired', expired_at = ?,
+       payment_status = CASE
+         WHEN escrow = 1 AND escrow_status = 'funded' THEN payment_status
+         WHEN payment_status IN ('pending','failed','expired') THEN 'expired' ELSE payment_status END,
+       escrow_status = CASE WHEN escrow = 1 AND escrow_status = 'funding' THEN 'unfunded' ELSE escrow_status END,
+       settle_next_at = CASE WHEN escrow = 1 AND escrow_status = 'funding' THEN NULL ELSE settle_next_at END
+     WHERE task_id = ? AND status = 'open'
+       AND expires_at IS NOT NULL AND expires_at <= ?
+       AND payment_status NOT IN ('authorized','settling','settled')
+       AND NOT (escrow = 1 AND escrow_status = 'funding' AND settle_broadcast = 1)`,
+    params: [nowIso, taskId, nowIso],
+  }, notify?.recipientAgentId ?? null, notify?.event ?? null, nowIso);
 }
 
 /** Why a cancel would be refused, from the row the route read (maps to 409 codes). */
@@ -536,7 +744,7 @@ export function cancelRefusal(
   t: Pick<TaskRow, 'status' | 'disputed_at' | 'payment_status' | 'escrow' | 'escrow_status' | 'settle_broadcast'>,
 ): 'already_accepted' | 'dispute_first' | 'payment_in_flight' | 'conflict' | null {
   if (t.status === 'verified') return 'already_accepted';
-  if (t.status === 'cancelled' || t.status === 'closed') return 'conflict';
+  if (t.status === 'cancelled' || t.status === 'closed' || t.status === 'expired') return 'conflict';
   if (t.escrow) {
     // A funded deposit is refundable; one still moving in is not cancellable until it resolves.
     if (t.escrow_status === 'funding' && (['authorized', 'settling'].includes(t.payment_status) || t.settle_broadcast === 1)) return 'payment_in_flight';

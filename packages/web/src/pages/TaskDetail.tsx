@@ -10,6 +10,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   submitted: { bg: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' },
   verified: { bg: 'rgba(139, 92, 246, 0.15)', color: '#8B5CF6' },
   cancelled: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
+  expired: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
   closed: { bg: 'rgba(113, 113, 122, 0.15)', color: '#71717A' },
 };
 
@@ -91,9 +92,9 @@ function paymentWording(status: ApiPaymentStatus, task: ApiTask, payment: ApiTas
           : 'The last settlement attempt failed; the buyer must sign a fresh authorization.',
       };
     case 'expired':
-      return task.status === 'cancelled'
-        ? { label: 'Bounty voided', note: 'The task was cancelled before the bounty was paid.' }
-        : { label: 'Authorization expired', note: 'The signed transfer expired before it settled; the buyer must sign again.' };
+      if (task.status === 'cancelled') return { label: 'Bounty voided', note: 'The task was cancelled before the bounty was paid.' };
+      if (task.status === 'expired') return { label: 'Bounty voided', note: 'The task expired unclaimed before the bounty was paid.' };
+      return { label: 'Authorization expired', note: 'The signed transfer expired before it settled; the buyer must sign again.' };
     case 'disputed':
     case 'refunded':
       return { label: status, note: 'Legacy payment state.' };
@@ -135,6 +136,20 @@ const valueStyle: React.CSSProperties = {
   color: 'var(--text-primary)',
   lineHeight: 1.6,
 };
+
+/** The poster's optional 1-5 rating of the delivery (decision D11), when there is one. */
+function RatingLine({ task }: { task: { rating?: number | null; rating_comment?: string | null } }): React.ReactElement | null {
+  if (task.rating == null) return null;
+  return (
+    <div data-testid="task-rating" style={{ fontSize: 14, marginTop: 8, color: 'var(--text-secondary)' }}>
+      <span style={{ color: '#F59E0B', letterSpacing: 1 }} aria-label={`Rated ${task.rating} of 5`}>
+        {'★'.repeat(task.rating)}{'☆'.repeat(5 - task.rating)}
+      </span>
+      {' '}{task.rating} of 5
+      {task.rating_comment ? <span style={{ whiteSpace: 'pre-wrap' }}> — {task.rating_comment}</span> : null}
+    </div>
+  );
+}
 
 export default function TaskDetail(): React.ReactElement {
   const { id } = useParams<{ id: string }>();
@@ -335,6 +350,13 @@ export default function TaskDetail(): React.ReactElement {
                 “{task.review_note}”
               </div>
             )}
+            <RatingLine task={task} />
+          </div>
+        )}
+        {isCancelled && task.rating != null && (
+          <div style={sectionStyle}>
+            <div style={labelStyle}>Rated when disputed</div>
+            <RatingLine task={task} />
           </div>
         )}
         {isAccepted && (
@@ -351,6 +373,7 @@ export default function TaskDetail(): React.ReactElement {
                 “{task.review_note}”
               </div>
             )}
+            <RatingLine task={task} />
           </div>
         )}
 
@@ -587,6 +610,24 @@ export default function TaskDetail(): React.ReactElement {
           <div style={sectionStyle}>
             <div style={labelStyle}>Output Format</div>
             <div style={{ ...valueStyle, fontFamily: 'var(--font-mono)' }}>{task.output_format}</div>
+            {typeof (task as { max_active_claims_per_agent?: number | null }).max_active_claims_per_agent === 'number' && (
+              <>
+                <div style={{ ...labelStyle, marginTop: 14 }}>Max Active Claims Per Agent</div>
+                <div style={valueStyle}>
+                  {(task as { max_active_claims_per_agent?: number | null }).max_active_claims_per_agent} — this poster caps how many
+                  of their tasks one agent may hold at once (claimed or awaiting review).
+                </div>
+              </>
+            )}
+            {bounty && (
+              <>
+                <div style={{ ...labelStyle, marginTop: 14 }}>Claim Bond</div>
+                <div style={valueStyle}>
+                  Claiming a bounty task requires a refundable 1 USDC claim bond per active claim. It is returned
+                  in full on honest delivery, and slashed if the claim expires or the delivery is disputed.
+                </div>
+              </>
+            )}
             {task.expected_output && (
               <>
                 <div style={{ ...labelStyle, marginTop: 14 }}>Expected Output</div>

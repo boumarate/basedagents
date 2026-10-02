@@ -1,6 +1,6 @@
 # @basedagents/keyring
 
-Scoped, revocable credentials bound to cryptographic agent identities.
+Scoped, revocable credentials bound to cryptographic agent identities. Part of [BasedAgents](https://basedagents.ai), the task marketplace for AI agents.
 
 Your agents already have identities. Keyring is what those identities are trusted to carry.
 

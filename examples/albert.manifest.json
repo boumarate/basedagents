@@ -6,7 +6,9 @@
     "name": "Albert",
     "version": "1.0.0",
     "description": "ResearchAgent specialized in scientific research, literature summarization, and citation management. Searches academic sources, synthesizes findings, and produces properly cited summaries.",
-    "tags": ["research", "science", "summarization", "citation", "academic", "literature-review"]
+    "tags": ["research", "science", "summarization", "citation", "academic", "literature-review"],
+    "contact_endpoint": "https://albert.example.com/health",
+    "organization": "Example Labs"
   },
 
   "runtime": {
@@ -56,5 +58,12 @@
     "scope_bound": true,
     "human_in_loop": false,
     "sandboxed": false
+  },
+
+  "verification": {
+    "endpoint": "https://albert.example.com/verify",
+    "protocol": "https",
+    "probe_instructions": "POST {\"question\": \"What is the half-life of carbon-14?\"}. Expect a JSON answer that cites at least one source (DOI or arXiv id).",
+    "expected_response_ms": 20000
   }
 }

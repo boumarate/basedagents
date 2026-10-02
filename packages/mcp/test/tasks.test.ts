@@ -663,6 +663,26 @@ describe('task tools — wire contract against a recording stub API', () => {
     expect(text(res)).toContain('**Payment status:** pending');
   });
 
+  it('accept_deliverable and dispute_task send an optional rating (D11); a comment without a rating is refused locally', async () => {
+    stub.respond('POST', '/v1/tasks/task_stub/accept', 200, { ok: true, task_id: 'task_stub', status: 'verified', accepted_by: 'creator', payment_status: 'none', rating: 5 });
+    const ok = await call(client, 'accept_deliverable', { task_id: 'task_stub', rating: 5, rating_comment: 'Exact' });
+    expect(stub.last().body).toEqual({ rating: 5, rating_comment: 'Exact' });
+    expect(text(ok)).toContain('**Rating:** 5/5');
+
+    stub.respond('POST', '/v1/tasks/task_stub/dispute', 200, { ok: true, task_id: 'task_stub', status: 'submitted', review_state: 'disputed', disputed_at: 'x', payment_status: 'none', rating: 2 });
+    const disputed = await call(client, 'dispute_task', { task_id: 'task_stub', reason: 'Half done', rating: 2 });
+    expect(stub.last().body).toEqual({ reason: 'Half done', rating: 2 });
+    expect(text(disputed)).toContain('**Rating:** 2/5');
+
+    const before = stub.requests.length;
+    const refused = await call(client, 'accept_deliverable', { task_id: 'task_stub', rating_comment: 'no score' });
+    expect(text(refused)).toContain('rating_comment needs a rating');
+    expect(stub.requests.length).toBe(before);
+    const outOfRange = await call(client, 'accept_deliverable', { task_id: 'task_stub', rating: 6 });
+    expect(outOfRange.isError).toBe(true);
+    expect(stub.requests.length).toBe(before);
+  });
+
   it('cancel_task posts to /cancel and maps the refusal matrix', async () => {
     stub.respond('POST', '/v1/tasks/task_stub/cancel', 409, { error: 'payment_in_flight', message: 'A payment is authorized or settling for this task; it cannot be cancelled', status: 'verified', payment_status: 'authorized' });
     const refused = await call(client, 'cancel_task', { task_id: 'task_stub' });

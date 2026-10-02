@@ -26,6 +26,16 @@ export function rememberIntent(path: string): void {
   }
 }
 
+/**
+ * Validate a return path that arrives from OUTSIDE storage — e.g. the `r`
+ * hash param a sign-in email carries (/start#t=…&r=%2Ftesting). Same rules
+ * as the stored intent: a single-leading-slash local path, never an auth
+ * page, so an attacker-composed link can only point within the console.
+ */
+export function safeReturnPath(raw: string | null): string | null {
+  return raw && raw.length <= 512 && isSafePath(raw) ? raw : null;
+}
+
 /** Return the remembered destination once (clearing it), or null. */
 export function takeIntent(): string | null {
   try {

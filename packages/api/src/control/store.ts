@@ -564,6 +564,43 @@ export class ControlStore {
     return row;
   }
 
+  /**
+   * Enroll the account's FIRST passkey — refuses (returns null) when an
+   * ACTIVE credential already exists. The self-serve /register endpoints are
+   * unauthenticated and the vault public key is derivable from the PUBLIC
+   * owner id, so without this gate anyone could add their own passkey to a
+   * known account; replacing a live passkey goes through recovery instead.
+   * Guarded INSERT…SELECT: the existence check and the insert are one
+   * statement, so two racing registrations cannot both win.
+   */
+  async addFirstCredential(input: AddCredentialInput): Promise<CredentialRow | null> {
+    const id = randomId('cred_');
+    const now = nowIsoString();
+    const res = await this.db.run(
+      `INSERT INTO owner_webauthn_credentials
+         (id, owner_id, credential_id, public_key, signature_counter,
+          transports, aaguid, backed_up, nickname, created_at, last_used_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+       WHERE NOT EXISTS (
+         SELECT 1 FROM owner_webauthn_credentials
+          WHERE owner_id = ? AND status = 'active'
+       )`,
+      id,
+      input.ownerId,
+      input.credentialId,
+      Buffer.from(input.publicKey),
+      input.counter,
+      input.transports ? JSON.stringify(input.transports) : null,
+      input.aaguid ?? null,
+      input.backedUp ? 1 : 0,
+      input.nickname ?? null,
+      now,
+      input.ownerId
+    );
+    if (res.changes !== 1) return null;
+    return this.getCredentialByRowId(id);
+  }
+
   private async getCredentialByRowId(id: string): Promise<CredentialRow | null> {
     const r = await this.db.get<RawRow>(
       `SELECT * FROM owner_webauthn_credentials WHERE id = ?`,

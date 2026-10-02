@@ -46,6 +46,34 @@ jobs:
       # bundle (packages/github-action/dist/index.js) is committed. The build
       # above just regenerated it; a diff means someone changed the action's
       # source or dependencies without rebuilding.
+      # Positioning guardrail (POSITIONING_SPEC.md §A4): every public surface
+      # carries the current wording, none carries a retired tagline, and the
+      # prerendered homepage says it in <title>, description, og:title and <h1>.
+      - name: Positioning guardrail
+        run: node scripts/check-positioning.mjs
+
+      # The prod drift check (run after every deploy and daily) against a fake
+      # production on localhost: a current site passes, a stale title fails.
+      # Plus the custody-claim guard's scoping rules.
+      - name: Prod drift check + custody guard self-tests
+        run: node --test scripts/check-prod-drift.test.mjs scripts/lib/custody-claims.test.mjs scripts/check-front-door.test.mjs
+
+      # The agent front door (WS1): skills/basedagents/SKILL.md and every
+      # surface derived from it (served copies, skill.json sha256, the
+      # .well-known/basedagents.json descriptor, llms-full.txt, the API's
+      # embedded copy) are in sync, and every endpoint / CLI command / flag the
+      # skill names exists in openapi.json / the CLI registry.
+      - name: Agent front door (skill) drift + references
+        run: npx tsx scripts/sync-skill.ts --check
+
+      # examples/: every task template, filled with hostile values, passes the
+      # API's CreateTaskSchema and its YAML contract parses; the manifests pass
+      # `basedagents validate`; post-task.mjs's own tests.
+      - name: Examples (task templates, manifests, post-task)
+        run: |
+          npx tsx scripts/check-examples.ts
+          node --test examples/tasks/post-task.test.mjs
+
       - name: Action bundle is up to date
         run: |
           git diff --exit-code --stat -- packages/github-action/dist || {
@@ -147,11 +175,11 @@ jobs:
   # NOTE: passkey ceremonies do NOT work on *.pages.dev previews by design
   # (the WebAuthn RP ID is basedagents.ai) — previews are for UI review.
   preview:
-    name: Console preview deploy
+    name: Previews (console + site) + front-door check
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     needs: [node]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     permissions:
       contents: read
       pull-requests: write
@@ -166,26 +194,48 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Build console
-        run: npm run build --workspace=packages/console
+      - name: Build console + site
+        run: |
+          npm run build --workspace=packages/console
+          npm run build --workspace=packages/web
 
-      - name: Deploy preview to Cloudflare Pages
+      # Deploy from the package directory: `wrangler pages deploy` compiles
+      # ./functions from the CURRENT directory (the `/` negotiation function).
+      - name: Deploy console preview to Cloudflare Pages
         id: deploy
         uses: cloudflare/wrangler-action@v3
         with:
           wranglerVersion: "4.111.0"  # pin a current wrangler; the action's v3 default (3.90.0) is ~1.5y old
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy packages/console/dist --project-name basedagents-console --branch "${{ github.head_ref }}"
+          workingDirectory: packages/console
+          command: pages deploy dist --project-name basedagents-console --branch "${{ github.head_ref }}"
 
-      - name: Comment preview URL on the PR
+      - name: Deploy site preview to Cloudflare Pages
+        id: deploy-site
+        uses: cloudflare/wrangler-action@v3
+        with:
+          wranglerVersion: "4.111.0"
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/web
+          command: pages deploy dist --project-name auth-ai-web --branch "${{ github.head_ref }}"
+
+      # The agent front door on the previews: `/` negotiates markdown / JSON /
+      # HTML, ETag → 304, and the served skill matches the repo's skill.json.
+      - name: Front-door check (previews)
+        run: node scripts/check-front-door.mjs --site "${{ steps.deploy-site.outputs.deployment-url }}" --console "${{ steps.deploy.outputs.deployment-url }}" --retries 6 --delay 10
+
+      - name: Comment preview URLs on the PR
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const url = `${{ steps.deploy.outputs.deployment-url }}`;
-            if (!url) return;
+            const site = `${{ steps.deploy-site.outputs.deployment-url }}`;
+            if (!url && !site) return;
             const marker = '<!-- console-preview-url -->';
-            const body = `${marker}\n🔎 **Console preview:** ${url}\n\n_(Passkey ceremonies only work on app.basedagents.ai — previews are for UI review.)_`;
+            const body = `${marker}\n🔎 **Console preview:** ${url || '—'}\n🌐 **Site preview:** ${site || '—'}\n\n_(Passkey ceremonies only work on app.basedagents.ai — previews are for UI review.)_`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number,
             });
@@ -294,7 +344,8 @@ jobs:
           wranglerVersion: "4.111.0"  # pin a current wrangler; the action's v3 default (3.90.0) is ~1.5y old
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy packages/console/dist --project-name basedagents-console --branch main
+          workingDirectory: packages/console  # so ./functions (the `/` negotiation) is compiled
+          command: pages deploy dist --project-name basedagents-console --branch main
 
       # The marketing site (basedagents.ai) ships from the same merge — it went
       # stale once when only console+API were automated (a "Get started" nav
@@ -308,4 +359,34 @@ jobs:
           wranglerVersion: "4.111.0"
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy packages/web/dist --project-name auth-ai-web --branch main
+          workingDirectory: packages/web  # so ./functions (the `/` negotiation) is compiled
+          command: pages deploy dist --project-name auth-ai-web --branch main
+
+      # Best effort: HTML is served uncached (max-age=0), but the edge may hold
+      # og-image.png. Needs Zone.Read + Cache Purge on the token; without them
+      # this warns and the drift check below still decides.
+      - name: Purge Cloudflare cache for the marketing heads
+        continue-on-error: true
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          zone=$(curl -sS -H "Authorization: Bearer $CF_TOKEN" "https://api.cloudflare.com/client/v4/zones?name=basedagents.ai" | jq -r '.result[0].id // empty')
+          if [ -z "$zone" ]; then echo "::warning::Could not look up the basedagents.ai zone (token lacks Zone.Read?) — cache not purged"; exit 0; fi
+          v=$(jq -r '.ogImage' packages/web/src/content/positioning.json)
+          body=$(jq -nc --arg v "$v" '{files: ["https://basedagents.ai/", "https://basedagents.ai/tasks", "https://basedagents.ai/og-image.png", $v]}')
+          res=$(curl -sS -X POST -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" --data "$body" "https://api.cloudflare.com/client/v4/zones/$zone/purge_cache")
+          if [ "$(echo "$res" | jq -r '.success')" = "true" ]; then echo "Purged: $body"; else echo "::warning::Cache purge refused: $(echo "$res" | jq -c '.errors')"; fi
+
+      # Repo drift is caught by the positioning guardrail; this catches PROD
+      # drift — the live head must match positioning.ts once the deploy lands.
+      # Retries cover Pages propagation (up to ~3 min).
+      - name: Prod drift check
+        env:
+          CANARY_BYPASS: ${{ secrets.CANARY_BYPASS_SECRET }}
+        run: node scripts/check-prod-drift.mjs --retries 12 --delay 15
+
+      # The agent front door on all three production hosts (WS1).
+      - name: Front-door check (production)
+        env:
+          CANARY_BYPASS: ${{ secrets.CANARY_BYPASS_SECRET }}
+        run: node scripts/check-front-door.mjs --site https://basedagents.ai --api https://api.basedagents.ai --console https://app.basedagents.ai --retries 12 --delay 15

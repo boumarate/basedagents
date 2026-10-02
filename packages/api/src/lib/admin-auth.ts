@@ -1,6 +1,6 @@
 /**
  * Admin bearer gate shared by the ADMIN_SECRET-protected routes
- * (bootstrap probe, funnel reader). Fail closed: a deployment without the
+ * (the funnel reader). Fail closed: a deployment without the
  * secret disables the endpoint (403) rather than leaving it open; a wrong or
  * missing token is 401. Comparison is constant-time (mcp/websec.ts).
  */
