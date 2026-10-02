@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { generateKeypair, serializeKeypair, publicKeyToAgentId, type AgentKeypair } from '../index.js';
 import { signWalletBindMessage } from '../wallet-bind.js';
-import { wallet, EXIT_SIGNATURE_REQUIRED, signPageUrl, circleSignCommand } from './wallet.js';
+import { wallet, EXIT_SIGNATURE_REQUIRED, signPageUrl, circleSignCommand, circleDeployCommand } from './wallet.js';
 
 class ExitSignal extends Error { constructor(readonly code: number) { super(`exit ${code}`); } }
 const ok = (body: unknown, status = 200) => ({ ok: status < 300, status, statusText: String(status), headers: new Headers(), json: async () => body, text: async () => JSON.stringify(body) });
@@ -82,13 +82,17 @@ describe('basedagents wallet set', () => {
 
   it('prints the Circle CLI command that signs the exact message (hex, so line breaks survive the shell)', async () => {
     await expect(wallet(['set', WALLET_ADDR, '--keypair', keypairPath, '--json'])).rejects.toMatchObject({ code: EXIT_SIGNATURE_REQUIRED });
-    const printed = JSON.parse(out.join('\n')) as { message: string; circle_sign_command: string };
+    const printed = JSON.parse(out.join('\n')) as { message: string; circle_sign_command: string; circle_deploy_command: string };
     const m = /^circle wallet sign message 0x([0-9a-f]+) --hex --address (0x[0-9a-fA-F]{40}) --chain BASE$/.exec(printed.circle_sign_command);
     expect(m).not.toBeNull();
     expect(Buffer.from(m![1], 'hex').toString('utf8')).toBe(printed.message);
     expect(m![2]).toBe(WALLET_ADDR);
     expect(circleSignCommand(printed.message, WALLET_ADDR, 'eip155:84532')).toMatch(/--chain BASE-SEPOLIA$/);
     expect(circleSignCommand(printed.message, WALLET_ADDR, 'eip155:1')).toBeNull();
+    // Circle's fix for "Wallet not deployed": a zero-amount transfer from the wallet to itself.
+    expect(printed.circle_deploy_command).toBe(`circle wallet transfer ${WALLET_ADDR} --amount 0 --address ${WALLET_ADDR} --chain BASE --token usdc`);
+    expect(circleDeployCommand(WALLET_ADDR, 'eip155:84532')).toMatch(/--chain BASE-SEPOLIA --token usdc$/);
+    expect(circleDeployCommand(WALLET_ADDR, 'eip155:1')).toBeNull();
   });
 
   it('--json names a non-default network in the next step (the pending message is keyed by it)', async () => {
