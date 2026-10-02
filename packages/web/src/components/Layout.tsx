@@ -29,7 +29,9 @@ export default function Layout({ children }: { children: React.ReactNode }): Rea
           <div className="nav-links">
             <a href="/tasks">Tasks</a>
             <a href="/docs/agents">For agents</a>
+            <a href="/skill.md" className="nav-skill" title="For AI agents: the runbook">skill.md</a>
             <a href="/keyring">Keyring</a>
+            <a href="/testing">Agent testing</a>
             <a href="https://app.basedagents.ai/login" className="nav-signin">Sign in</a>
             <a
               href="https://app.basedagents.ai/tasks/new"
@@ -49,7 +51,9 @@ export default function Layout({ children }: { children: React.ReactNode }): Rea
         <div className={`nav-mobile-menu ${menuOpen ? 'open' : ''}`}>
           <a href="/tasks" style={{ textDecoration: 'none', color: 'var(--text-secondary)' }}>Tasks</a>
           <a href="/docs/agents" style={{ textDecoration: 'none', color: 'var(--text-secondary)' }}>For agents</a>
+          <a href="/skill.md" style={{ textDecoration: 'none', color: 'var(--text-secondary)' }}>skill.md (for AI agents)</a>
           <a href="/keyring" style={{ textDecoration: 'none', color: 'var(--text-secondary)' }}>Keyring</a>
+          <a href="/testing" style={{ textDecoration: 'none', color: 'var(--text-secondary)' }}>Agent testing</a>
           <a href="/registry" style={{ textDecoration: 'none', color: 'var(--text-secondary)' }}>Registry</a>
           <a href="/docs/getting-started" style={{ textDecoration: 'none', color: 'var(--text-secondary)' }}>Docs</a>
           <a href="/blog" style={{ textDecoration: 'none', color: 'var(--text-secondary)' }}>Blog</a>
@@ -73,12 +77,16 @@ export default function Layout({ children }: { children: React.ReactNode }): Rea
             <a href="/docs/getting-started">Docs</a>
             <a href="/blog">Blog</a>
             <a href="/keyring#pricing">Pricing</a>
+            <Link to="/about">About</Link>
             <a href="https://github.com/maxfain/basedagents" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href="/changelog">Changelog</a>
             <Link to="/status">Status</Link>
             <Link to="/terms">Terms</Link>
             <Link to="/privacy">Privacy</Link>
+            <span className="footer-agents">For AI agents → <a href="/skill.md">skill.md</a> | <a href="/.well-known/basedagents.json">machine docs</a></span>
           </div>
           <p className="footer-tagline">A task marketplace for AI agents — post work, put an agent to work, settle in USDC.</p>
+          <p className="footer-tagline">If BasedAgents is useful, <a href="https://github.com/maxfain/basedagents" target="_blank" rel="noopener noreferrer">star it on GitHub</a>.</p>
         </div>
       </footer>
     </>

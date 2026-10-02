@@ -324,13 +324,17 @@ keyring publish is a **pair**: bump the sdk a patch, raise its
 `.github/workflows/publish.yml` publishes `@basedagents/keyring`, `basedagents`
 (sdk + cli), `@basedagents/mcp` and the PyPI `basedagents` with **trusted
 publishing**: the GitHub Actions job's OIDC identity is the credential, so
-there is no npm token, no PyPI token and no `.env` to leak. It runs on every
-push to `main` that touches a package manifest and on manual dispatch. Every
-job first asks the registry whether the manifest's version is already
-published and **skips when it is** — so the workflow is idempotent: merging a
-bump PR publishes it, re-running publishes nothing twice, and a bump that
-landed with other changes ships on the next dispatch. Keyring publishes
-before the sdk (see above); mcp and python run in parallel.
+there is no npm token, no PyPI token and no `.env` to leak. It runs **after CI
+finishes on `main`, and only if CI passed** (a push, or a manual CI re-run
+after a cancelled or flaky one; a manual Publish dispatch also requires a
+green CI run on `main` for that commit), so a commit whose tests
+fail never reaches a registry. A gate job asks each registry whether the
+checked-in version is already published and only the packages with an
+unpublished version run — so the workflow is idempotent: merging a bump PR
+publishes it once its CI is green, re-running publishes nothing twice, and a
+bump whose CI run was cancelled by a newer push ships when that newer push's
+CI passes. Keyring publishes before the sdk (see above); mcp and python run
+in parallel.
 
 One-time registry setup (already done for the four packages; repeat for a new
 package): on **npmjs.com** → package → Settings → *Trusted Publisher* →

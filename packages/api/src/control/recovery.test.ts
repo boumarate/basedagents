@@ -37,7 +37,7 @@ const SQL_0025 = readFileSync(join(MIGRATIONS, '0025_owner_recovery.sql'), 'utf-
 const SQL_0026 = readFileSync(join(MIGRATIONS, '0026_owner_billing.sql'), 'utf-8');
 const SQL_0027 = readFileSync(join(MIGRATIONS, '0027_authority_ladder.sql'), 'utf-8');
 const SQL_0032 = readFileSync(join(MIGRATIONS, '0032_daemon_kill_confirm.sql'), 'utf-8');
-const SQL_0040 = readFileSync(join(MIGRATIONS, '0040_retire_keyring.sql'), 'utf-8');
+const SQL_0048 = readFileSync(join(MIGRATIONS, '0048_retire_keyring.sql'), 'utf-8');
 
 const te = new TextEncoder();
 const RP_ID = 'basedagents.ai';
@@ -261,7 +261,7 @@ beforeEach(() => {
   rawDb.exec(SQL_0026);
   rawDb.exec(SQL_0027);
   rawDb.exec(SQL_0032);
-  rawDb.exec(SQL_0040);
+  rawDb.exec(SQL_0048);
   db = new SQLiteAdapter(rawDb);
   store = new ControlStore(db);
   sentEmails = [];

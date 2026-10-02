@@ -21,12 +21,49 @@ migrations_dir = "migrations"
 POW_DIFFICULTY = "22"
 CHALLENGE_TTL_SECONDS = "300"
 AUTH_MAX_CLOCK_SKEW = "60"
-BOOTSTRAP_THRESHOLD = "100"
 ENVIRONMENT = "production"
 REGISTRY_SIGNING_PUBLIC_KEY = "9827a77ffa3bbddff01444277707271838098f3e8f2d29a200054cc0bca308d0"
 KEYRING_RP_ID = "basedagents.ai"
 KEYRING_ORIGINS = "https://app.basedagents.ai"
 KEYRING_CONSOLE_ORIGIN = "https://app.basedagents.ai"
+# PostHog product analytics + Error Tracking (src/lib/posthog.ts). A phc_
+# project token is PostHog's ingest-only client token — safe in this public
+# file, like the price ids above; set HERE, not the dashboard (plain vars are
+# replaced wholesale on every deploy). Host defaults to https://us.i.posthog.com.
+POSTHOG_PROJECT_TOKEN = "phc_sDSFNrjkniWVhvBekx2UL4PkwrmT6jMeWnyswdC3S2LV"
+# House accounts: paid tasks they posted carry `sponsored: true` in GET /v1/tasks/settled
+# (the platform paying for work, labeled as such). Agent ids are public; add the
+# console owner id (ow_…) that posts house tasks from app.basedagents.ai too.
+# Hans, BasedAgents Bounties, usura_marketing, and the console owner account
+# whose account key is Hans's key (so its ow_ id shares Hans's public key).
+HOUSE_ACCOUNT_IDS = "ag_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV,ag_95W5FkDc57BFYwRNcLzwViRBAV4S7iepQMsH4pTcifbE,ag_8SFNAVuWkaEMUNpxHzRXec18M8FJsjLMWDNrj5bbbRCC,ow_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV"
+# Owner ids (ow_…) that see the console's operator pages (feedback triage).
+# Feedback notifications go to the FEEDBACK_NOTIFY_EMAIL / FEEDBACK_SLACK_WEBHOOK_URL
+# secrets (wrangler secret put …); with neither set, reports are stored silently.
+ADMIN_OWNER_IDS = "ow_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV"
+# ─── Agent Testing (docs/AGENT_TESTING_RUNBOOK.md §3) ───
+# Plain config. Price ids are config, not secrets (STRIPE_SECRET_KEY /
+# STRIPE_WEBHOOK_SECRET are wrangler secrets — see scripts/bootstrap-deploy.md).
+# Set values HERE and deploy —
+# wrangler replaces the Worker's plain vars wholesale on every deploy, so a
+# value typed into the Cloudflare dashboard would be clobbered by the next CI
+# deploy. Testing SECRETS (TESTING_TREASURY_PRIVATE_KEY, and
+# TESTING_OPERATOR_EMAIL — a personal address stays out of this public file)
+# go through scripts/put-secrets.sh, never this file. Unset operator email →
+# operator alerts stay in the console queue only.
+# Product pages, intake, (test-mode) checkout and fulfillment are LIVE.
+# Nothing is payable until the operator approves a quote (spec §1.4), and
+# nothing publishes without the operator's publish-tasks passkey ceremony.
+# Service agent + treasury are configured (runbook §3.4–3.5 done 2026-09-27).
+TESTING_PRODUCT_ENABLED = "true"
+TESTING_CHECKOUT_ENABLED = "true"
+TESTING_FULFILLMENT_ENABLED = "true"
+TESTING_PRODUCT_LIVE_APPROVED = "false"
+# Sandbox (test-mode) one-time $200 price — recreate + replace when moving
+# to live keys.
+STRIPE_PRICE_TESTING_AUDIT = "price_1UK60jEHXx0SqvxponhWkGg1"
+TESTING_PLATFORM_AGENT_ID = "ag_58FCNp9N6FNdsMis845K4zHF1MC1D1p1ec6kF9VbsEQR"
+TESTING_SUPPORT_EMAIL = ""
 
 # Custom domain route
 [[routes]]
@@ -58,12 +95,25 @@ migrations_dir = "migrations"
 POW_DIFFICULTY = "4"
 CHALLENGE_TTL_SECONDS = "300"
 AUTH_MAX_CLOCK_SKEW = "60"
-BOOTSTRAP_THRESHOLD = "100"
 ENVIRONMENT = "staging"
+# PostHog stays UNSET here on purpose: the production token would mix staging
+# rehearsal events into the live project's funnels. Staging logs one loud
+# "analytics are OFF" line per isolate (by design). To measure staging, make a
+# separate PostHog project and put its phc_ token here.
+# POSTHOG_PROJECT_TOKEN = ""
 # Bounties + escrow on staging (Base Sepolia dry runs). Still fail closed until the
 # staging secrets exist: CDP_API_KEY_ID, CDP_API_KEY_SECRET, PAYMENT_ENCRYPTION_KEY
 # (payments) and ESCROW_WALLET_PRIVATE_KEY (escrow) — see scripts/bootstrap-deploy.md §5.
 TASK_PAYMENTS_ENABLED = "1"
+# Agent Testing on staging: same shape as production above; rehearse the flag
+# flips + test-mode Stripe price here first (runbook §7).
+TESTING_PRODUCT_ENABLED = "false"
+TESTING_CHECKOUT_ENABLED = "false"
+TESTING_FULFILLMENT_ENABLED = "false"
+TESTING_PRODUCT_LIVE_APPROVED = "false"
+STRIPE_PRICE_TESTING_AUDIT = ""
+TESTING_PLATFORM_AGENT_ID = ""
+TESTING_SUPPORT_EMAIL = ""
 
 [env.staging.triggers]
 crons = []

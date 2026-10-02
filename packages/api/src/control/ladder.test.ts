@@ -21,7 +21,7 @@ import ladderRoutes from './ladder.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS = join(__dirname, '..', '..', 'migrations');
 // The control-plane chain as prod carries it: the keyring files are applied
-// and then retired by 0040, so the harness sees exactly the surviving schema.
+// and then retired by 0048, so the harness sees exactly the surviving schema.
 const SQL = [
   '0023_owner_accounts.sql',
   '0024_keyring_approvals.sql',
@@ -29,7 +29,7 @@ const SQL = [
   '0026_owner_billing.sql',
   '0027_authority_ladder.sql',
   '0032_daemon_kill_confirm.sql',
-  '0040_retire_keyring.sql',
+  '0048_retire_keyring.sql',
 ].map((f) => readFileSync(join(MIGRATIONS, f), 'utf-8'));
 
 const te = new TextEncoder();

@@ -63,6 +63,40 @@ export interface OwnerMe {
   session_method: string;
   /** False until the first approval mints the passkey. */
   has_passkey: boolean;
+  /** Operator pages (feedback triage) are visible — ADMIN_OWNER_IDS on the API. */
+  is_admin?: boolean;
+}
+
+// ── Operator: agent feedback (WS5) ──
+
+export type FeedbackStatus = 'open' | 'fixed' | 'wont_fix';
+
+export interface FeedbackItem {
+  feedback_id: string;
+  agent_id: string | null;
+  scope: 'task' | 'general';
+  task_id: string | null;
+  environment: string;
+  expected_behavior: string;
+  actual_behavior: string;
+  steps_to_reproduce: string;
+  error_codes: string[];
+  request_ids: string[];
+  suggested_improvement: string | null;
+  skill_version: string | null;
+  cli_version: string | null;
+  user_agent: string | null;
+  status: FeedbackStatus;
+  status_note: string | null;
+  created_at: string;
+  updated_at: string;
+  notified_at: string | null;
+}
+
+export interface FeedbackList {
+  feedback: FeedbackItem[];
+  counts: Record<FeedbackStatus, number>;
+  next_before: string | null;
 }
 
 // ── Authority ladder / onboarding ──
@@ -158,7 +192,7 @@ export interface BoardPost {
 
 // ── Tasks (Tasks P0 — /v1/owner/tasks, the human's own task list) ──
 
-export type TaskStatus = 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled';
+export type TaskStatus = 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled' | 'expired';
 export type TaskCategory = 'research' | 'code' | 'content' | 'data' | 'automation';
 export type TaskOutputFormat = 'json' | 'link';
 export type TaskReviewState = 'revision_requested' | 'disputed' | null;
@@ -273,6 +307,10 @@ export interface CreateTaskInput {
   output_format?: TaskOutputFormat;
   bounty?: { amount: string; token?: 'USDC'; network?: string };
   escrow?: boolean;
+  /** Campaign cap: max claimed+submitted tasks one agent may hold across your tasks (1–1000). */
+  max_active_claims_per_agent?: number;
+  /** Open window in days before an unclaimed task expires (D13): 1–90, default 7; house accounts may exceed the cap or send 0 = never. */
+  expires_in_days?: number;
 }
 
 /**
@@ -295,10 +333,17 @@ export interface OwnerTask {
   verified_at: string | null;
   accepted_by: 'creator' | 'auto' | null;
   review_note: string | null;
+  /** The optional 1-5 rating you gave the delivery (public), and when it was given. */
+  rating?: number | null;
+  rating_comment?: string | null;
+  rating_context?: 'accept' | 'dispute' | null;
   revision_count: number;
   revision_requested_at: string | null;
   disputed_at: string | null;
   cancelled_at: string | null;
+  /** End of the open window (D13): an unclaimed task expires past this; null = never. */
+  expires_at?: string | null;
+  expired_at?: string | null;
   claimed_by_agent_id: string | null;
   creator: TaskCreator;
   /** The declared bounty, or null for an unpaid task. */

@@ -22,6 +22,16 @@ import TasksPage from './pages/Tasks.js';
 import Explore from './pages/Explore.js';
 import TaskNew from './pages/TaskNew.js';
 import TaskReview from './pages/TaskReview.js';
+import SignWallet from './pages/SignWallet.js';
+import AdminFeedback from './pages/AdminFeedback.js';
+import TestingAudits from './pages/testing/Audits.js';
+import TestingIntake from './pages/testing/Intake.js';
+import TestingRequestDetail from './pages/testing/RequestDetail.js';
+import TestingOrder from './pages/testing/OrderDetail.js';
+import TestingReport from './pages/testing/ReportView.js';
+import TestingAdminQueue from './pages/testing/AdminQueue.js';
+import TestingAdminRequest from './pages/testing/AdminRequest.js';
+import TestingAdminOrder from './pages/testing/AdminOrder.js';
 
 /** /agents with nothing after it: first agent when one exists, else the add page. */
 function AgentsIndex() {
@@ -72,6 +82,11 @@ export default function App() {
           <Route path="/link" element={<LinkPage />} />
           <Route path="/claim" element={<Claim />} />
           <Route path="/invited" element={<Invited />} />
+          {/* Public audit intake: no account — every request is operator-
+              reviewed, so submission needs only an email (signed-in visitors
+              are redirected to the in-app form). */}
+          <Route path="/testing/request" element={<TestingIntake />} />
+          <Route path="/sign-wallet" element={<SignWallet />} />
           <Route element={<Protected />}>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<Home />} />
@@ -88,6 +103,17 @@ export default function App() {
             <Route path="/board" element={<BoardPage />} />
             <Route path="/vault" element={<Vault />} />
             <Route path="/settings/billing" element={<Billing />} />
+            <Route path="/admin/feedback" element={<AdminFeedback />} />
+            {/* Agent Testing (customer + operator) */}
+            <Route path="/testing" element={<TestingAudits />} />
+            <Route path="/testing/new" element={<TestingIntake />} />
+            <Route path="/testing/requests/:requestId" element={<TestingRequestDetail />} />
+            <Route path="/testing/requests/:requestId/edit" element={<TestingIntake />} />
+            <Route path="/testing/orders/:orderId" element={<TestingOrder />} />
+            <Route path="/testing/reports/:reportId" element={<TestingReport />} />
+            <Route path="/testing/admin" element={<TestingAdminQueue />} />
+            <Route path="/testing/admin/requests/:requestId" element={<TestingAdminRequest />} />
+            <Route path="/testing/admin/orders/:orderId" element={<TestingAdminOrder />} />
           </Route>
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>

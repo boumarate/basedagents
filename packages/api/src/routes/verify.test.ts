@@ -446,6 +446,8 @@ describe('POST /v1/verify/submit', () => {
   });
 
   it('valid assignment flow works end to end', async () => {
+    // Only agents with a contact_endpoint are assigned
+    await db.run('UPDATE agents SET contact_endpoint = ? WHERE id = ?', 'https://target.example.com/verify', target.agentId);
     // Get assignment via the API
     const assignmentHeaders = await signRequest(verifier, 'GET', '/v1/verify/assignment');
     const assignRes = await app.request('/v1/verify/assignment', {
@@ -544,5 +546,45 @@ describe('POST /v1/verify/submit', () => {
     });
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /v1/verify/assignment', () => {
+  let db: SQLiteAdapter;
+  let app: ReturnType<typeof createTestApp>;
+  let verifier: TestKeypair & { name: string };
+
+  beforeEach(async () => {
+    db = setupTestDb();
+    app = createTestApp(db);
+    verifier = await createTestAgent(db, { reputationScore: 0.5, status: 'active' });
+  });
+
+  async function getAssignment() {
+    const headers = await signRequest(verifier, 'GET', '/v1/verify/assignment');
+    return app.request('/v1/verify/assignment', { method: 'GET', headers });
+  }
+
+  it('never assigns an agent without a contact_endpoint (it could only time out)', async () => {
+    const probeable = await createTestAgent(db, { status: 'active' });
+    await db.run('UPDATE agents SET contact_endpoint = ? WHERE id = ?', 'https://probeable.example.com/verify', probeable.agentId);
+    for (let i = 0; i < 3; i++) await createTestAgent(db, { status: 'active' }); // endpoint-less
+
+    for (let i = 0; i < 10; i++) {
+      const res = await getAssignment();
+      expect(res.status).toBe(200);
+      const data = await res.json() as { target: { agent_id: string; contact_endpoint: string }; bootstrap_mode?: boolean };
+      expect(data.target.agent_id).toBe(probeable.agentId);
+      expect(data.target.contact_endpoint).toBe('https://probeable.example.com/verify');
+      expect(data).not.toHaveProperty('bootstrap_mode');
+    }
+  });
+
+  it('404 no_assignment when no other agent has a contact_endpoint', async () => {
+    await createTestAgent(db, { status: 'active' });
+    const res = await getAssignment();
+    expect(res.status).toBe(404);
+    const data = await res.json() as { error: string };
+    expect(data.error).toBe('no_assignment');
   });
 });

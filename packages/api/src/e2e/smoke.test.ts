@@ -11,6 +11,8 @@ import {
   createTestApp,
   createTestAgent,
   signRequest,
+  walletBindBody,
+  TEST_WALLET_KEYS,
 } from '../test-helpers.js';
 import type { SQLiteAdapter } from '../db/sqlite-adapter.js';
 import type { TestKeypair } from '../test-helpers.js';
@@ -38,7 +40,7 @@ vi.mock('../crypto/index.js', async () => {
 });
 
 // Payments: a scripted facilitator stands in for CDP (sign-at-accept flow).
-import { enablePaymentsForTests, resetPaymentsForTests, paymentHeaderFor, TEST_WALLET, TEST_TX } from '../payments/test-fixtures.js';
+import { enablePaymentsForTests, resetPaymentsForTests, paymentHeaderFor, TEST_TX } from '../payments/test-fixtures.js';
 import type { PaymentRequirementsV2 } from '../payments/x402.js';
 
 const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
@@ -227,10 +229,10 @@ describe('E2E Smoke — Full Agent Lifecycle', () => {
     expect(getData.wallet_address).toBeNull();
     expect(getData.wallet_network).toBe('eip155:8453');
 
-    // Set wallet
-    // Use a valid checksummed address
-    const validAddress = '0xabcdef1234567890abcdef1234567890abcdef12';
-    const patchBody = JSON.stringify({ wallet_address: validAddress });
+    // Set wallet: a signature from the wallet proves control (D8)
+    const bind = walletBindBody(alice.agentId, TEST_WALLET_KEYS.a);
+    const validAddress = bind.wallet_address;
+    const patchBody = JSON.stringify(bind);
     const patchHeaders = await signRequest(alice, 'PATCH', `/v1/agents/${alice.agentId}/wallet`, patchBody);
     const patchRes = await app.request(`/v1/agents/${alice.agentId}/wallet`, {
       method: 'PATCH',
@@ -331,8 +333,9 @@ describe('E2E Smoke — Full Agent Lifecycle', () => {
       expect(createData.bounty.amount_display).toBe('10.00');
       const taskId = createData.task_id;
 
-      // Bob needs a wallet before he can claim a bounty task
-      const walletBody = JSON.stringify({ wallet_address: TEST_WALLET });
+      // Bob needs a wallet before he can claim a bounty task (bound with a proof of control)
+      const bobBind = walletBindBody(bob.agentId, TEST_WALLET_KEYS.b);
+      const walletBody = JSON.stringify(bobBind);
       const walletH = await signRequest(bob, 'PATCH', `/v1/agents/${bob.agentId}/wallet`, walletBody);
       const walletRes = await app.request(`/v1/agents/${bob.agentId}/wallet`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json', ...walletH }, body: walletBody,
@@ -361,7 +364,7 @@ describe('E2E Smoke — Full Agent Lifecycle', () => {
       const challengeRes = await app.request(`/v1/tasks/${taskId}/accept`, { method: 'POST', headers: challengeH });
       expect(challengeRes.status).toBe(402);
       const challenge = await challengeRes.json() as { accepts: PaymentRequirementsV2[] };
-      expect(challenge.accepts[0].payTo).toBe(TEST_WALLET);
+      expect(challenge.accepts[0].payTo.toLowerCase()).toBe(bobBind.wallet_address.toLowerCase());
       expect(challenge.accepts[0].amount).toBe('10000000');
       expect(challengeRes.headers.get('PAYMENT-REQUIRED')).toBeTruthy();
 

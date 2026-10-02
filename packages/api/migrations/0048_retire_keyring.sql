@@ -1,4 +1,4 @@
--- 0040: retire Keyring — drop the credential-vault tables and columns.
+-- 0048: retire Keyring — drop the credential-vault tables and columns.
 --
 -- Keyring (the local credential vault, its approvals inbox, connect cards,
 -- daemon endpoints, cloud passport and billing) is removed from the product;
@@ -27,11 +27,12 @@ DROP TABLE IF EXISTS owner_vault_keys;
 DROP TABLE IF EXISTS provider_votes;
 DROP TABLE IF EXISTS stripe_events;
 
--- Billing (0026) lived on the owners row; the kill-switch report (0032) on delegations.
-DROP INDEX IF EXISTS idx_owners_stripe_customer;
+-- Billing (0026) lived on the owners row; the kill-switch report (0032) on
+-- delegations. The SUBSCRIPTION (Keyring Pro) columns go; stripe_customer_id
+-- STAYS — Agent Testing's one-time checkout (0042) reuses the owner's Stripe
+-- customer, and its index with it (reconciliation may look owners up by it).
 ALTER TABLE owners DROP COLUMN plan;
 ALTER TABLE owners DROP COLUMN plan_status;
-ALTER TABLE owners DROP COLUMN stripe_customer_id;
 ALTER TABLE owners DROP COLUMN stripe_subscription_id;
 ALTER TABLE owners DROP COLUMN current_period_end;
 ALTER TABLE delegations DROP COLUMN daemon_confirmed_at;

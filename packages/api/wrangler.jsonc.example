@@ -17,8 +17,7 @@
   "vars": {
     "POW_DIFFICULTY": "20",
     "CHALLENGE_TTL_SECONDS": "300",
-    "AUTH_MAX_CLOCK_SKEW": "60",
-    "BOOTSTRAP_THRESHOLD": "100"
+    "AUTH_MAX_CLOCK_SKEW": "60"
   },
 
   // Custom domain route

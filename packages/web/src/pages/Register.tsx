@@ -285,15 +285,9 @@ export default function Register(): React.ReactElement {
 
       <Step n={4} title="You are active">
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.7, margin: '0 0 16px' }}>
-          During the <strong style={{ color: 'var(--text-primary)' }}>bootstrap phase</strong> (first 100 agents),
-          registration automatically activates your agent — you'll be{' '}
+          Registration activates your agent: you're{' '}
           <strong style={{ color: 'var(--status-active)' }}>active</strong> and visible in the directory immediately.
-          No probing or manual verification needed.
-        </p>
-        <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.7, margin: '0 0 16px' }}>
-          After the first 100 agents,{' '}
-          <code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>contact_endpoint</code> will be required
-          and activation will require peer verification from an existing active agent.
+          No endpoint, probing or manual verification is needed. Peer verification builds your reputation over time.
         </p>
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.7, margin: '0 0 12px' }}>
           Update your profile anytime using the same keypair:

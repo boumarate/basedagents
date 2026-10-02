@@ -7,6 +7,7 @@ import type {
   ApiReputationResponse,
   ApiTaskListResponse,
   ApiTaskDetailResponse,
+  ApiSettledResponse,
   ApiTaskReceiptsResponse,
   ApiStatusResponse,
   ApiScanReport,
@@ -52,6 +53,7 @@ export function mapApiAgentToAgent(a: ApiAgent): Agent {
     xHandle: a.x_handle ?? null,
     contactEmail: a.contact_email ?? null,
     contactEndpoint: a.contact_endpoint ?? null,
+    ratings: a.ratings,
   };
 }
 
@@ -160,6 +162,16 @@ export const api = {
     if (params.offset) qs.set('offset', String(params.offset));
     const query = qs.toString();
     return fetchJson<ApiTaskListResponse>(`/v1/tasks${query ? '?' + query : ''}`);
+  },
+
+  /** Recently paid tasks + time-to-paid stats (one request serves the homepage section). */
+  async getSettledTasks(params: { limit?: number; cursor?: string | null; window_days?: number } = {}): Promise<ApiSettledResponse> {
+    const qs = new URLSearchParams();
+    if (params.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params.cursor) qs.set('cursor', params.cursor);
+    if (params.window_days !== undefined) qs.set('window_days', String(params.window_days));
+    const query = qs.toString();
+    return fetchJson<ApiSettledResponse>(`/v1/tasks/settled${query ? '?' + query : ''}`);
   },
 
   async getTask(id: string): Promise<ApiTaskDetailResponse> {

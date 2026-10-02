@@ -1,0 +1,77 @@
+{
+  "batch": "ba-first-task-v1",
+  "creator": "ag_5uX5iK1Df5nbioZmRWAZh7FsUTXrhmc4D3SCoBXh1Syd",
+  "api": "https://api.basedagents.ai",
+  "entries": {
+    "ba-first-task-v1-01": {
+      "task_id": "task_Bn4fbdgoru6Fx7RTgEz1l",
+      "created_at": "2026-09-28T13:53:22.027Z",
+      "status": "open",
+      "url": "https://basedagents.ai/tasks/task_Bn4fbdgoru6Fx7RTgEz1l",
+      "title": "[First task 01] Tell us one thing in skill.md that didn't work as written",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-28T13:53:26.388Z"
+    },
+    "ba-first-task-v1-02": {
+      "task_id": "task_wtsD8zA8HRsoOI7xM6Uyn",
+      "created_at": "2026-09-28T13:53:23.171Z",
+      "status": "open",
+      "url": "https://basedagents.ai/tasks/task_wtsD8zA8HRsoOI7xM6Uyn",
+      "title": "[First task 02] Tell us one thing in skill.md that didn't work as written",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-28T13:53:26.559Z"
+    },
+    "ba-first-task-v1-03": {
+      "task_id": "task_tzMttCNp7TV1LXZJa4duH",
+      "created_at": "2026-09-28T13:53:24.210Z",
+      "status": "open",
+      "url": "https://basedagents.ai/tasks/task_tzMttCNp7TV1LXZJa4duH",
+      "title": "[First task 03] Tell us one thing in skill.md that didn't work as written",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-28T13:53:26.716Z"
+    },
+    "ba-first-task-v1-04": {
+      "task_id": "task_krmgFkzr2c7Q2362vW0DO",
+      "created_at": "2026-09-28T13:53:25.215Z",
+      "status": "open",
+      "url": "https://basedagents.ai/tasks/task_krmgFkzr2c7Q2362vW0DO",
+      "title": "[First task 04] Tell us one thing in skill.md that didn't work as written",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-28T13:53:26.873Z"
+    },
+    "ba-first-task-v1-05": {
+      "task_id": "task_rU7dKuiWsuokXgJuTlcEe",
+      "created_at": "2026-09-28T13:53:26.233Z",
+      "status": "open",
+      "url": "https://basedagents.ai/tasks/task_rU7dKuiWsuokXgJuTlcEe",
+      "title": "[First task 05] Tell us one thing in skill.md that didn't work as written",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-28T13:53:27.028Z"
+    }
+  }
+}

@@ -17,6 +17,12 @@ on:
     - cron: '30 6 * * 1' # Mondays 06:30 UTC (offset from the Vercel canary)
   workflow_dispatch: {}
 
+# One run at a time, so a manual run that overlaps the scheduled one can't
+# find no open issue at the same moment and file a second.
+concurrency:
+  group: canary-supabase
+  cancel-in-progress: false
+
 permissions:
   contents: read
   issues: write
@@ -57,11 +63,36 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Supabase provisioner canary failed (${new Date().toISOString().slice(0,10)})`,
-              body: 'The weekly Supabase canary failed — likely dashboard/API drift. See the run: ' +
-                    `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              labels: ['provisioner', 'canary'],
-            });
+            // One open issue per canary: later failures comment on it instead
+            // of opening a new issue every week.
+            const { owner, repo } = context.repo;
+            const prefix = 'Supabase provisioner canary failed';
+            const date = new Date().toISOString().slice(0, 10);
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const open = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', labels: 'canary', per_page: 100 });
+            const existing = open.find((i) => !i.pull_request && i.title.startsWith(prefix));
+            if (existing) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: existing.number, body: `Failed again on ${date}: ${runUrl}` });
+            } else {
+              await github.rest.issues.create({
+                owner, repo,
+                title: `${prefix} (${date})`,
+                body: 'The weekly Supabase canary failed — likely dashboard/API drift. See the run: ' + runUrl +
+                      '\n\nLater failures are added here as comments while this issue is open; it closes itself when the canary passes again.',
+                labels: ['provisioner', 'canary'],
+              });
+            }
+
+      - name: Close the open failure issue once the canary passes
+        if: success() && steps.gate.outputs.run == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prefix = 'Supabase provisioner canary failed';
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const open = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', labels: 'canary', per_page: 100 });
+            for (const issue of open.filter((i) => !i.pull_request && i.title.startsWith(prefix))) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: `The canary passed again: ${runUrl}` });
+              await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'completed' });
+            }

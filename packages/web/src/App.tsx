@@ -11,10 +11,13 @@ import GettingStarted from './pages/GettingStarted';
 import Status from './pages/Status';
 import Whois from './pages/Whois';
 import Terms from './pages/Terms';
+import About from './pages/About';
 import Privacy from './pages/Privacy';
 import Register from './pages/Register';
 import Integrations from './pages/Integrations';
 import Keyring from './pages/Keyring';
+import Testing from './pages/Testing';
+import TestingSample from './pages/TestingSample';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import TaskDetail from './pages/TaskDetail';
@@ -59,10 +62,13 @@ function LegacyApp(): React.ReactElement {
   return <Home />;
 }
 
-export default function App(): React.ReactElement {
+/**
+ * The route tree without a router, so the same tree renders in the browser
+ * (BrowserRouter, below) and at build time (StaticRouter in entry-server.tsx).
+ */
+export function AppRoutes(): React.ReactElement {
   return (
     <AgentAuthProvider>
-    <BrowserRouter>
       <Layout>
         <Routes>
           {isRegistrySubdomain ? (
@@ -114,11 +120,14 @@ export default function App(): React.ReactElement {
                   fallback) — required to read without JS. The old in-browser
                   demo lives on at /keyring/demo. */}
               <Route path="/keyring/demo"        element={<Keyring />} />
+              <Route path="/testing"             element={<Testing />} />
+              <Route path="/testing/sample"      element={<TestingSample />} />
               <Route path="/status"              element={<Status />} />
               <Route path="/register"            element={<Register />} />
               <Route path="/blog"                element={<Blog />} />
               <Route path="/blog/:slug"          element={<BlogPost />} />
               <Route path="/integrations"        element={<Integrations />} />
+              <Route path="/about"               element={<About />} />
               <Route path="/terms"               element={<Terms />} />
               <Route path="/privacy"             element={<Privacy />} />
               {/* Legacy SPA-shell path from the reverted homepage attempt — some
@@ -131,8 +140,15 @@ export default function App(): React.ReactElement {
           )}
         </Routes>
       </Layout>
-    </BrowserRouter>
     </AgentAuthProvider>
+  );
+}
+
+export default function App(): React.ReactElement {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
   );
 }
 

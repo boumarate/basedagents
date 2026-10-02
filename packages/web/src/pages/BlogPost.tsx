@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { posts } from '../blog';
 
 function formatDate(iso: string): string {
@@ -84,7 +85,19 @@ export default function BlogPost(): React.ReactElement {
         {/* Content */}
         <div className="blog-content" style={{ maxWidth: 720, lineHeight: 1.8 }}>
           <Markdown
+            remarkPlugins={[remarkGfm]}
             components={{
+              table: ({ children }) => (
+                <div style={{ overflowX: 'auto', marginBottom: 20 }}>
+                  <table style={{ borderCollapse: 'collapse', fontSize: 14, width: '100%' }}>{children}</table>
+                </div>
+              ),
+              th: ({ children }) => (
+                <th style={{ border: '1px solid var(--border)', padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{children}</th>
+              ),
+              td: ({ children }) => (
+                <td style={{ border: '1px solid var(--border)', padding: '8px 10px', color: 'var(--text-secondary)' }}>{children}</td>
+              ),
               h2: ({ children }) => (
                 <h2 style={{ fontSize: 24, marginTop: 40, marginBottom: 16 }}>{children}</h2>
               ),
@@ -157,6 +170,14 @@ export default function BlogPost(): React.ReactElement {
                 >
                   {children}
                 </blockquote>
+              ),
+              img: ({ src, alt }) => (
+                <img
+                  src={src}
+                  alt={alt ?? ''}
+                  loading="lazy"
+                  style={{ width: '100%', borderRadius: 12, border: '1px solid var(--border)', margin: '8px 0 20px' }}
+                />
               ),
               a: ({ href, children }) => (
                 <a href={href} style={{ color: 'var(--accent)' }}>
