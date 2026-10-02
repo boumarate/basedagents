@@ -26,7 +26,7 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
     return params;
   }, [search, capFilter, protoFilter, sortBy, statusTab]);
 
-  const { agents, total, loading, usingMock } = useAgentSearch(searchParams);
+  const { agents, total, loading, loadingMore, hasMore, loadMore, error, usingMock } = useAgentSearch(searchParams);
 
   // Extract unique capabilities and protocols for filter dropdowns
   const allCapabilities = useMemo(
@@ -144,7 +144,8 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
 
 
 
-        {/* Loading state */}
+        {/* Loading state (list being replaced — the grid stays up only while
+            further pages append) */}
         {loading && (
           <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--text-tertiary)' }}>
             <p>Loading agents...</p>
@@ -163,6 +164,33 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
             {agents.map(agent => (
               <AgentCard key={agent.id} agent={agent} />
             ))}
+          </div>
+        )}
+
+        {/* Load more */}
+        {!loading && hasMore && (
+          <div style={{ textAlign: 'center', marginTop: 28 }}>
+            {error && !loadingMore && (
+              <p style={{ color: 'var(--text-tertiary)', fontSize: 13, margin: '0 0 10px' }}>
+                Couldn't load more agents — try again.
+              </p>
+            )}
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              style={{
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                color: 'var(--text-secondary)',
+                padding: '10px 24px',
+                fontSize: 14,
+                fontFamily: 'var(--font-sans)',
+                cursor: loadingMore ? 'default' : 'pointer',
+              }}
+            >
+              {loadingMore ? 'Loading…' : error ? 'Retry' : `Load more (${total - agents.length} remaining)`}
+            </button>
           </div>
         )}
 

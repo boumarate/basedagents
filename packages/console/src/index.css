@@ -164,7 +164,7 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .status-denied { color: var(--danger); background: var(--danger-bg); }
 
 /* ── banners ── */
-.banner { border-radius: 10px; padding: 0.7rem 0.9rem; margin: 1rem 0; font-size: 0.9rem; line-height: 1.4; }
+.banner { border-radius: 10px; padding: 0.7rem 0.9rem; margin: 1rem 0; font-size: 0.9rem; line-height: 1.4; overflow-wrap: anywhere; }
 .banner-error { color: #ffd4d4; background: var(--danger-bg); border: 1px solid #5b2730; }
 .banner-warn { color: #ffe9b0; background: var(--warn-bg); border: 1px solid #5b4a1a; }
 
@@ -184,7 +184,7 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .auth-brand { display: inline-block; font-weight: 700; margin-bottom: 1.5rem; color: var(--text); text-decoration: none; }
 a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .auth-title { font-size: 1.4rem; margin: 0 0 0.4rem; }
-.auth-lede { color: var(--muted); margin: 0 0 1.5rem; line-height: 1.5; }
+.auth-lede { color: var(--muted); margin: 0 0 1.5rem; line-height: 1.5; overflow-wrap: anywhere; }
 .auth-lede code { color: var(--text); }
 .auth-switch { margin-top: 1.25rem; text-align: center; font-size: 0.9rem; }
 
