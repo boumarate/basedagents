@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import {
-  buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage, rpcEndpoints, RPC_CALL_BUDGET_MS, RPC_HEAD_BUDGET_MS, RPC_HEDGE_MS,
+  buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage, rpcEndpoints, RPC_CALL_BUDGET_MS, RPC_HEAD_BUDGET_MS, RPC_HEDGE_MS, RPC_RETRY_MS,
   BIND_FOOTER, ERC6492_VALIDATOR_BYTECODE, type BindFields,
 } from './bind.js';
 import { createHash } from 'node:crypto';
@@ -149,11 +149,46 @@ describe('verifyBindProof', () => {
       expect(await prove()).toMatchObject({ ok: false, reason: 'bad_signature' });
       vi.stubGlobal('fetch', net({}, { call: { error: { code: -32000, message: 'execution reverted' } } }));
       expect(await prove()).toMatchObject({ ok: false, reason: 'bad_signature' });
-      // A node that is rate limiting us is an outage, not a verdict.
-      vi.stubGlobal('fetch', net({}, { call: { error: { code: -32005, message: 'limit exceeded' } } }));
-      expect(await prove()).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
       vi.stubGlobal('fetch', net({}, { head: { fail: true } }));
       expect(await prove()).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
+      // A node that is rate limiting us is an outage, not a verdict: rounds repeat until the budget runs out.
+      vi.useFakeTimers();
+      try {
+        const limited = net({}, { call: { error: { code: -32005, message: 'limit exceeded' } } });
+        vi.stubGlobal('fetch', limited);
+        const pending = prove();
+        await vi.advanceTimersByTimeAsync(RPC_CALL_BUDGET_MS);
+        expect(await pending).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
+        expect(ethCalls(limited).length).toBeGreaterThan(3); // more than one round
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('when the node with the freshest block fails the call and the rest are a block behind, it asks again a block later', async () => {
+      vi.useFakeTimers();
+      try {
+        // mainnet.base.org reported 0x12 but is rate limiting the call; the others are at 0x11
+        // and don't have 0x12 yet on the first round, then do on the next.
+        const seen: Record<string, number> = {};
+        const behind = (url: string, init: RequestInit) => {
+          const req = JSON.parse(String(init.body)) as { method: string };
+          if (req.method === 'eth_blockNumber') return Promise.resolve(json({ result: url === 'https://mainnet.base.org' ? '0x12' : '0x11' }));
+          if (url === 'https://mainnet.base.org') return Promise.resolve(new Response('busy', { status: 429 }));
+          seen[url] = (seen[url] ?? 0) + 1;
+          return Promise.resolve(seen[url] === 1 ? json({ error: { code: -32000, message: 'block not found: 0x12' } }) : json({ result: '0x01' }));
+        };
+        const f = vi.fn(behind);
+        vi.stubGlobal('fetch', f);
+        let settled = false;
+        const pending = prove().finally(() => { settled = true; });
+        await vi.advanceTimersByTimeAsync(RPC_RETRY_MS);
+        expect(settled).toBe(true);
+        expect(await pending).toMatchObject({ ok: true, signerKind: 'erc1271' });
+        expect(ethCalls(f as never).every((c) => c.params[1] === '0x12')).toBe(true); // never an older block
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('a lagging node is asked at the fresh block, which it lacks, so it is skipped, never believed', async () => {

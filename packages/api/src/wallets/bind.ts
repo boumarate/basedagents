@@ -172,6 +172,8 @@ export const RPC_HEAD_BUDGET_MS = 3_000;
 export const RPC_CALL_BUDGET_MS = 9_000;
 /** A call that hasn't answered by then also goes to the next endpoint (a hedged request); head answers arriving within this of the first one are counted. */
 export const RPC_HEDGE_MS = 1_500;
+/** When no node could answer at the pinned block, ask them all again after this (one Base block), so nodes a block behind have caught up. */
+export const RPC_RETRY_MS = 2_000;
 
 async function rpcOnce(url: string, method: string, params: unknown[], timeoutMs: number, cancel: AbortSignal): Promise<string> {
   const ctrl = new AbortController();
@@ -240,7 +242,9 @@ function freshestBlock(urls: string[]): Promise<string> {
  * the same answer: the first one wins, and a revert is an answer (a no). A failure (429,
  * 5xx, a node that doesn't have the block yet, one that lacks the method) starts the next
  * endpoint at once, and so does RPC_HEDGE_MS of silence, so a hanging node never keeps a
- * healthy one from being asked. Rejects only when no node answered.
+ * healthy one from being asked. When every endpoint has failed (say the node that reported
+ * the block is rate limiting us and the rest are a block behind), the round starts over
+ * after RPC_RETRY_MS, at the same block. Rejects only when no node answered in the budget.
  */
 function askEndpoints(urls: string[], method: string, params: unknown[], isYes: (result: string) => boolean): Promise<'yes' | 'no'> {
   return new Promise((resolve, reject) => {
@@ -250,11 +254,13 @@ function askEndpoints(urls: string[], method: string, params: unknown[], isYes: 
     let inFlight = 0;
     let done = false;
     let hedge: ReturnType<typeof setTimeout> | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     let last: unknown = new Error(`RPC ${method}: no endpoint answered within ${RPC_CALL_BUDGET_MS / 1000} s`);
     const finish = (settle: () => void) => {
       if (done) return;
       done = true;
       clearTimeout(hedge);
+      clearTimeout(retry);
       cancel.abort();
       settle();
     };
@@ -264,7 +270,9 @@ function askEndpoints(urls: string[], method: string, params: unknown[], isYes: 
       const left = deadline - Date.now();
       const url = left > 0 ? queue.shift() : undefined;
       if (!url) {
-        if (inFlight === 0) finish(() => reject(last));
+        if (inFlight > 0) return;
+        if (left > RPC_RETRY_MS) retry = setTimeout(() => { queue.push(...urls); launch(); }, RPC_RETRY_MS);
+        else finish(() => reject(last));
         return;
       }
       inFlight++;
