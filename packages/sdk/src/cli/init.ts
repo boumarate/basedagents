@@ -8,7 +8,7 @@
 import { createInterface } from 'readline';
 import { prepareNewKeypairPath, stageNewKeypair, commitNewKeypair, discardNewKeypair } from './wallet.js';
 import { generateKeypair, serializeKeypair } from '../index.js';
-import { RegistryClient, DEFAULT_API_URL } from '../index.js';
+import { RegistryClient, DEFAULT_API_URL, attributionFromEnv } from '../index.js';
 
 // ─── ANSI ───
 const R = '\x1b[0m';
@@ -176,7 +176,7 @@ export async function init(args: string[]): Promise<void> {
     while (true) {
       process.stdout.write('  Registering...');
       try {
-        agent = await client.register(keypair, profile, { onProgress: showProgress });
+        agent = await client.register(keypair, profile, { onProgress: showProgress, attribution: { interface: 'cli', ...attributionFromEnv() } });
         console.log(` ${green('✓')}`);
         break;
       } catch (err: unknown) {

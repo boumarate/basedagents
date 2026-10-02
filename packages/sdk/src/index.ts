@@ -620,6 +620,69 @@ const clientHeaders: Record<string, string> = {};
 export function setClientHeaders(headers: Record<string, string>): void {
   Object.assign(clientHeaders, headers);
 }
+/** A snapshot of the shared client headers, for the odd raw fetch outside RegistryClient. */
+export function getClientHeaders(): Record<string, string> {
+  return { ...clientHeaders };
+}
+
+// ─── Acquisition attribution (optional analytics; see api/src/acquisition) ───
+
+/**
+ * Optional acquisition attribution: where this installation/registration was
+ * acquired from. Reported evidence, not identity — the API treats it as
+ * analytics only, and invalid values are dropped server-side. Keep values to
+ * the normalized registry below; campaigns are free-form lowercase labels.
+ */
+export interface RegistrationAttribution {
+  source?: string;
+  campaign?: string;
+  acquisition_id?: string;
+  installation_id?: string;
+  interface?: 'mcp_stdio' | 'mcp_http' | 'cli' | 'sdk' | 'web';
+}
+
+/** Kept in sync with api/src/acquisition/constants.ts (no cross-package import). */
+const ATTRIBUTION_SOURCES = [
+  'website', 'github', 'npm', 'mcp_registry', 'pulsemcp', 'glama', 'smithery', 'hackernews', 'partner',
+] as const;
+const ATTRIBUTION_LABEL_RE = /^[a-z0-9_-]{1,64}$/;
+const ATTRIBUTION_ACQ_ID_RE = /^acq_[A-Za-z0-9_-]{1,96}$/;
+
+/**
+ * Read validated acquisition tags from BASEDAGENTS_ACQUISITION_SOURCE /
+ * _CAMPAIGN / _ID. Invalid values are silently dropped — attribution is
+ * optional analytics and must never fail a CLI run or registration.
+ */
+export function attributionFromEnv(env: Record<string, string | undefined> = process.env): RegistrationAttribution {
+  const out: RegistrationAttribution = {};
+  const source = (env.BASEDAGENTS_ACQUISITION_SOURCE ?? '').trim();
+  if ((ATTRIBUTION_SOURCES as readonly string[]).includes(source)) out.source = source;
+  const campaign = (env.BASEDAGENTS_ACQUISITION_CAMPAIGN ?? '').trim();
+  if (ATTRIBUTION_LABEL_RE.test(campaign)) out.campaign = campaign;
+  const acqId = (env.BASEDAGENTS_ACQUISITION_ID ?? '').trim();
+  if (ATTRIBUTION_ACQ_ID_RE.test(acqId)) out.acquisition_id = acqId;
+  return out;
+}
+
+/**
+ * The attribution tags as X-BasedAgents-* request headers, for
+ * setClientHeaders. Opt-out: with BASEDAGENTS_NO_TELEMETRY=1 or
+ * BASEDAGENTS_TELEMETRY=off this returns {} — no optional analytics metadata
+ * leaves the process (required operational records are unaffected).
+ */
+export function attributionClientHeaders(
+  attr: RegistrationAttribution = attributionFromEnv(),
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  if (env.BASEDAGENTS_NO_TELEMETRY === '1' || (env.BASEDAGENTS_TELEMETRY ?? '').toLowerCase() === 'off') return {};
+  const h: Record<string, string> = {};
+  if (attr.interface) h['X-BasedAgents-Interface'] = attr.interface;
+  if (attr.source) h['X-BasedAgents-Acquisition-Source'] = attr.source;
+  if (attr.campaign) h['X-BasedAgents-Acquisition-Campaign'] = attr.campaign;
+  if (attr.acquisition_id) h['X-BasedAgents-Acquisition-Id'] = attr.acquisition_id;
+  if (attr.installation_id) h['X-BasedAgents-Installation-Id'] = attr.installation_id;
+  return h;
+}
 
 export class RegistryClient {
   private baseUrl: string;
@@ -710,7 +773,7 @@ export class RegistryClient {
   async register(
     keypair: AgentKeypair,
     profile: RegisterProfile,
-    options?: { onProgress?: (attempts: number) => void }
+    options?: { onProgress?: (attempts: number) => void; attribution?: RegistrationAttribution }
   ): Promise<RegisteredAgent> {
     const b58pubkey = base58Encode(keypair.publicKey);
 
@@ -743,6 +806,11 @@ export class RegistryClient {
         nonce,
         signature: b64sig,
         profile,
+        // Top-level on purpose — never inside `profile`, whose hash anchors
+        // the public chain entry. Older servers strip the unknown key.
+        ...(options?.attribution && Object.keys(options.attribution).length > 0
+          ? { attribution: options.attribution }
+          : {}),
       }),
     });
 

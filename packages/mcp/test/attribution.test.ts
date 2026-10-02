@@ -217,6 +217,32 @@ describe('MCP attribution', () => {
     }
   });
 
+  it('delivers batched tool outcomes to /v1/telemetry/mcp, deduplicated by tool-call id', async () => {
+    const client = await spawn({ BASEDAGENTS_ATTRIBUTION_STATE_PATH: join(tmp, 'outcomes', 'state.json') });
+    try {
+      // The queue flushes at 20 entries; drive past the threshold.
+      for (let i = 0; i < 20; i++) {
+        await client.callTool({ name: 'browse_tasks', arguments: {} });
+      }
+      const deadline = Date.now() + 5_000;
+      let n = 0;
+      while (Date.now() < deadline) {
+        n = (await db.get<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM mcp_tool_outcomes WHERE tool_name = 'browse_tasks' AND outcome = 'ok'",
+        ))!.n;
+        if (n >= 20) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(n).toBeGreaterThanOrEqual(20);
+      const dupes = await db.get<{ n: number }>(
+        'SELECT COUNT(*) - COUNT(DISTINCT tool_call_id) AS n FROM mcp_tool_outcomes',
+      );
+      expect(dupes!.n).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('keeps concurrent tool calls on distinct tool-call ids', async () => {
     const client = await spawn({ BASEDAGENTS_ATTRIBUTION_STATE_PATH: join(tmp, 'concurrent', 'state.json') });
     try {

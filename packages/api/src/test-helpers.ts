@@ -28,6 +28,7 @@ import taskRoutes from './routes/tasks.js';
 import chainRoutes from './routes/chain.js';
 import claimBondRoutes from './routes/claim-bond.js';
 import { acquisitionCapture } from './acquisition/capture.js';
+import telemetryRoutes from './routes/telemetry.js';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { freshBindMessage, personalMessageDigest } from './wallets/bind.js';
 import { addressFromPrivateKey } from './payments/house-wallet.js';
@@ -361,6 +362,7 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
   app.route('/v1/board', feedRoutes);
   app.route('/v1/tasks', taskRoutes);
   app.route('/v1/chain', chainRoutes);
+  app.route('/v1', telemetryRoutes);
 
   return app;
 }

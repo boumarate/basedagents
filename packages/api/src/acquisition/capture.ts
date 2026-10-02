@@ -212,6 +212,72 @@ export async function recordAttribution(
 }
 
 /**
+ * The lenient registration-attribution payload: an optional top-level
+ * `attribution` object on POST /v1/register/complete. Parsed field by field —
+ * a malformed value is dropped, never a reason to fail a registration — and
+ * deliberately OUTSIDE ProfileSchema, so it can never enter the profile hash,
+ * the chain entry, or anything else that is signed or public.
+ */
+export function sanitizeRegistrationAttribution(raw: unknown): Partial<AttributionContext> {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const o = raw as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const out: Partial<AttributionContext> = {};
+  const source = cleanSource(str(o.source));
+  if (source) out.source = source;
+  const campaign = cleanLabel(str(o.campaign));
+  if (campaign) out.campaign = campaign;
+  if (ACQUISITION_ID_RE.test(str(o.acquisition_id))) out.acquisitionId = str(o.acquisition_id);
+  if (UUID_RE.test(str(o.installation_id))) out.installationId = str(o.installation_id).toLowerCase();
+  const iface = str(o.interface);
+  if ((ATTRIBUTION_INTERFACES as readonly string[]).includes(iface)) out.iface = iface as AttributionInterface;
+  return out;
+}
+
+/**
+ * Write the one immutable acquisition record of a NEW agent, at its actual
+ * registration (routes/register.ts, after the agents INSERT committed).
+ * Body attribution (SDK/CLI registrations) wins field-by-field over the
+ * ambient request headers (MCP registrations). The installation link is safe
+ * to write here without AgentSig: the registration challenge signature just
+ * proved possession of this very key. Pre-existing agents never get a row —
+ * they are existing users, not new acquisitions.
+ */
+export async function recordAgentAcquisition(
+  db: DBAdapter,
+  agentId: string,
+  registeredAt: string,
+  headerCtx: AttributionContext,
+  bodyAttribution: unknown,
+): Promise<void> {
+  const body = sanitizeRegistrationAttribution(bodyAttribution);
+  const merged: AttributionContext = {
+    installationId: body.installationId ?? headerCtx.installationId,
+    source: body.source ?? headerCtx.source,
+    campaign: body.campaign ?? headerCtx.campaign,
+    acquisitionId: body.acquisitionId ?? headerCtx.acquisitionId,
+    iface: body.iface ?? headerCtx.iface,
+    clientName: headerCtx.clientName,
+    clientVersion: headerCtx.clientVersion,
+    mcpVersion: headerCtx.mcpVersion,
+  };
+  const nowIso = new Date().toISOString();
+  const tag = await resolveTag(db, merged, nowIso);
+  await db.run(
+    `INSERT OR IGNORE INTO agent_acquisition (agent_id, registered_at, source, campaign, acquisition_id, installation_id, interface, method)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    agentId, registeredAt,
+    tag.source ?? 'unknown', tag.campaign, merged.acquisitionId ?? '', merged.installationId ?? '', merged.iface, tag.method,
+  );
+  if (merged.installationId) {
+    await db.run(
+      `INSERT OR IGNORE INTO installation_agent_links (installation_id, agent_id, first_linked_at) VALUES (?, ?, ?)`,
+      merged.installationId, agentId, nowIso,
+    );
+  }
+}
+
+/**
  * The capture middleware. Registered after the version-telemetry middleware
  * (same shape: read after `await next()`, write via waitUntil, swallow every
  * analytics error). Gated by ACQUISITION_ANALYTICS ('0' disables; default on).

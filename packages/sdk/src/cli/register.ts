@@ -8,7 +8,7 @@
 import { createInterface } from 'readline';
 import { prepareNewKeypairPath, stageNewKeypair, commitNewKeypair, discardNewKeypair } from './wallet.js';
 import { generateKeypair, serializeKeypair } from '../index.js';
-import { RegistryClient, DEFAULT_API_URL } from '../index.js';
+import { RegistryClient, DEFAULT_API_URL, attributionFromEnv } from '../index.js';
 
 // ─── ANSI ───
 const R = '\x1b[0m';
@@ -176,7 +176,7 @@ async function registerNonInteractive(identity: Record<string, unknown>, apiUrl:
   // client.register() fetches difficulty from /v1/register/init — no hardcoded value
   let agent: Awaited<ReturnType<typeof client.register>>;
   try {
-    agent = await client.register(keypair, profile, { onProgress: jsonMode ? undefined : showProgress });
+    agent = await client.register(keypair, profile, { onProgress: jsonMode ? undefined : showProgress, attribution: { interface: 'cli', ...attributionFromEnv() } });
   } catch (err: unknown) {
     if (!jsonMode) console.log(` ${red('✗')}\n`);
     const msg = err instanceof Error ? err.message : String(err);
@@ -391,7 +391,7 @@ export async function register(args: string[]): Promise<void> {
       ...(skills.length   ? { skills }                          : {}),
     };
 
-    const agent = await client.register(keypair, profile, { onProgress: showProgress });
+    const agent = await client.register(keypair, profile, { onProgress: showProgress, attribution: { interface: 'cli', ...attributionFromEnv() } });
     console.log(` ${green('✓')}`);
 
     keypairPath = commitNewKeypair(staged, keypairPath, slug);

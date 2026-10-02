@@ -5,6 +5,7 @@ import { RegisterInitSchema, RegisterCompleteSchema } from '../types/index.js';
 import { fireWebhook } from '../lib/webhooks.js';
 import { isSafeUrl } from '../lib/url-validator.js';
 import { nameSkeleton } from '../lib/skeleton.js';
+import { parseAttributionHeaders, recordAgentAcquisition } from '../acquisition/capture.js';
 import {
   base58Decode,
   publicKeyToAgentId,
@@ -328,6 +329,24 @@ register.post('/complete', async (c) => {
     "UPDATE challenges SET status = 'completed' WHERE id = ?",
     challenge_id
   );
+
+  // Acquisition attribution: the one immutable record of where this NEW agent
+  // came from, written at its actual registration. Best-effort analytics —
+  // any failure here never fails the registration — and none of it touches
+  // the profile hash or chain entry computed above.
+  if (c.env?.ACQUISITION_ANALYTICS !== '0') {
+    try {
+      await recordAgentAcquisition(
+        db,
+        agentId,
+        timestamp,
+        parseAttributionHeaders((n) => c.req.header(n)),
+        parsed.data.attribution,
+      );
+    } catch (err) {
+      console.error('[acquisition] registration attribution failed:', err);
+    }
+  }
 
   // Get the sequence number
   const chainEntry = await db.get<{ sequence: number }>(

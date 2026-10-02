@@ -59,6 +59,11 @@ export const RegisterCompleteSchema = z.object({
   profile: ProfileSchema,
   wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
   wallet_network: z.enum(ALLOWED_WALLET_NETWORKS_CONST as unknown as [string, ...string[]]).default('eip155:8453').optional(),
+  // Optional acquisition attribution (acquisition/capture.ts). z.unknown() on
+  // purpose: each field is sanitized leniently in the handler — a malformed
+  // tag is dropped, never a 400. Deliberately OUTSIDE ProfileSchema so it can
+  // never enter hashProfile(), the chain entry, or any signature.
+  attribution: z.unknown().optional(),
 });
 
 // ─── Structured Verification Report ───

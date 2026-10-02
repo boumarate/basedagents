@@ -18,7 +18,7 @@ import { scanCommand } from './scan.js';
 import { keyring } from './keyring.js';
 import { id } from './id.js';
 import { feedback } from './feedback.js';
-import { setClientHeaders } from '../index.js';
+import { attributionClientHeaders, attributionFromEnv, setClientHeaders } from '../index.js';
 
 import { VERSION } from '../version.js';
 
@@ -92,8 +92,14 @@ Docs: https://basedagents.ai/docs
 
 export async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  // Every API call names the CLI version (the operator's daily digest counts them).
-  setClientHeaders({ 'X-BasedAgents-Cli-Version': VERSION });
+  // Every API call names the CLI version (the operator's daily digest counts
+  // them), the interface, and any acquisition tags from the environment —
+  // optional analytics the API only trusts alongside a signed request.
+  // BASEDAGENTS_NO_TELEMETRY=1 / BASEDAGENTS_TELEMETRY=off silence the tags.
+  setClientHeaders({
+    'X-BasedAgents-Cli-Version': VERSION,
+    ...attributionClientHeaders({ interface: 'cli', ...attributionFromEnv() }),
+  });
 
   // `keyring` forwards EVERYTHING (including --help / --version / subcommands) to
   // the @basedagents/keyring CLI, so intercept it before the global flag handling.

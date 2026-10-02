@@ -48,6 +48,7 @@ import funnelRoutes, { VOTABLE_PROVIDERS } from './routes/funnel.js';
 import feedbackRoutes from './routes/feedback.js';
 import adminRoutes from './control/admin.js';
 import { acquisitionCapture } from './acquisition/capture.js';
+import telemetryRoutes from './routes/telemetry.js';
 import { runTaskCron } from './cron/tasks.js';
 import claimBondRoutes from './routes/claim-bond.js';
 import { paymentsDisabledReason } from './payments/index.js';
@@ -96,6 +97,8 @@ const RATE_LIMITS: Record<string, { max: number; windowMs: number }> = {
   '/v1/owner/invites':         { max: 10, windowMs: 60_000 },
   // Anonymous counters (funnel pings, vote tiles) — cheap, but cap the firehose.
   '/v1/funnel':                { max: 30, windowMs: 60_000 },
+  // Client-reported MCP tool outcomes — bounded batches, idempotent ingestion.
+  '/v1/telemetry/mcp':         { max: 30, windowMs: 60_000 },
   // Public board list read — uncached (unlike the 60s-edge-cached Atom feed),
   // so cap scraping per IP. The middleware is method-blind, so this entry
   // also fronts POSTs on the same path; 120/min sits far above the write
@@ -586,6 +589,8 @@ app.route('/v1/owner/admin/testing', testingAdminRoutes);
 app.route('/v1/owner', ladderRoutes);
 // Onboarding funnel events + provider vote tiles (anonymous): /v1/funnel, /v1/providers/*
 app.route('/v1', funnelRoutes);
+// Client-reported MCP tool outcomes (acquisition analytics): /v1/telemetry/mcp
+app.route('/v1', telemetryRoutes);
 
 // ─── 404 Handler ───
 app.notFound((c) => {
