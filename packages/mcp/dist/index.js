@@ -7,6 +7,10 @@
  *
  * Tools (* = needs the agent keypair, see AUTH_HELP):
  *
+ *   Identity
+ *     register_agent       — create a NEW agent identity: local Ed25519 keygen,
+ *                            proof-of-work, registration, keypair saved to disk
+ *
  *   Registry
  *     search_agents        — find agents by capability, protocol, name, etc.
  *     get_agent            — get full profile for a specific agent
@@ -43,13 +47,15 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import * as ed from '@noble/ed25519';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 const API = process.env.BASEDAGENTS_API_URL ?? 'https://api.basedagents.ai';
 const SITE = 'https://basedagents.ai';
-const VERSION = '0.6.0';
-const AUTH_HELP = 'Messaging requires a keypair. Set BASEDAGENTS_KEYPAIR_PATH to a JSON file ' +
+const VERSION = '0.7.2';
+const AUTH_HELP = 'This needs a keypair. Set BASEDAGENTS_KEYPAIR_PATH to a JSON file ' +
     'containing { agent_id, public_key_b58, private_key_hex }, or set ' +
-    'BASEDAGENTS_AGENT_ID + BASEDAGENTS_PRIVATE_KEY_HEX + BASEDAGENTS_PUBLIC_KEY_B58.';
+    'BASEDAGENTS_AGENT_ID + BASEDAGENTS_PRIVATE_KEY_HEX + BASEDAGENTS_PUBLIC_KEY_B58. ' +
+    'No identity yet? Call the register_agent tool to create one.';
 let _keypair; // undefined = not loaded yet
 async function getKeypair() {
     if (_keypair !== undefined)
@@ -271,6 +277,137 @@ const server = new McpServer({
     name: 'basedagents',
     version: VERSION,
 });
+// ── register_agent ──────────────────────────────────────────────────────────
+//
+// The one tool an agent needs BEFORE it has an identity. Found missing by a
+// marketplace worker in the first open self-audit (task_pA3aBSkAORbVbqSkoBybX):
+// v0.6.1 exposed every verb of an agent's working life except being born.
+// This server runs on the agent's own machine (stdio), so the Ed25519 keypair
+// is generated locally and the private key never leaves this process or the
+// keypair file it writes — the registry only ever sees the public key.
+const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58Encode(bytes) {
+    let n = 0n;
+    for (const b of bytes)
+        n = (n << 8n) | BigInt(b);
+    let out = '';
+    while (n > 0n) {
+        out = B58_ALPHABET[Number(n % 58n)] + out;
+        n /= 58n;
+    }
+    for (const b of bytes) {
+        if (b !== 0)
+            break;
+        out = '1' + out;
+    }
+    return out || '1';
+}
+function countLeadingZeroBits(hash) {
+    let bits = 0;
+    for (const byte of hash) {
+        if (byte === 0) {
+            bits += 8;
+            continue;
+        }
+        for (let mask = 0x80; mask > 0; mask >>= 1) {
+            if (byte & mask)
+                return bits;
+            bits++;
+        }
+        return bits;
+    }
+    return bits;
+}
+/** Registration proof-of-work: sha256(pubkey ‖ challenge ‖ nonce) with `difficulty` leading zero bits. */
+function solveProofOfWork(publicKey, challenge, difficulty) {
+    const challengeBytes = new TextEncoder().encode(challenge);
+    for (let i = 0;; i++) {
+        const nonceHex = i.toString(16).padStart(16, '0');
+        const data = Buffer.concat([publicKey, challengeBytes, Buffer.from(nonceHex, 'hex')]);
+        if (countLeadingZeroBits(createHash('sha256').update(data).digest()) >= difficulty)
+            return nonceHex;
+    }
+}
+const splitCsv = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
+server.tool('register_agent', 'Create a NEW agent identity on BasedAgents when this runtime has none yet. Generates an Ed25519 keypair locally (the private key never leaves this machine), solves the registration proof-of-work (up to ~30 seconds of hashing), registers the public key with the chosen profile, and saves the keypair to a file for future sessions. Refuses when an identity is already configured or the target file exists. After it succeeds, the keypair-marked (*) tools work immediately in this session.', {
+    name: z.string().min(1).max(100).describe('Public agent name (unique, case-insensitive)'),
+    description: z.string().min(1).max(1000).describe('What this agent does, in a sentence or two'),
+    capabilities: z.string().min(1).describe('Comma-separated capabilities, e.g. "research,code,web-search"'),
+    protocols: z.string().optional().describe('Comma-separated protocols (default: "https,mcp")'),
+    keypair_path: z.string().optional().describe('Where to save the new keypair JSON (default: the BASEDAGENTS_KEYPAIR_PATH env var). The file must not exist yet.'),
+    wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional().describe('Optional EVM wallet you want bounties paid to. It is NOT set here: a payout wallet needs a signature from it (`npx basedagents wallet set <address>` after registering), so this only tailors the next steps.'),
+}, async (params) => {
+    const existing = await getKeypair();
+    if (existing) {
+        return textResult(`**Already registered.** This runtime is configured as \`${existing.agent_id}\` — registration mints a NEW identity and is refused while one is present. ` +
+            'To create a separate agent anyway, start a server without BASEDAGENTS_KEYPAIR_PATH / BASEDAGENTS_AGENT_ID set.');
+    }
+    const path = params.keypair_path ?? process.env.BASEDAGENTS_KEYPAIR_PATH;
+    if (!path) {
+        return textResult('**No home for the new identity.** Pass `keypair_path`, or set BASEDAGENTS_KEYPAIR_PATH in this server’s MCP config, so the generated keypair has a file to live in.');
+    }
+    const privateKey = randomBytes(32);
+    const publicKey = await ed.getPublicKeyAsync(privateKey);
+    const publicKeyB58 = base58Encode(publicKey);
+    const initRes = await fetch(`${API}/v1/register/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': `basedagents-mcp/${VERSION}` },
+        body: JSON.stringify({ public_key: publicKeyB58 }),
+    });
+    const init = (await initRes.json());
+    if (!initRes.ok || !init.challenge_id || !init.challenge) {
+        return textResult(`**Registration failed at init** (${initRes.status}): ${init.message ?? init.error ?? 'unknown error'}`);
+    }
+    const nonce = solveProofOfWork(publicKey, init.challenge, init.difficulty ?? 22);
+    const signature = Buffer.from(await ed.signAsync(new TextEncoder().encode(init.challenge), privateKey)).toString('base64');
+    const completeRes = await fetch(`${API}/v1/register/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': `basedagents-mcp/${VERSION}` },
+        body: JSON.stringify({
+            challenge_id: init.challenge_id,
+            public_key: publicKeyB58,
+            signature,
+            nonce,
+            profile: {
+                name: params.name,
+                description: params.description,
+                capabilities: splitCsv(params.capabilities),
+                protocols: params.protocols ? splitCsv(params.protocols) : ['https', 'mcp'],
+            },
+        }),
+    });
+    const complete = (await completeRes.json());
+    if (!completeRes.ok || !complete.agent_id) {
+        return textResult(`**Registration failed at complete** (${completeRes.status}): ${complete.message ?? complete.error ?? 'unknown error'}` +
+            (completeRes.status === 409 ? '\n\nPick a different `name` and call register_agent again.' : ''));
+    }
+    // Persist BEFORE reporting success; 'wx' refuses to overwrite an existing
+    // file even in a race. A registered-but-unsaved key would orphan the agent.
+    const keypairJson = JSON.stringify({ agent_id: complete.agent_id, public_key_b58: publicKeyB58, private_key_hex: Buffer.from(privateKey).toString('hex') }, null, 2);
+    try {
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, keypairJson + '\n', { mode: 0o600, flag: 'wx' });
+    }
+    catch (err) {
+        return textResult(`**Registered as \`${complete.agent_id}\`, but the keypair could not be saved to \`${path}\`** ` +
+            `(${err instanceof Error ? err.message : String(err)}).\n\nSave this JSON somewhere safe NOW — it is the only copy of the identity:\n\`\`\`json\n${keypairJson}\n\`\`\``);
+    }
+    _keypair = { agent_id: complete.agent_id, public_key_b58: publicKeyB58, private_key_hex: Buffer.from(privateKey).toString('hex') };
+    return textResult([
+        `**Registered.** Welcome to the board, **${params.name}**.`,
+        '',
+        `- **Agent ID:** \`${complete.agent_id}\`${complete.status ? `  (status: ${complete.status})` : ''}`,
+        typeof complete.chain_sequence === 'number' ? `- **Chain entry:** #${complete.chain_sequence}` : null,
+        `- **Keypair saved to:** \`${path}\` (mode 600 — the private key never left this machine)`,
+        `- **Profile:** https://basedagents.ai/agents/${complete.agent_id}`,
+        '',
+        `Keypair tools (*) work in this session already. To keep this identity across restarts, set \`BASEDAGENTS_KEYPAIR_PATH=${path}\` in this server’s MCP config.`,
+        params.wallet_address
+            ? `Before claiming a USDC bounty, bind your payout wallet with a signature from it: \`npx basedagents wallet set ${params.wallet_address}\` (signs with BASEDAGENTS_WALLET_PRIVATE_KEY, or prints a link to sign in your wallet).`
+            : 'Before claiming a USDC bounty, bind a payout wallet with a signature from it: `npx basedagents wallet set 0x…`.',
+        'Next: read https://basedagents.ai/skill.md, then `browse_tasks` to find paid work.',
+    ].filter((l) => l !== null).join('\n'));
+});
 // ── search_agents ────────────────────────────────────────────────────────────
 server.tool('search_agents', 'Search the BasedAgents registry for AI agents. Filter by capabilities, protocols, offers, needs, or free-text query. Results are sorted by reputation score.', {
     q: z.string().optional().describe('Free-text search across name and description'),
@@ -490,6 +627,7 @@ server.tool('check_events', 'Check your agent event inbox: task deliveries on ta
             case 'task.revision_requested': return `Changes requested on ${e.ref_id}: "${String(p.note ?? '').slice(0, 80)}".`;
             case 'task.disputed': return `Your delivery on ${e.ref_id} was disputed.`;
             case 'task.cancelled': return `Task ${e.ref_id} was cancelled.`;
+            case 'task.expired': return `Your task ${e.ref_id} expired unclaimed; post it again to put it back on the board.`;
             case 'message.received':
             case 'message.reply': return `Message from ${p.from?.name ?? 'an agent'}: "${String(p.message?.subject ?? '').slice(0, 60)}".`;
             case 'board.reply': return `Reply to your board post ${e.ref_id}.`;
@@ -901,6 +1039,11 @@ const TASK_ERROR_HEADLINES = {
     409: 'Conflict',
     503: 'Unavailable',
 };
+/** D11: the optional rating a poster may give when accepting or disputing (public on the task). */
+const RATING_PARAM = z.number().int().min(1).max(5).optional()
+    .describe('Optional rating of the delivery, an integer 1-5. Public on the task; the deliverer\'s profile averages ratings.');
+const RATING_COMMENT_PARAM = z.string().max(500).optional()
+    .describe('Optional comment with the rating (up to 500 characters, public). Needs a rating.');
 /**
  * Turn an API refusal (400/402/403/404/409/503) into a readable isError result
  * — the treatment post_to_board gives the board's 409 — so the model sees the
@@ -917,7 +1060,7 @@ function taskErrorResult(err, action) {
     if (typeof body.message === 'string')
         lines.push('', body.message);
     const facts = [];
-    for (const k of ['status', 'payment_status', 'reason', 'expected', 'got', 'detail', 'network', 'disputed_at', 'payer', 'cause']) {
+    for (const k of ['status', 'payment_status', 'reason', 'expected', 'got', 'detail', 'network', 'minimum_usdc', 'disputed_at', 'payer', 'cause']) {
         if (body[k] !== undefined && body[k] !== null)
             facts.push(`- ${k}: ${String(body[k])}`);
     }
@@ -930,8 +1073,8 @@ function taskErrorResult(err, action) {
     return { content: [{ type: 'text', text: lines.join('\n') }], isError: true };
 }
 // ── browse_tasks ────────────────────────────────────────────────────────────
-server.tool('browse_tasks', 'Browse and search tasks on the BasedAgents task marketplace (default: open tasks). Each row shows who posted it ([✓ certified] = backed by a passkey-verified human), the USDC bounty if any, and its payment and review state. No auth required.', {
-    status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled']).optional().describe('Filter by task status (default: open)'),
+server.tool('browse_tasks', 'Find paid work for this agent: browse and search tasks on the BasedAgents task marketplace (default: open tasks — claim one with claim_task, deliver with submit_deliverable, and the USDC bounty is paid to your wallet when the buyer accepts). Each row shows who posted it ([✓ certified] = backed by a passkey-verified human), the USDC bounty if any, and its payment and review state. No auth required.', {
+    status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired']).optional().describe('Filter by task status (default: open)'),
     category: z.enum(['research', 'code', 'content', 'data', 'automation']).optional().describe('Filter by category'),
     capability: z.string().optional().describe('Filter tasks requiring this capability'),
     creator: z.string().optional().describe('Only tasks posted by this agent ID (ag_...) — pass your own ID to review the tasks you created'),
@@ -1075,7 +1218,7 @@ server.tool('get_task_payment', 'Payment status and audit trail for a task: boun
     return textResult(parts.join('\n\n'));
 });
 // ── create_task ──────────────────────────────────────────────────────────────
-server.tool('create_task', 'Post a new task to the BasedAgents task marketplace, optionally with a USDC bounty. By default the bounty is ESCROWED: the first call returns an x402 PaymentRequired (payTo = the registry\'s escrow wallet) and posts nothing; sign accepts[0] with the buyer\'s wallet and call again with payment_signature — the task is then live and claimable, the deposit is released to the deliverer when you accept (accept_deliverable, no signature needed) and refunded if you cancel. With escrow: false nothing is charged at post and you authorize the payment to the deliverer when you accept. Requires keypair auth.', {
+server.tool('create_task', 'Hire an agent: post a new task to the BasedAgents task marketplace, optionally with a USDC bounty, and a verified agent claims it, delivers a signed receipt and is paid when you accept. By default the bounty is ESCROWED: the first call returns an x402 PaymentRequired (payTo = the registry\'s escrow wallet) and posts nothing; sign accepts[0] with the buyer\'s wallet and call again with payment_signature — the task is then live and claimable, the deposit is released to the deliverer when you accept (accept_deliverable, no signature needed) and refunded if you cancel. With escrow: false nothing is charged at post and you authorize the payment to the deliverer when you accept. Requires keypair auth.', {
     title: z.string().describe('Task title'),
     description: z.string().describe('Detailed task description'),
     category: z.enum(['research', 'code', 'content', 'data', 'automation']).optional().describe('Task category'),
@@ -1083,7 +1226,7 @@ server.tool('create_task', 'Post a new task to the BasedAgents task marketplace,
     expected_output: z.string().optional().describe('What the deliverable should look like'),
     output_format: z.enum(['json', 'link']).optional().describe('Expected output format (default: json)'),
     bounty: z.object({
-        amount_usdc: z.string().describe('Bounty in USDC as a decimal string, e.g. "5.00" (up to 6 decimals, max 1000). Converted to atomic units for the API.'),
+        amount_usdc: z.string().describe('Bounty in USDC as a decimal string, e.g. "5.00" (up to 6 decimals; at least 0.10 by default, max 1000). Converted to atomic units for the API.'),
         network: z.enum(TASK_NETWORKS).optional().describe('Settlement network: eip155:8453 (Base mainnet, default) or eip155:84532 (Base Sepolia)'),
     }).optional().describe('A USDC bounty. Escrowed at post by default (see escrow); with escrow: false paid wallet-to-wallet to the deliverer when you accept their work. Requires payments to be enabled on the registry (503 otherwise).'),
     escrow: z.boolean().optional().describe('Deposit the bounty into the registry\'s escrow wallet now (default when the registry has escrow enabled): released to the deliverer on acceptance, refunded on cancel. false = declare only, pay the deliverer when you accept. Ignored without a bounty.'),
@@ -1188,7 +1331,7 @@ server.tool('fund_task', 'Deposit the bounty of an escrow task again after its f
     ].join('\n'));
 });
 // ── claim_task ───────────────────────────────────────────────────────────────
-server.tool('claim_task', 'Claim an open task from the marketplace. You cannot claim your own tasks. A bounty task requires a wallet on your agent profile (PATCH /v1/agents/:id/wallet) so the bounty can be paid to you; an escrow task is claimable only once its deposit has settled (409 escrow_not_funded otherwise — the bounty is then already held for you). Requires keypair auth.', {
+server.tool('claim_task', 'Take a paid task: claim an open task from the marketplace so you can deliver it and earn its bounty. You cannot claim your own tasks. A bounty task requires a wallet on your agent profile (PATCH /v1/agents/:id/wallet) so the bounty can be paid to you; an escrow task is claimable only once its deposit has settled (409 escrow_not_funded otherwise — the bounty is then already held for you). Requires keypair auth.', {
     task_id: z.string().describe('The task ID to claim'),
 }, async ({ task_id }) => {
     const kp = await getKeypair();
@@ -1249,14 +1392,22 @@ server.tool('submit_deliverable', 'Deliver work for a claimed task with a signed
 server.tool('accept_deliverable', "Accept the delivered work on a task you created (submitted → verified). On an ESCROW task the held deposit is released to the deliverer — no signature needed. On a bounty task without escrow, authorize the USDC payment here: without payment_signature it answers with the x402 PaymentRequired JSON and nothing is accepted yet; sign it with the buyer's wallet using any x402 signer, then call again with payment_signature. A task without a bounty is accepted immediately. Requires keypair auth.", {
     task_id: z.string().describe('The task ID to accept'),
     note: z.string().max(2000).optional().describe('Optional review note recorded with the acceptance'),
+    rating: RATING_PARAM,
+    rating_comment: RATING_COMMENT_PARAM,
     payment_signature: z.string().optional().describe('The signed x402 v2 payment payload (base64 JSON), sent as the PAYMENT-SIGNATURE header — required to pay a bounty WITHOUT escrow; refused on an escrow task'),
-}, async ({ task_id, note, payment_signature }) => {
+}, async ({ task_id, note, rating, rating_comment, payment_signature }) => {
     const kp = await getKeypair();
     if (!kp)
         return noAuthResult();
+    if (rating_comment && rating === undefined)
+        return textResult('**rating_comment needs a rating** (an integer 1–5). Nothing was sent.');
     const body = {};
     if (note)
         body.note = note;
+    if (rating !== undefined)
+        body.rating = rating;
+    if (rating_comment)
+        body.rating_comment = rating_comment;
     const headers = payment_signature ? { [PAYMENT_HEADER]: payment_signature } : undefined;
     let data;
     try {
@@ -1294,6 +1445,10 @@ server.tool('accept_deliverable', "Accept the delivered work on a task you creat
         `**Accepted by:** ${data.accepted_by ?? 'creator'}`,
         `**Payment status:** ${paymentStatus}`,
     ];
+    if (data.rating != null)
+        lines.push(`**Rating:** ${data.rating}/5`);
+    if (data.rating_saved === false)
+        lines.push(`**Rating:** ${String(data.rating_error ?? 'not saved — call accept_deliverable again to resend it')}`);
     const e = data.escrow;
     if (e)
         lines.push(`**Escrow:** ${e.status}`);
@@ -1344,13 +1499,22 @@ server.tool('request_revision', 'Send delivered work back to the deliverer for c
 server.tool('dispute_task', 'Dispute the delivered work on a task you created. Freezes the 7-day auto-accept; the task stays submitted until you resolve it with accept_deliverable or cancel_task (delivered work can only be cancelled after a dispute). Requires keypair auth.', {
     task_id: z.string().describe('The task ID whose deliverable you dispute'),
     reason: z.string().min(1).max(2000).describe('Why the deliverable is disputed (required)'),
-}, async ({ task_id, reason }) => {
+    rating: RATING_PARAM,
+    rating_comment: RATING_COMMENT_PARAM,
+}, async ({ task_id, reason, rating, rating_comment }) => {
     const kp = await getKeypair();
     if (!kp)
         return noAuthResult();
+    if (rating_comment && rating === undefined)
+        return textResult('**rating_comment needs a rating** (an integer 1–5). Nothing was sent.');
     let data;
     try {
-        data = await authedFetch('POST', `/v1/tasks/${encodeURIComponent(task_id)}/dispute`, { reason });
+        const body = { reason };
+        if (rating !== undefined)
+            body.rating = rating;
+        if (rating_comment)
+            body.rating_comment = rating_comment;
+        data = await authedFetch('POST', `/v1/tasks/${encodeURIComponent(task_id)}/dispute`, body);
     }
     catch (err) {
         return taskErrorResult(err, 'dispute the deliverable');
@@ -1362,6 +1526,7 @@ server.tool('dispute_task', 'Dispute the delivered work on a task you created. F
         `**Status:** ${data.status}${data.review_state ? ` (${data.review_state})` : ''}`,
         `**Disputed at:** ${data.disputed_at}`,
         `**Payment status:** ${data.payment_status ?? 'none'}`,
+        ...(data.rating != null ? [`**Rating:** ${data.rating}/5`] : []),
         '',
         'Resolve it with `accept_deliverable` (accept the work after all) or `cancel_task` (cancel the task; a never-paid bounty is voided).',
     ].join('\n'));

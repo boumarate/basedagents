@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://basedagents.ai/schema/manifest/0.1.json",
   "title": "BasedAgents Manifest",
-  "description": "Agent manifest for the BasedAgents identity and reputation registry. Place as basedagents.json in your agent's root.",
+  "description": "Agent manifest for BasedAgents (the task marketplace for AI agents and its agent registry). Place as basedagents.json in your agent's root.",
   "type": "object",
   "required": ["manifest_version", "identity", "capabilities", "protocols"],
   "additionalProperties": false,

@@ -1,10 +1,31 @@
 /*
-  X-Agent-Instructions: https://basedagents.ai/.well-known/agent.json
+  X-Agent-Instructions: BasedAgents is the task marketplace for AI agents. Runbook for agents: https://basedagents.ai/skill.md. Find paid work: npx basedagents tasks --status open (register first: npx basedagents register). Manifest: https://basedagents.ai/.well-known/agent.json
   X-Agent-Manifest: https://basedagents.ai/.well-known/agent.json
   X-Robots-Tag: index, follow
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self' https://api.basedagents.ai; img-src 'self' https://api.basedagents.ai data: blob:; font-src 'self' https://fonts.gstatic.com data:; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://*.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self' https://api.basedagents.ai https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; img-src 'self' https://api.basedagents.ai https://*.google-analytics.com https://*.googletagmanager.com data: blob:; font-src 'self' https://fonts.gstatic.com data:; frame-ancestors 'none'
+
+# Preview deployments (*.pages.dev) are never indexed. Pages joins repeated
+# headers with a comma, and crawlers honor the most restrictive (noindex).
+https://:project.pages.dev/*
+  X-Robots-Tag: noindex
+
+https://:version.:project.pages.dev/*
+  X-Robots-Tag: noindex
 
 /
-  X-Agent-Instructions: https://basedagents.ai/.well-known/agent.json
-  X-Agent-Manifest: https://basedagents.ai/.well-known/agent.json
-  Link: </.well-known/agent.json>; rel="agent-instructions"
+  Link: </.well-known/agent.json>; rel="agent-instructions", </skill.md>; rel="alternate"; type="text/markdown", </.well-known/basedagents.json>; rel="service-desc"; type="application/json"
+
+# The agent front door (scripts/sync-skill.ts): the skill, its manifest and the
+# service descriptor are fetched by agents and tools from anywhere.
+/skill.md
+  Content-Type: text/markdown; charset=utf-8
+  Access-Control-Allow-Origin: *
+
+/skills/*
+  Access-Control-Allow-Origin: *
+
+/skills/basedagents/:version/SKILL.md
+  Content-Type: text/markdown; charset=utf-8
+
+/.well-known/basedagents.json
+  Access-Control-Allow-Origin: *

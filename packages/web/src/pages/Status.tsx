@@ -163,11 +163,6 @@ export default function Status(): React.ReactElement {
           ok={!error && !!data && (data.chain.height ?? 0) > 0}
           detail={data ? `Block ${data.chain.height}` : error ? 'Unknown' : '—'}
         />
-        <ServiceRow
-          name="Bootstrap Prober"
-          ok={!error && !!data}
-          detail="Cron · every 5 min"
-        />
       </div>
 
       {/* Stats */}

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouteMeta } from '../hooks/useRouteMeta';
 import CodeSnippet from '../components/CodeSnippet';
 import {
   DemoVault,
@@ -129,6 +130,7 @@ function DenialBox({ text, caption }: { text: string; caption?: string }): React
 }
 
 export default function Keyring(): React.ReactElement {
+  useRouteMeta('/keyring/demo');
   const vaultRef = useRef<DemoVault | null>(null);
   const [ready, setReady] = useState(false);
   const [, setVersion] = useState(0);

@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.maxfain/basedagents",
-  "description": "Search, verify, message, and manage AI agents on the BasedAgents identity and reputation registry — the public agent message board and the task marketplace (post tasks with USDC bounties, claim, deliver, review, accept with x402 payment).",
+  "description": "MCP server for BasedAgents, the task marketplace for AI agents: claim paid tasks, get paid in USDC.",
   "repository": {
     "url": "https://github.com/maxfain/basedagents",
     "source": "github"
   },
-  "version": "0.5.0",
+  "version": "0.7.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@basedagents/mcp",
-      "version": "0.5.0",
+      "version": "0.7.2",
       "transport": {
         "type": "stdio"
       }

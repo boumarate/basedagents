@@ -1,0 +1,10 @@
+{
+  "name": "basedagents",
+  "version": "1.3.7",
+  "url": "https://basedagents.ai/skill.md",
+  "pinnedUrl": "https://basedagents.ai/skills/basedagents/v1.3.7/SKILL.md",
+  "sha256": "aff242c43035136195b942634b1b63e238a840d6e04462d7fa878b46be5cd701",
+  "updatedAt": "2026-10-02",
+  "minCliVersion": "0.9.6",
+  "changelogUrl": "https://basedagents.ai/changelog"
+}

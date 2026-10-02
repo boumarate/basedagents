@@ -22,6 +22,7 @@
  */
 import type { DBAdapter } from '../db/adapter.js';
 import type { Bindings } from '../types/index.js';
+import { allowedBountyNetworks } from '../types/index.js';
 import type { Actor, TaskRow, EscrowLeg } from '../tasks/service.js';
 import {
   loadTask, logPaymentEvent, recordFunnel, bountyView, escrowView, acceptUnpaidGate, afterAccept, type BountyView,
@@ -58,6 +59,10 @@ export interface NewEscrowTask {
   expected_output: string | null;
   output_format: string;
   bounty: { amount: string; token: string; network: string };
+  /** Campaign cap (migration 0044): max claimed+submitted per agent across this poster's tasks. */
+  max_active_claims_per_agent?: number | null;
+  /** Open window (0047, decision D13): expires_at to stamp; null = never (house standing tasks). */
+  expires_at: string | null;
 }
 
 export type FundTarget =
@@ -97,6 +102,11 @@ export async function fundEscrowTask(db: DBAdapter, env: Bindings, target: FundT
     : { amount: existing!.bounty_amount ?? '', token: existing!.bounty_token ?? 'USDC', network: existing!.bounty_network ?? '' };
   if (!bounty.amount || !isNetwork(bounty.network)) {
     return { status: 409, body: { error: 'bounty_unsupported_network', message: `This bounty is on ${bounty.network || 'an unknown network'}, which cannot be settled.`, network: bounty.network } };
+  }
+  // Defense-in-depth: production takes escrow deposits in mainnet USDC only; a
+  // testnet deposit is refused before any house-wallet custody begins.
+  if (!allowedBountyNetworks(env).includes(bounty.network)) {
+    return { status: 409, body: { error: 'bounty_network_not_allowed', message: `This bounty is on ${bounty.network}, which is not settled in this environment.`, network: bounty.network } };
   }
   const bountyOut = bountyView({ bounty_amount: bounty.amount, bounty_token: bounty.token, bounty_network: bounty.network }) as BountyView;
 
@@ -186,12 +196,13 @@ export async function fundEscrowTask(db: DBAdapter, env: Bindings, target: FundT
            bounty_amount, bounty_token, bounty_network,
            escrow, escrow_status, escrow_leg, escrow_leg_attempts, escrow_wallet,
            payment_status, payment_signature, payment_requirements, payment_payer, payment_nonce, payment_expires_at, payment_verified,
-           settle_attempts, settle_broadcast, settle_next_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, 1, 'funding', 'deposit', 0, ?, 'authorized', ?, ?, ?, ?, ?, 1, 0, 0, ?)`,
+           settle_attempts, settle_broadcast, settle_next_at, max_active_claims_per_agent, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, 1, 'funding', 'deposit', 0, ?, 'authorized', ?, ?, ?, ?, ?, 1, 0, 0, ?, ?, ?)`,
         n.task_id, n.creator_agent_id, n.creator_owner_id, n.creator_kind, n.creator_assertion_id, n.proposer_signature,
         n.title, n.description, n.category, n.required_capabilities ? JSON.stringify(n.required_capabilities) : null,
         n.expected_output, n.output_format, now, bounty.amount, bounty.token, bounty.network, house.address,
         encrypted, JSON.stringify(requirements), payer, nonce, expiresAt, now,
+        n.max_active_claims_per_agent ?? null, n.expires_at,
       );
     } catch (err) {
       if (/UNIQUE/i.test(String(err))) {
@@ -267,8 +278,10 @@ export async function startEscrowLeg(
   const task = await loadTask(db, taskId);
   if (!task) return { started: false, reason: 'no_row' };
   if (!task.escrow) return { started: false, reason: 'not_escrow' };
-  const expectedStatus = leg === 'release' ? 'verified' : 'cancelled';
-  if (task.status !== expectedStatus) return { started: false, reason: 'wrong_status' };
+  // A refund follows a cancel OR an open-window expiry (0047) — both return
+  // the deposit to the buyer; a release only ever follows acceptance.
+  const statusOk = leg === 'release' ? task.status === 'verified' : task.status === 'cancelled' || task.status === 'expired';
+  if (!statusOk) return { started: false, reason: 'wrong_status' };
   if (task.escrow_status !== 'funded') return { started: false, reason: 'not_funded' };
   if (task.escrow_leg_attempts >= ESCROW_MAX_LEG_ATTEMPTS) return { started: false, reason: 'max_attempts' };
   if (!isNetwork(task.bounty_network) || !task.bounty_amount) return { started: false, reason: 'not_escrow' };
@@ -314,15 +327,17 @@ export async function startEscrowLeg(
   const encrypted = await encryptPaymentSignature(rawHeader, encKey);
   const expiresAt = new Date(Number(auth.validBefore) * 1000).toISOString();
 
-  // THE GATE: arm the leg iff the task is still funded in the expected status.
+  // THE GATE: arm the leg iff the task is still funded in an expected status
+  // (release: verified; refund: cancelled or expired — 0047).
+  const statusPredicate = leg === 'release' ? `status = 'verified'` : `status IN ('cancelled','expired')`;
   const res = await db.run(
     `UPDATE tasks SET escrow_leg = ?, escrow_status = ?, escrow_leg_attempts = escrow_leg_attempts + 1,
        payment_status = 'authorized', payment_signature = ?, payment_requirements = ?, payment_payer = ?, payment_nonce = ?,
        payment_expires_at = ?, payment_verified = 1, payment_settled = 0, payment_tx_hash = NULL, settled_at = NULL,
        settle_attempts = 0, settle_broadcast = 0, settle_started_at = NULL, settle_next_at = ?, last_settle_error = NULL, last_settle_class = NULL
-     WHERE task_id = ? AND escrow = 1 AND escrow_status = 'funded' AND status = ?`,
+     WHERE task_id = ? AND escrow = 1 AND escrow_status = 'funded' AND ${statusPredicate}`,
     leg, leg === 'release' ? 'releasing' : 'refunding', encrypted, JSON.stringify(requirements), house.address, auth.nonce.toLowerCase(),
-    expiresAt, nowIso, taskId, expectedStatus,
+    expiresAt, nowIso, taskId,
   );
   if (res.changes !== 1) return { started: false, reason: 'lost_race' };
 
@@ -348,7 +363,7 @@ export async function escrowSweep(
   const out = { attempted: 0, released: 0, refunded: 0, stuck: 0 };
   const rows = await db.all<{ task_id: string; status: string; escrow_leg_attempts: number }>(
     `SELECT task_id, status, escrow_leg_attempts FROM tasks
-      WHERE escrow = 1 AND escrow_status = 'funded' AND status IN ('verified','cancelled') LIMIT ?`,
+      WHERE escrow = 1 AND escrow_status = 'funded' AND status IN ('verified','cancelled','expired') LIMIT ?`,
     limit,
   );
   for (const row of rows) {

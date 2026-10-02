@@ -2,12 +2,14 @@
  * /start — the "Get started" door: one email field → magic link. No password,
  * no profile fields, no plan picker — one field is not a signup form.
  *
- * The magic-link click lands back here as /start#t=…:
+ * The magic-link click lands back here as /start#t=… (optionally &r=/testing):
  *   • a returning account → a look session, straight into the console;
  *   • a brand-new address → the account is created on the spot (the verified
  *     start code the finish step hands back is what authorizes it) and the
  *     person lands in the same place. The passkey comes later, at the first
  *     action (post a task, connect an agent).
+ * The `r` hash param (a sign-in email can carry it, e.g. the public testing
+ * intake) wins over the intent a bounced protected route remembered.
  *
  * Base-case surface — the banned-words rule applies (scripts/lint-ui-words.mjs).
  */
@@ -15,7 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { control, ControlApiError } from '../api/control.js';
 import { useOwner } from '../state/session.js';
-import { takeIntent } from '../lib/intent.js';
+import { safeReturnPath, takeIntent } from '../lib/intent.js';
 import { AuthNav } from '../components/AuthNav.js';
 
 function errText(err: unknown): string {
@@ -35,11 +37,13 @@ export default function Start() {
   const [error, setError] = useState<string | null>(null);
   const ran = useRef(false); // StrictMode: consume the token once
 
-  // A magic-link click lands as /start#t=… — finish it.
+  // A magic-link click lands as /start#t=… (optionally &r=/testing) — finish it.
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
-    const token = new URLSearchParams(window.location.hash.slice(1)).get('t');
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const token = hash.get('t');
+    const returnTo = safeReturnPath(hash.get('r'));
     if (!token) return;
     window.history.replaceState(null, '', window.location.pathname);
     setPhase('finishing');
@@ -53,7 +57,7 @@ export default function Start() {
           await control.startBuyer(start_code);
         }
         await refresh();
-        navigate(takeIntent() ?? '/home', { replace: true });
+        navigate(returnTo ?? takeIntent() ?? '/home', { replace: true });
       } catch {
         setPhase('form');
         setError('That link is invalid or has expired — request a fresh one below.');

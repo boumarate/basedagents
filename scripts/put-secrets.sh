@@ -32,7 +32,15 @@ put() {
 put RESEND_API_KEY
 put STRIPE_SECRET_KEY
 put STRIPE_WEBHOOK_SECRET
+# Agent Testing worker-payment treasury (64-hex secp256k1; NOT the escrow
+# custody key). Without it, testing task publication fails closed.
+put TESTING_TREASURY_PRIVATE_KEY
+# Where Agent Testing operator alerts (new submissions, paid orders, evidence
+# ready…) are emailed. A secret so a personal address never sits in the
+# public wrangler.toml; unset, alerts stay in the console queue only.
+put TESTING_OPERATOR_EMAIL
 
 echo
 echo "Reminder: Stripe PRICE IDS are plain vars, not secrets — set"
-echo "STRIPE_PRICE_PRO_MONTHLY / STRIPE_PRICE_PRO_YEARLY in packages/api/wrangler.jsonc."
+echo "STRIPE_PRICE_PRO_MONTHLY / STRIPE_PRICE_PRO_YEARLY / STRIPE_PRICE_TESTING_AUDIT"
+echo "in packages/api/wrangler.toml [vars] and deploy."
