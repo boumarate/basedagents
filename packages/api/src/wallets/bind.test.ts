@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import {
-  buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage, rpcEndpoints,
+  buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage, rpcEndpoints, RPC_BUDGET_MS,
   BIND_FOOTER, ERC6492_VALIDATOR_BYTECODE, type BindFields,
 } from './bind.js';
 import { createHash } from 'node:crypto';
@@ -153,8 +153,8 @@ describe('verifyBindProof', () => {
       }));
       const res = await verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) });
       expect(res).toMatchObject({ ok: true, signerKind: 'erc1271' });
-      const once = ['https://rpc.test', 'https://mainnet.base.org', 'https://base-rpc.publicnode.com'];
-      expect(seen).toEqual([...once, ...once]); // eth_getCode, then eth_call
+      // eth_getCode walks the list; eth_call goes straight to the endpoint that answered.
+      expect(seen).toEqual(['https://rpc.test', 'https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base-rpc.publicnode.com']);
     });
 
     it('a revert is the answer: it never moves on to another endpoint', async () => {
@@ -167,6 +167,27 @@ describe('verifyBindProof', () => {
       }));
       expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'bad_signature' });
       expect(seen).toEqual(['https://mainnet.base.org', 'https://mainnet.base.org']);
+    });
+
+    it('stops within the RPC budget when every endpoint hangs (inside the SDK\'s 30 s timeout)', async () => {
+      vi.useFakeTimers();
+      try {
+        const hang = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }));
+        vi.stubGlobal('fetch', hang);
+        let settled = false;
+        const pending = verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })
+          .finally(() => { settled = true; });
+        await vi.advanceTimersByTimeAsync(RPC_BUDGET_MS);
+        expect(settled).toBe(true);
+        expect(await pending).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
+        expect(RPC_BUDGET_MS).toBeLessThan(30_000);
+        // Four endpoints, 5 s each, 15 s budget: the fourth and the eth_call are never tried.
+        expect(hang).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('lists the configured endpoints (comma-separated) before the public ones, without repeats', () => {

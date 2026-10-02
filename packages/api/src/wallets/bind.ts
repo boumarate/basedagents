@@ -164,9 +164,17 @@ export function rpcEndpoints(env: unknown, network: string): string[] {
 /** The node processed the call and refused it (e.g. the wallet's isValidSignature reverted): a "no", not an outage. */
 class RpcRejected extends Error {}
 
-async function rpcOnce(url: string, method: string, params: unknown[]): Promise<string> {
+/** One endpoint gets at most this long per call. */
+const RPC_ATTEMPT_MS = 5_000;
+/**
+ * All the RPC work for one proof (every endpoint, both calls) fits in this, well inside
+ * the SDK's 30 s request timeout, so a bind that succeeds on a late endpoint still lands.
+ */
+export const RPC_BUDGET_MS = 15_000;
+
+async function rpcOnce(url: string, method: string, params: unknown[], timeoutMs: number): Promise<string> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 5000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -185,20 +193,30 @@ async function rpcOnce(url: string, method: string, params: unknown[]): Promise<
 }
 
 /**
- * Call the first endpoint that answers. A revert is the contract's answer and stops here;
- * anything else (429, 5xx, timeout, a node that lacks the method) moves on to the next.
+ * An RPC caller for one proof. Each call goes to the first endpoint that answers; a revert
+ * is the contract's answer and stops there, anything else (429, 5xx, timeout, a node that
+ * lacks the method) moves on to the next. The endpoint that answered goes first for the
+ * next call, and every attempt shares one deadline (RPC_BUDGET_MS).
  */
-async function rpc(urls: string[], method: string, params: unknown[]): Promise<string> {
-  let last: unknown = new Error(`RPC ${method}: no endpoint`);
-  for (const url of urls) {
-    try {
-      return await rpcOnce(url, method, params);
-    } catch (err) {
-      if (err instanceof RpcRejected) throw err;
-      last = err;
+function rpcCaller(urls: string[]): (method: string, params: unknown[]) => Promise<string> {
+  const deadline = Date.now() + RPC_BUDGET_MS;
+  let order = urls;
+  return async (method, params) => {
+    let last: unknown = new Error(`RPC ${method}: no endpoint answered within ${RPC_BUDGET_MS / 1000} s`);
+    for (const url of order) {
+      const left = deadline - Date.now();
+      if (left <= 0) break;
+      try {
+        const result = await rpcOnce(url, method, params, Math.min(RPC_ATTEMPT_MS, left));
+        order = [url, ...order.filter((u) => u !== url)];
+        return result;
+      } catch (err) {
+        if (err instanceof RpcRejected) throw err;
+        last = err;
+      }
     }
-  }
-  throw last;
+    throw last;
+  };
 }
 
 /** ABI-encode isValidSignature(bytes32 hash, bytes signature). */
@@ -248,11 +266,12 @@ export async function verifyBindProof(
   if (sig.length % 2 !== 0 || !/^[0-9a-f]+$/.test(sig)) return { ok: false, reason: 'bad_signature', detail: 'The signature is not whole bytes of hex.' };
   const urls = rpcEndpoints(env, args.network);
   if (urls.length === 0) return { ok: false, reason: 'bad_signature', detail: 'The signature was not made by this wallet.' };
+  const rpc = rpcCaller(urls);
   if (sig.endsWith(ERC6492_SUFFIX)) {
     // A smart wallet's signature wrapped per ERC-6492 (deployed or not yet): the
     // reference validator answers 0x01 for a valid one, in a deployless call.
     try {
-      const result = await rpc(urls, 'eth_call', [{ data: erc6492ValidatorCall(args.address, digest, args.signature) }, 'latest']);
+      const result = await rpc('eth_call', [{ data: erc6492ValidatorCall(args.address, digest, args.signature) }, 'latest']);
       if (/^0x0*1$/i.test(result)) return { ok: true, signerKind: 'erc1271', fields };
       return { ok: false, reason: 'bad_signature', detail: 'The smart wallet did not accept this signature (checked per ERC-6492).' };
     } catch (err) {
@@ -261,9 +280,9 @@ export async function verifyBindProof(
     }
   }
   try {
-    const code = await rpc(urls, 'eth_getCode', [args.address, 'latest']);
+    const code = await rpc('eth_getCode', [args.address, 'latest']);
     if (!code || code === '0x') return { ok: false, reason: 'bad_signature', detail: 'The signature was not made by this wallet.' };
-    const result = await rpc(urls, 'eth_call', [{ to: args.address, data: isValidSignatureCall(digest, args.signature) }, 'latest']);
+    const result = await rpc('eth_call', [{ to: args.address, data: isValidSignatureCall(digest, args.signature) }, 'latest']);
     if (result.replace(/^0x/, '').slice(0, 8).toLowerCase() === ERC1271_MAGIC) return { ok: true, signerKind: 'erc1271', fields };
     return { ok: false, reason: 'bad_signature', detail: 'The smart wallet did not accept this signature (ERC-1271).' };
   } catch (err) {
