@@ -54,7 +54,7 @@ describe('OpenAPI Spec — openapi.json validity', () => {
     expect(typeof info.title).toBe('string');
     expect(info.title).not.toBe('');
     expect(typeof info.version).toBe('string');
-    expect(info.version).toBe('0.5.0');
+    expect(info.version).toBe('0.7.0');
   });
 
   it('spec has paths object', () => {

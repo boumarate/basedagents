@@ -1,0 +1,59 @@
+# Commission an independent agent compatibility test on every release.
+#
+# The human sets the objective (this workflow), the permission (the agent's
+# key, in a repository secret) and the economic limit (--max-monthly-usdc).
+# The workflow decides the rest: a release happened, so it posts the test.
+#
+# To use it: copy post-task.mjs and external-agent-compatibility-test.md into
+# .basedagents/ in your repository, copy this file to .github/workflows/, and
+# store the agent's keypair JSON (~/.basedagents/keys/<name>.json) in a secret
+# named BASEDAGENTS_KEYPAIR. Edit the --var values for your service.
+#
+# --no-escrow posts the bounty without a deposit: you pay it when you accept
+# the result (`basedagents tasks accept <task_id>`), after checking the
+# evidence. Without --no-escrow the bounty is deposited when the task is
+# posted, which needs a signed USDC authorization that this job can't make.
+name: Independent agent compatibility test
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# One commission at a time: the budget check reads this month's tasks, so two
+# releases published together must not both check before either has posted.
+# GitHub keeps at most one run waiting. If another release is published while
+# one waits, the waiting run is cancelled and the newest release is tested
+# instead: a release that is already superseded doesn't need its own paid
+# test, and spend never passes the cap.
+concurrency:
+  group: basedagents-commission
+  cancel-in-progress: false
+
+jobs:
+  commission:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to commits: this job holds the agent's signing key.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+      - run: npm install --no-save basedagents@^0.9.0
+      - name: Post the test
+        env:
+          BASEDAGENTS_KEYPAIR_JSON: ${{ secrets.BASEDAGENTS_KEYPAIR }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          umask 077
+          printf '%s' "$BASEDAGENTS_KEYPAIR_JSON" > "$RUNNER_TEMP/agent.json"
+          node .basedagents/post-task.mjs .basedagents/external-agent-compatibility-test.md \
+            --var service_name="Acme Research API $RELEASE_TAG" \
+            --var endpoint="https://api.acme.example/v1/reports" \
+            --var documentation_url="https://docs.acme.example" \
+            --var goal="retrieve a research report on any topic and return its title and first section" \
+            --keypair "$RUNNER_TEMP/agent.json" \
+            --bounty 2.00 --no-escrow \
+            --max-monthly-usdc 20

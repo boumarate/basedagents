@@ -40,6 +40,12 @@ import { consoleOrigin } from './email.js';
 import { getEntitlements } from './entitlements.js';
 export { getEntitlements, checkAgentLimit, type Entitlements } from './entitlements.js';
 
+// Agent Testing (one-time payments) — product-aware webhook dispatch. Testing
+// events are stored durably and processed under a lease; they must NEVER
+// touch owners.plan / Keyring entitlements (spec §3.1).
+import { isTestingStripeEvent, receiveTestingEvent, drainTestingInbox } from './agent-testing/stripe-events.js';
+import { testingStripeFor } from './agent-testing/checkout.js';
+
 // ─── config / small helpers ───
 
 interface StripeConfig {
@@ -203,6 +209,25 @@ stripeWebhookRoutes.post('/stripe/webhook', async (c) => {
   }
 
   const store = getStore(c);
+
+  // ── Product dispatch (spec §3.1): resolve the event's product family BEFORE
+  // any claim. Agent-testing events go to a durable inbox (stored before the
+  // ack, processed under a lease — a crash after the insert is retried, never
+  // suppressed), and must never grant or revoke Keyring Pro. Everything else
+  // keeps the legacy Keyring path below, including its event-id claim.
+  const db = c.get('db');
+  if (await isTestingStripeEvent(db, event as unknown as { id: string; type: string; data?: { object?: Record<string, unknown> } })) {
+    await receiveTestingEvent(db, event as unknown as { id: string; type: string; livemode?: boolean }, payload);
+    // Inline best-effort drain so the common case fulfills promptly; the cron
+    // drains anything this pass misses (crash, lease, backoff).
+    try {
+      await drainTestingInbox(db, { stripe: testingStripeFor(c), env: c.env }, new Date().toISOString(), 5);
+    } catch (err) {
+      console.error('[testing] inline inbox drain failed (cron will retry):', err);
+    }
+    return c.json({ received: true, product: 'agent_testing' });
+  }
+
   // Atomic idempotency claim: a replayed event id is acknowledged, not reprocessed.
   if (!(await store.claimStripeEvent(event.id, event.type))) {
     return c.json({ received: true, duplicate: true });
@@ -211,6 +236,14 @@ stripeWebhookRoutes.post('/stripe/webhook', async (c) => {
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;
+      // Keyring Pro is a SUBSCRIPTION product: plan state changes only for a
+      // session that verifiably maps to a subscription — mode=subscription,
+      // or (legacy event shapes without mode) a subscription id on the
+      // session. A one-time payment session that reached this branch — e.g.
+      // a testing session whose product association could not be resolved —
+      // is acknowledged without Keyring side effects (spec §3.1).
+      const mapsToSubscription = session.mode === 'subscription' || (session.mode == null && session.subscription != null);
+      if (!mapsToSubscription) break;
       const ownerId = session.client_reference_id;
       if (ownerId && (await store.getOwner(ownerId))) {
         const customerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;

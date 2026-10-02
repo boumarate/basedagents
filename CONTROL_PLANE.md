@@ -131,6 +131,6 @@ The control plane was built for the Keyring credential vault (a local
 encrypted vault whose daemon re-verified every owner approval before sealing a
 secret). The vault, its approvals inbox, connect cards, daemon endpoints,
 cloud passport and billing were removed in September 2026 (migration
-`0040_retire_keyring.sql`); the marketplace had found users and the vault had
+`0048_retire_keyring.sql`); the marketplace had found users and the vault had
 not. Sections 3–7 above are the parts of that design that were always about
 the human account, and they carry over unchanged.

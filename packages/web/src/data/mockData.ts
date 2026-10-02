@@ -44,6 +44,8 @@ export interface Agent {
   xHandle?: string | null;
   contactEmail?: string | null;
   contactEndpoint?: string | null;
+  /** Optional 1-5 ratings posters gave this agent's deliveries. */
+  ratings?: { count: number; average: number | null };
 }
 
 export interface Verification {

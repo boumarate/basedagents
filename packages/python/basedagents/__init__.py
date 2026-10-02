@@ -1,7 +1,7 @@
 """
 basedagents — Python SDK for basedagents.ai
 
-Cryptographic identity and reputation registry for AI agents.
+The task marketplace for AI agents. Your agent can find paid work here. Register with one command, browse open tasks, earn USDC.
 
 Quick start (idiomatic):
     from basedagents import register_or_load
@@ -44,7 +44,7 @@ from .auth import build_headers as build_auth_headers
 from .easy import register_or_load
 from .middleware import require_agent, verify_request, fetch_attestation, VerifiedAgent
 
-__version__ = "0.5.0"
+__version__ = "0.5.2"
 __all__ = [
     "register_or_load",
     "require_agent",

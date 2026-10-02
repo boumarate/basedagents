@@ -116,6 +116,45 @@ export const BountySchema = z.object({
 
 export type Bounty = z.infer<typeof BountySchema>;
 
+/**
+ * Bounty networks accepted in THIS environment. Production settles real money
+ * (custodial escrow or sign-at-accept), so it accepts mainnet USDC only
+ * (`eip155:8453`); staging/dev/tests keep the testnet (Base Sepolia) so the
+ * deposit/release path can be QA'd without real funds. Keyed on the ENVIRONMENT
+ * var. Callers gate task creation, the escrow deposit, accept/settle and the
+ * public board on this, so testnet USDC never poses as real money in prod.
+ */
+export function allowedBountyNetworks(env: { ENVIRONMENT?: string } | undefined | null): readonly string[] {
+  return env?.ENVIRONMENT === 'production' ? ['eip155:8453'] : BOUNTY_NETWORKS;
+}
+
+/**
+ * The optional rating a poster may attach when accepting or disputing a
+ * delivery (decision D11): an integer 1–5, plus an optional short comment
+ * that needs a rating. Both are public on the task. Spread into the accept /
+ * dispute body schemas; `withRatingRule` adds the comment-needs-rating check.
+ */
+export const RatingFields = {
+  rating: z.number().int().min(1).max(5).optional(),
+  rating_comment: z.string().trim().max(500).optional(),
+};
+export function withRatingRule<T extends z.ZodTypeAny>(schema: T) {
+  return schema.refine(
+    (b: { rating?: number; rating_comment?: string }) => !b.rating_comment || b.rating !== undefined,
+    { message: 'rating_comment needs a rating (1-5)', path: ['rating_comment'] },
+  );
+}
+/** The 400 message for an accept/dispute body the rating fields made invalid. */
+export const RATING_RULE_MESSAGE = 'rating must be an integer from 1 to 5; rating_comment (up to 500 characters) needs a rating';
+/** True when a failed parse failed on the rating fields (so the error can name them, not the other field). */
+export function isRatingIssue(error: z.ZodError): boolean {
+  return error.issues.some((i) => i.path[0] === 'rating' || i.path[0] === 'rating_comment');
+}
+/** The stored form of a parsed rating: null when the body carried none. */
+export function ratingInputOf(b: { rating?: number; rating_comment?: string }): { rating: number; comment: string | null } | null {
+  return b.rating === undefined ? null : { rating: b.rating, comment: b.rating_comment ? b.rating_comment : null };
+}
+
 export const CreateTaskSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().min(1).max(10000),
@@ -132,6 +171,21 @@ export const CreateTaskSchema = z.object({
    * when accepting). Ignored without a `bounty`.
    */
   escrow: z.boolean().optional(),
+  /**
+   * Campaign cap (migration 0044): one agent may hold at most this many
+   * claimed-or-submitted tasks FROM THIS POSTER at a time. Omitted = no
+   * per-campaign cap (the global per-agent claim budget still applies).
+   */
+  max_active_claims_per_agent: z.number().int().min(1).max(1000).optional(),
+  /**
+   * Open window (decision D13, 0047): days an unclaimed task stays `open`
+   * before the cron expires it. Omitted = the deployment default (7).
+   * Regular posters: 1–90. House accounts (HOUSE_ACCOUNT_IDS) may exceed the
+   * cap, and 0 = never expire (standing tasks like the "[First task]" slots).
+   * The route enforces the policy (tasks/expiry.ts); out of range answers
+   * 400 `expiry_window_not_allowed`.
+   */
+  expires_in_days: z.number().int().min(0).max(3650).optional(),
 });
 
 export const SubmitDeliverableSchema = z.object({
@@ -153,7 +207,7 @@ export const DeliverTaskSchema = z.object({
 });
 
 export const TaskQuerySchema = z.object({
-  status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'all']).optional(),
+  status: z.enum(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired', 'all']).optional(),
   category: z.enum(['research', 'code', 'content', 'data', 'automation']).optional(),
   capability: z.string().optional(),
   creator: z.string().max(64).optional(),
@@ -185,7 +239,7 @@ export const TaskQuerySchema = z.object({
  */
 export type PaymentStatus = 'none' | 'pending' | 'authorized' | 'settling' | 'settled' | 'failed' | 'expired' | 'disputed' | 'refunded';
 
-export const TASK_STATUSES = ['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled'] as const;
+export const TASK_STATUSES = ['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export interface Task {
@@ -200,7 +254,7 @@ export interface Task {
   required_capabilities: string | null; // JSON array
   expected_output: string | null;
   output_format: string;
-  status: 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled';
+  status: 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled' | 'expired';
   created_at: string;
   claimed_at: string | null;
   submitted_at: string | null;
@@ -226,9 +280,21 @@ export interface PaymentEvent {
   created_at: string;
 }
 
+/**
+ * PATCH /v1/agents/:id/wallet. Setting or changing the address or network
+ * needs `wallet_proof` (decision D8, wallets/bind.ts): the bind message and a
+ * signature from the wallet over it. `wallet_address: null` clears the wallet
+ * and needs no proof.
+ */
+export const WalletProofSchema = z.object({
+  message: z.string().min(1).max(1000),
+  // Up to 8 KB: an ERC-6492 signature carries the smart wallet's deployment call.
+  signature: z.string().regex(/^0x(?:[0-9a-fA-F]{2}){65,8192}$/, '0x-prefixed hex signature, whole bytes'),
+});
 export const WalletUpdateSchema = z.object({
   wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).nullable().optional(),
   wallet_network: z.enum(ALLOWED_WALLET_NETWORKS_CONST).optional(),
+  wallet_proof: WalletProofSchema.optional(),
 });
 
 // Re-export under the canonical name for backwards compatibility
@@ -358,6 +424,8 @@ export interface Agent {
   webhook_url: string | null;
   wallet_address: string | null;
   wallet_network: string | null;
+  /** Set when the wallet was bound with a proof of control (D8); NULL for an older, unverified address. */
+  wallet_verified_at?: string | null;
   registered_at: string;
   last_seen: string | null;
   status: 'pending' | 'active' | 'suspended';
@@ -429,13 +497,27 @@ export type Variables = {
   agentId: string;
   publicKey: Uint8Array;
   agentStatus: string;
+  /**
+   * Stable analytics identity for this request — the agent id (ag_…) after
+   * AgentSig auth, the owner id (ow_…) on an owner session. Read by
+   * lib/posthog.ts; unset means the anonymous fallback.
+   */
+  posthogDistinctId?: string;
 };
 
 // ─── App Bindings (for Cloudflare Workers + local) ───
 
 export type Bindings = {
   DB?: D1Database;
-  BOOTSTRAP_THRESHOLD?: string;
+  ENVIRONMENT?: string;            // 'production' | 'staging' — set per wrangler env (wrangler.toml)
+  HOUSE_ACCOUNT_IDS?: string;      // comma-separated agent (ag_…) / owner (ow_…) ids whose paid tasks are labeled `sponsored`
+  // WS5 feedback + telemetry. ADMIN_OWNER_IDS: comma-separated owner ids (ow_…) that
+  // see the console's admin pages. The notify targets are secrets (wrangler secret put).
+  ADMIN_OWNER_IDS?: string;
+  FEEDBACK_NOTIFY_EMAIL?: string;
+  FEEDBACK_SLACK_WEBHOOK_URL?: string;
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
   ADMIN_SECRET?: string;
   REGISTRY_SIGNING_KEY?: string;
   REGISTRY_SIGNING_PUBLIC_KEY?: string;
@@ -462,6 +544,28 @@ export type Bindings = {
   // Board: global uncertified-class write valve, posts/hour (default 2000).
   // The emergency dial for a PoW-identity spam wave — see routes/board.ts.
   BOARD_UNCERT_VALVE_HOURLY?: string;
+  // Claim governance (migration 0044, tasks/governance.ts). All optional with
+  // safe defaults; see claimGovernanceConfig for ranges.
+  CLAIM_BUDGET_BASE?: string;
+  CLAIM_BUDGET_MAX?: string;
+  CLAIM_BUDGET_FLOOR?: string;
+  CLAIM_BUDGET_PER_ACCEPT?: string;
+  CLAIM_BUDGET_PENALTY?: string;
+  CLAIM_BOND_PER_SLOT_ATOMIC?: string;
+  CLAIM_BOND_SLASH_ATOMIC?: string;         // slash on claim expiry
+  CLAIM_BOND_SLASH_DISPUTE_ATOMIC?: string; // slash on disputed bounty deliverable
+  CLAIM_BOND_REQUIRED?: string;             // '0' disables bond-backed bounty claims (default on)
+  // Minimum bounty (decision D3, tasks/bounty-minimum.ts), atomic USDC; default 100000 (0.10) each.
+  MIN_BOUNTY_ATOMIC_A2A?: string;           // tasks posted by agents
+  MIN_BOUNTY_ATOMIC_HUMAN?: string;         // tasks posted from the console
+  // Open-task expiry (decision D13, tasks/expiry.ts): default open window in
+  // days before an unclaimed task expires; 7 when unset.
+  TASK_OPEN_TTL_DAYS?: string;
+  // PostHog product analytics + Error Tracking (lib/posthog.ts). Set per deploy
+  // environment as Worker bindings; a missing token is a loud no-op outside
+  // production and a silent no-op in production.
+  POSTHOG_PROJECT_TOKEN?: string;  // project API token (phc_…)
+  POSTHOG_HOST?: string;           // optional; defaults to https://us.i.posthog.com
 };
 
 /** Hono env type combining Bindings and Variables */

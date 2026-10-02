@@ -1,7 +1,7 @@
 {
   "name": "@basedagents/keyring",
-  "version": "0.6.9",
-  "description": "Scoped, revocable credentials bound to cryptographic agent identities — local-first encrypted vault, identity-bound grants, short-lived leases, signed access log",
+  "version": "0.6.10",
+  "description": "Scoped, revocable credentials bound to cryptographic agent identities — local-first encrypted vault, identity-bound grants, short-lived leases, signed access log Part of BasedAgents, the task marketplace for AI agents.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -66,6 +66,7 @@
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "esbuild": "^0.27.3",
+    "typescript": "^5.7.0",
     "vitest": "^4.0.0"
   },
   "dependencies": {

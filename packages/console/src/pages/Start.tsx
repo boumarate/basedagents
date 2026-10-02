@@ -23,7 +23,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { control, ControlApiError } from '../api/control.js';
 import { useOwner } from '../state/session.js';
-import { takeIntent } from '../lib/intent.js';
+import { safeReturnPath, takeIntent } from '../lib/intent.js';
 import { AgentSetupPrompt } from '../components/AgentSetup.js';
 import { AuthNav } from '../components/AuthNav.js';
 import { funnelPing } from '../lib/funnel.js';
@@ -92,29 +92,55 @@ export default function Start() {
   const [startCode, setStartCode] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [hiring, setHiring] = useState(false);
+  // Where to land after sign-in: the `r` hash param a sign-in email carries,
+  // else the intent a bounced protected route remembered.
+  const [afterDest, setAfterDest] = useState<string | null>(null);
   const ran = useRef(false); // StrictMode: consume the token once
 
-  // A magic-link click lands as /start#t=… — finish it.
+  // A magic-link click lands as /start#t=… (optionally &r=/testing) — finish it.
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
-    const token = new URLSearchParams(window.location.hash.slice(1)).get('t');
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const token = hash.get('t');
+    const returnTo = safeReturnPath(hash.get('r'));
     if (!token) return;
     window.history.replaceState(null, '', window.location.pathname);
     setPhase('finishing');
     void control
       .startFinish(token)
       .then(async ({ has_account, start_code }) => {
+        const dest = returnTo ?? takeIntent();
         if (has_account) {
           await refresh();
-          navigate(takeIntent() ?? '/home', { replace: true });
-        } else {
-          // First-time visitor → hand the command to the agent. The start
-          // code inside it carries the just-verified email to the final step,
-          // so the finish page already knows where to send the confirmation.
-          setStartCode(start_code);
-          setPhase('command');
+          navigate(dest ?? '/home', { replace: true });
+          return;
         }
+        if (dest?.startsWith('/testing') && start_code) {
+          // Testing-funnel visitor (public audit intake, or a bounced
+          // /testing link): they are buying an audit, not setting up an
+          // agent. Mint the email-only buyer account right here and land
+          // them on their status page — never the agent-setup command.
+          try {
+            funnelPing('buyer_start');
+            await control.startBuyer(start_code);
+            await refresh();
+            navigate(dest, { replace: true });
+            return;
+          } catch (err) {
+            // Fall through to the doors with the reason; the start code may
+            // be spent, so a fresh email round trip is the honest recovery.
+            setPhase('doors');
+            setError(`We could not finish signing you in (${errText(err)}) — request a fresh link below.`);
+            return;
+          }
+        }
+        // First-time visitor → hand the command to the agent. The start
+        // code inside it carries the just-verified email to the final step,
+        // so the finish page already knows where to send the confirmation.
+        setAfterDest(dest);
+        setStartCode(start_code);
+        setPhase('command');
       })
       .catch(() => {
         setPhase('doors');
@@ -133,7 +159,7 @@ export default function Start() {
     try {
       await control.startBuyer(startCode);
       await refresh();
-      navigate('/tasks/new', { replace: true });
+      navigate(afterDest ?? '/tasks/new', { replace: true });
     } catch (err) {
       setError(errText(err));
       setHiring(false);
@@ -190,6 +216,7 @@ export default function Start() {
                 {hiring ? 'One moment…' : 'Post a task instead →'}
               </button>
             </div>
+            {error && <div className="banner banner-error">{error}</div>}
           </>
         ) : phase === 'sent' ? (
           <>

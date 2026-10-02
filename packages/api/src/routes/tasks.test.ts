@@ -8,6 +8,7 @@ import {
 import type { SQLiteAdapter } from '../db/sqlite-adapter.js';
 import { drainOutbox } from '../events/service.js';
 import type { TestKeypair } from '../test-helpers.js';
+import { enablePaymentsForTests, resetPaymentsForTests } from '../payments/test-fixtures.js';
 
 // Mock twitter
 vi.mock('../lib/twitter.js', () => ({
@@ -284,6 +285,20 @@ describe('Task Marketplace', () => {
       expect(data.tasks[0].category).toBe('research');
     });
 
+    it('rejects an unknown category or status → 400, never a shrug', async () => {
+      // Regression: one invalid value used to fail the whole query parse, which
+      // silently dropped ALL filters (status included) and returned every task.
+      await createTask(creator, { category: 'research' });
+
+      const res = await app.request('/v1/tasks?category=nosuchcategory');
+      expect(res.status).toBe(400);
+      const data = await res.json() as { error: string };
+      expect(data.error).toBe('bad_request');
+
+      const res2 = await app.request('/v1/tasks?status=bogus');
+      expect(res2.status).toBe(400);
+    });
+
     it('filters by capability', async () => {
       await createTask(creator, { required_capabilities: ['research'] });
       await createTask(creator, { required_capabilities: ['code'] });
@@ -432,6 +447,156 @@ describe('Task Marketplace', () => {
   });
 
   // ─── POST /v1/tasks/:id/claim — Claim task ───
+
+  // ─── D11: optional ratings on accept and dispute ───
+  describe('optional ratings (D11)', () => {
+    const signedPost = async (kp: TestKeypair, path: string, body?: Record<string, unknown>) => {
+      const text = body === undefined ? undefined : JSON.stringify(body);
+      const headers = await signRequest(kp, 'POST', path, text);
+      return app.request(path, { method: 'POST', headers: { ...(text ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: text });
+    };
+    const delivered = async () => {
+      const taskId = await createTask(creator);
+      await claimTask(claimer, taskId);
+      await submitDeliverable(claimer, taskId);
+      return taskId;
+    };
+    const publicTask = async (taskId: string) => ((await (await app.request(`/v1/tasks/${taskId}`)).json()) as { task: Record<string, unknown> }).task;
+    const profileRatings = async () => ((await (await app.request(`/v1/agents/${claimer.agentId}`)).json()) as { ratings: unknown }).ratings;
+
+    it('accept with a rating stores it publicly and the deliverer\'s profile averages it', async () => {
+      expect(await profileRatings()).toEqual({ count: 0, average: null });
+      const a = await delivered();
+      const res = await signedPost(creator, `/v1/tasks/${a}/accept`, { note: 'Thanks', rating: 5, rating_comment: '  Fast and exact  ' });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ status: 'verified', accepted_by: 'creator', rating: 5 });
+      expect(await publicTask(a)).toMatchObject({ rating: 5, rating_comment: 'Fast and exact', rating_context: 'accept', review_note: 'Thanks' });
+      expect((await publicTask(a)).rated_at).toBeTypeOf('string');
+
+      const b = await delivered();
+      expect((await signedPost(creator, `/v1/tasks/${b}/accept`, { rating: 4 })).status).toBe(200);
+      expect(await publicTask(b)).toMatchObject({ rating: 4, rating_comment: null });
+      expect(await profileRatings()).toEqual({ count: 2, average: 4.5 });
+
+      // No rating: nothing is stored, and the average is unchanged.
+      const c2 = await delivered();
+      const plain = await signedPost(creator, `/v1/tasks/${c2}/accept`);
+      expect(plain.status).toBe(200);
+      expect(await plain.json()).not.toHaveProperty('rating');
+      expect((await publicTask(c2)).rating).toBeNull();
+      expect(await profileRatings()).toEqual({ count: 2, average: 4.5 });
+    });
+
+    it('validates the rating: an integer 1-5; a comment needs a rating and stays under 500 characters', async () => {
+      const taskId = await delivered();
+      for (const bad of [{ rating: 0 }, { rating: 6 }, { rating: 4.5 }, { rating: '5' }, { rating_comment: 'no score' }, { rating: 3, rating_comment: 'x'.repeat(501) }]) {
+        const res = await signedPost(creator, `/v1/tasks/${taskId}/accept`, bad);
+        expect(res.status, JSON.stringify(bad)).toBe(400);
+      }
+      expect((await publicTask(taskId)).status).toBe('submitted'); // nothing was accepted
+    });
+
+    it('a re-accept can add a rating; only the creator can rate', async () => {
+      const taskId = await delivered();
+      expect((await signedPost(claimer, `/v1/tasks/${taskId}/accept`, { rating: 5 })).status).toBe(403);
+      expect((await signedPost(creator, `/v1/tasks/${taskId}/accept`)).status).toBe(200);
+      const again = await signedPost(creator, `/v1/tasks/${taskId}/accept`, { rating: 3, rating_comment: 'late' });
+      expect(again.status).toBe(200);
+      expect(await publicTask(taskId)).toMatchObject({ status: 'verified', rating: 3, rating_comment: 'late', rating_context: 'accept' });
+    });
+
+    it('a dispute rating is dropped by a revision request, and replaced or cleared by the eventual accept', async () => {
+      const taskId = await delivered();
+      const disputed = await signedPost(creator, `/v1/tasks/${taskId}/dispute`, { reason: 'Wrong format', rating: 2, rating_comment: 'CSV, not JSON' });
+      expect(disputed.status).toBe(200);
+      expect(await disputed.json()).toMatchObject({ review_state: 'disputed', rating: 2 });
+      expect(await publicTask(taskId)).toMatchObject({ rating: 2, rating_context: 'dispute' });
+
+      // Asking for changes withdraws the dispute, and its rating with it.
+      expect((await signedPost(creator, `/v1/tasks/${taskId}/revision`, { note: 'Send JSON' })).status).toBe(200);
+      expect(await publicTask(taskId)).toMatchObject({ rating: null, rating_comment: null, rating_context: null, rated_at: null });
+
+      // Dispute again (rated), then accept without a rating: the dispute-time rating goes.
+      expect((await submitDeliverable(claimer, taskId)).status).toBe(200);
+      expect((await signedPost(creator, `/v1/tasks/${taskId}/dispute`, { reason: 'Still off', rating: 1 })).status).toBe(200);
+      expect((await signedPost(creator, `/v1/tasks/${taskId}/accept`)).status).toBe(200);
+      expect(await publicTask(taskId)).toMatchObject({ status: 'verified', rating: null, rating_context: null });
+
+      // And an accept WITH a rating after a rated dispute replaces it.
+      const other = await delivered();
+      expect((await signedPost(creator, `/v1/tasks/${other}/dispute`, { reason: 'Hmm', rating: 1 })).status).toBe(200);
+      expect((await signedPost(creator, `/v1/tasks/${other}/accept`, { rating: 4 })).status).toBe(200);
+      expect(await publicTask(other)).toMatchObject({ rating: 4, rating_context: 'accept' });
+      expect(await profileRatings()).toEqual({ count: 1, average: 4 });
+    });
+
+    it('a revision that commits mid-dispute withdraws the dispute rating for good (it rides in the dispute gate)', async () => {
+      const taskId = await delivered();
+      // Interleave a revision request right after the dispute gate commits. A
+      // rating written by a separate, later UPDATE would come back here.
+      const revise = () => db.run(
+        `UPDATE tasks SET status = 'claimed', disputed_at = NULL, rating = NULL, rating_comment = NULL, rating_context = NULL, rated_at = NULL WHERE task_id = ?`,
+        taskId,
+      );
+      const isDisputeGate = (sql: string) => /SET disputed_at = \?/.test(sql);
+      const batch = db.batch.bind(db);
+      const run = db.run.bind(db);
+      vi.spyOn(db, 'batch').mockImplementation(async (stmts) => {
+        const out = await batch(stmts);
+        if (stmts.some((st) => isDisputeGate(st.sql))) await revise();
+        return out;
+      });
+      vi.spyOn(db, 'run').mockImplementation(async (sql, ...params) => {
+        const out = await run(sql, ...params);
+        if (isDisputeGate(sql)) await revise();
+        return out;
+      });
+      const res = await signedPost(creator, `/v1/tasks/${taskId}/dispute`, { reason: 'Wrong format', rating: 1 });
+      vi.restoreAllMocks();
+      expect(res.status).toBe(200);
+      expect(await publicTask(taskId)).toMatchObject({ status: 'claimed', rating: null, rating_context: null, rated_at: null });
+    });
+
+    it('an accept whose rating cannot be saved still succeeds, and says the rating was not saved', async () => {
+      const taskId = await delivered();
+      const run = db.run.bind(db);
+      vi.spyOn(db, 'run').mockImplementation(async (sql, ...params) => {
+        if (/rating_context = 'accept'/.test(sql)) throw new Error('D1 unavailable');
+        return run(sql, ...params);
+      });
+      const res = await signedPost(creator, `/v1/tasks/${taskId}/accept`, { rating: 5 });
+      vi.restoreAllMocks();
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ status: 'verified', rating_saved: false });
+      expect(body).not.toHaveProperty('rating');
+      expect(await publicTask(taskId)).toMatchObject({ status: 'verified', rating: null });
+
+      // A repeat accept stores it.
+      const again = await signedPost(creator, `/v1/tasks/${taskId}/accept`, { rating: 5 });
+      expect(await again.json()).toMatchObject({ rating: 5 });
+      expect(await publicTask(taskId)).toMatchObject({ rating: 5, rating_context: 'accept' });
+    });
+
+    it('an accept that cannot remove a dispute-time rating says so; accepting again removes it', async () => {
+      const taskId = await delivered();
+      expect((await signedPost(creator, `/v1/tasks/${taskId}/dispute`, { reason: 'Off', rating: 1 })).status).toBe(200);
+      const run = db.run.bind(db);
+      vi.spyOn(db, 'run').mockImplementation(async (sql, ...params) => {
+        if (/rating_context = 'dispute'/.test(sql) && /rating = NULL/.test(sql)) throw new Error('D1 unavailable');
+        return run(sql, ...params);
+      });
+      const res = await signedPost(creator, `/v1/tasks/${taskId}/accept`);
+      vi.restoreAllMocks();
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ status: 'verified', rating_saved: false });
+      expect(await publicTask(taskId)).toMatchObject({ rating: 1, rating_context: 'dispute' });
+
+      const again = await signedPost(creator, `/v1/tasks/${taskId}/accept`);
+      expect(await again.json()).not.toHaveProperty('rating_saved');
+      expect(await publicTask(taskId)).toMatchObject({ rating: null, rating_context: null });
+    });
+  });
 
   describe('POST /v1/tasks/:id/claim — Claim task', () => {
     it('claims an open task successfully', async () => {
@@ -1230,6 +1395,95 @@ describe('Task Marketplace', () => {
       // Free tasks report payment_status 'none' and never a tx hash
       expect(data.payment_status).toBe('none');
       expect(data.payment_tx_hash).toBeUndefined();
+    });
+  });
+
+  // ─── Testnet bounties are production-gated (mainnet USDC only) ───
+
+  describe('Testnet bounties are prod-gated', () => {
+    async function seedBountyTask(id: string, network: string): Promise<void> {
+      await db.run(
+        `INSERT INTO tasks (task_id, creator_agent_id, title, description, status, created_at, bounty_amount, bounty_token, bounty_network, payment_status)
+         VALUES (?, ?, ?, ?, 'open', ?, '100000', 'USDC', ?, 'pending')`,
+        id, creator.agentId, `Task ${network}`, 'x', new Date().toISOString(), network,
+      );
+    }
+
+    it('hides a testnet-bounty task from the public board in production, keeps mainnet + free', async () => {
+      await seedBountyTask('task_testnet_hidden', 'eip155:84532');
+      await seedBountyTask('task_mainnet_shown', 'eip155:8453');
+      const freeId = await createTask(creator, { title: 'Free one', description: 'no bounty' });
+
+      const prodApp = createTestApp(db, { ENVIRONMENT: 'production' });
+      const prodList = (await (await prodApp.request('/v1/tasks?status=open')).json()) as { tasks: Array<{ task_id: string }> };
+      const prodIds = prodList.tasks.map((t) => t.task_id);
+      expect(prodIds).toContain('task_mainnet_shown');
+      expect(prodIds).toContain(freeId);
+      expect(prodIds).not.toContain('task_testnet_hidden');
+      expect((await prodApp.request('/v1/tasks/task_testnet_hidden')).status).toBe(404);
+      expect((await prodApp.request('/v1/tasks/task_mainnet_shown')).status).toBe(200);
+
+      // Non-prod (staging/dev/tests): testnet task is still visible for QA.
+      const devList = (await (await app.request('/v1/tasks?status=open')).json()) as { tasks: Array<{ task_id: string }> };
+      expect(devList.tasks.map((t) => t.task_id)).toContain('task_testnet_hidden');
+      expect((await app.request('/v1/tasks/task_testnet_hidden')).status).toBe(200);
+    });
+
+    it('rejects a testnet bounty at creation in production (declare + escrow paths); accepts mainnet', async () => {
+      enablePaymentsForTests();
+      try {
+        const prodApp = createTestApp(db, { ENVIRONMENT: 'production' });
+        const post = async (network: string, escrow: boolean) => {
+          const body = JSON.stringify({ title: 'T', description: 'D', required_capabilities: ['code'], escrow, bounty: { amount: '100000', token: 'USDC', network } });
+          const headers = await signRequest(creator, 'POST', '/v1/tasks', body);
+          return prodApp.request('/v1/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body });
+        };
+
+        const testnetDeclare = await post('eip155:84532', false);
+        expect(testnetDeclare.status).toBe(400);
+        expect((await testnetDeclare.json() as { error: string }).error).toBe('bounty_network_not_allowed');
+
+        // Rejected before any escrow deposit is taken, too.
+        const testnetEscrow = await post('eip155:84532', true);
+        expect(testnetEscrow.status).toBe(400);
+
+        const mainnet = await post('eip155:8453', false);
+        expect(mainnet.status).toBe(200);
+        expect((await mainnet.json() as { status: string }).status).toBe('open');
+      } finally {
+        resetPaymentsForTests();
+      }
+    });
+
+    it('refuses a bounty under the minimum (D3) on both paths, before any escrow deposit; free tasks and the floor itself pass', async () => {
+      enablePaymentsForTests();
+      try {
+        const post = async (appUnderTest: typeof app, amount: string | null, escrow = false) => {
+          const body = JSON.stringify({ title: 'T', description: 'D', required_capabilities: ['code'], escrow, ...(amount ? { bounty: { amount, token: 'USDC', network: 'eip155:8453' } } : {}) });
+          const headers = await signRequest(creator, 'POST', '/v1/tasks', body);
+          return appUnderTest.request('/v1/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body });
+        };
+        const before = (await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM tasks'))!.n;
+
+        for (const escrow of [false, true]) {
+          const res = await post(app, '99999', escrow);
+          expect(res.status).toBe(400); // never the escrow 402: nothing is signed for a post that would be refused
+          expect(await res.json()).toMatchObject({ error: 'bounty_below_minimum', minimum_amount: '100000', minimum_usdc: '0.10' });
+        }
+        expect((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM tasks'))!.n).toBe(before);
+
+        expect((await post(app, '100000')).status).toBe(200); // the floor is inclusive
+        expect((await post(app, null)).status).toBe(200);     // a free task has no floor
+
+        // The floor is config: MIN_BOUNTY_ATOMIC_A2A raises it for agent posters.
+        const strict = createTestApp(db, { MIN_BOUNTY_ATOMIC_A2A: '1000000' });
+        const raised = await post(strict, '500000');
+        expect(raised.status).toBe(400);
+        expect(await raised.json()).toMatchObject({ error: 'bounty_below_minimum', minimum_amount: '1000000', minimum_usdc: '1.00' });
+        expect((await post(strict, '1000000')).status).toBe(200);
+      } finally {
+        resetPaymentsForTests();
+      }
     });
   });
 

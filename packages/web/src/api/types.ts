@@ -34,6 +34,8 @@ export interface ApiAgent {
   registered_at: string;
   last_seen: string | null;
   recent_verifications?: ApiRecentVerification[];
+  /** Optional 1-5 ratings posters gave this agent's deliveries (absent on an older API). */
+  ratings?: { count: number; average: number | null };
 }
 
 export interface ApiRecentVerification {
@@ -156,7 +158,7 @@ export interface ApiEscrowView {
   refunded_at: string | null;
 }
 
-export type ApiTaskStatus = 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled';
+export type ApiTaskStatus = 'open' | 'claimed' | 'submitted' | 'verified' | 'closed' | 'cancelled' | 'expired';
 
 /** Who posted the task — an agent (linkable) or a human owner (never exposed by id). */
 export interface ApiTaskCreator {
@@ -203,9 +205,16 @@ export interface ApiTask {
   submitted_at: string | null;
   verified_at: string | null;
   cancelled_at?: string | null;
+  /** End of the open window (D13): an unclaimed task expires past this; null = never. */
+  expires_at?: string | null;
+  expired_at?: string | null;
   // Review state (D4): flags, not statuses. `review_state` is derived server-side.
   accepted_by?: 'creator' | 'auto' | null;
   review_note?: string | null;
+  /** The poster's optional 1-5 rating of the delivery, its comment, and when it was given. */
+  rating?: number | null;
+  rating_comment?: string | null;
+  rating_context?: 'accept' | 'dispute' | null;
   revision_count?: number;
   revision_requested_at?: string | null;
   disputed_at?: string | null;
@@ -312,8 +321,48 @@ export interface ApiTaskReceiptsResponse {
 export interface ApiStatusResponse {
   status: string;
   agents?: { total: number; active: number; pending: number; suspended: number };
-  tasks?: { open: number; claimed: number; submitted: number; verified: number; cancelled: number; paid: number };
+  tasks?: { open: number; claimed: number; submitted: number; verified: number; cancelled: number; expired?: number; paid: number; paid_usdc_total?: string };
   payments?: 'enabled' | 'disabled';
+}
+
+/** GET /v1/tasks/settled — the paid-work feed (api tasks/settled.ts). */
+export interface ApiSettledStats {
+  window_days: number;
+  n: number;
+  min_n_for_medians: number;
+  median_time_to_paid_s: number | null;
+  median_time_to_claim_s: number | null;
+  median_delivery_s: number | null;
+  median_review_s: number | null;
+  tasks_paid_all_time: number;
+  usdc_paid_all_time: string;
+  computed_at: string;
+}
+
+export interface ApiSettledTask {
+  task_id: string;
+  /** Agent-supplied — rendered as text only. */
+  title: string;
+  category: string | null;
+  bounty: { amount_display: string; token: string; network: string };
+  agent: { id: string; name: string | null } | null;
+  sponsored: boolean;
+  created_at: string;
+  claimed_at: string | null;
+  submitted_at: string | null;
+  settled_at: string;
+  time_to_paid_s: number;
+  delivery_s: number | null;
+  tx_hash: string;
+  /** Built by the API from the network map; the client never builds explorer URLs. */
+  explorer_url: string;
+}
+
+export interface ApiSettledResponse {
+  ok: boolean;
+  stats: ApiSettledStats;
+  tasks: ApiSettledTask[];
+  next_cursor: string | null;
 }
 
 export interface TaskSearchParams {

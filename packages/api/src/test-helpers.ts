@@ -25,6 +25,11 @@ import eventRoutes from './routes/events.js';
 import boardRoutes from './routes/board.js';
 import feedRoutes from './routes/feed.js';
 import taskRoutes from './routes/tasks.js';
+import chainRoutes from './routes/chain.js';
+import claimBondRoutes from './routes/claim-bond.js';
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { freshBindMessage, personalMessageDigest } from './wallets/bind.js';
+import { addressFromPrivateKey } from './payments/house-wallet.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -50,7 +55,7 @@ ALTER TABLE verifications ADD COLUMN structured_report TEXT;
 ALTER TABLE verifications ADD COLUMN nonce TEXT;
 ALTER TABLE chain ADD COLUMN entry_type TEXT DEFAULT 'registration';
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, from_agent_id TEXT NOT NULL, to_agent_id TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'message', subject TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', callback_url TEXT, reply_to_message_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT NOT NULL, FOREIGN KEY (from_agent_id) REFERENCES agents(id), FOREIGN KEY (to_agent_id) REFERENCES agents(id), FOREIGN KEY (reply_to_message_id) REFERENCES messages(id));
-CREATE TABLE IF NOT EXISTS tasks (task_id TEXT PRIMARY KEY, creator_agent_id TEXT REFERENCES agents(id), creator_owner_id TEXT, creator_kind TEXT NOT NULL DEFAULT 'agent' CHECK (creator_kind IN ('agent','owner')), creator_assertion_id TEXT, claimed_by_agent_id TEXT REFERENCES agents(id), title TEXT NOT NULL, description TEXT NOT NULL, category TEXT, required_capabilities TEXT, expected_output TEXT, output_format TEXT DEFAULT 'json', status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','claimed','submitted','verified','closed','cancelled')), created_at TEXT NOT NULL, claimed_at TEXT, submitted_at TEXT, verified_at TEXT, accepted_by TEXT CHECK (accepted_by IS NULL OR accepted_by IN ('creator','auto')), review_note TEXT, review_assertion_id TEXT, revision_count INTEGER NOT NULL DEFAULT 0, revision_requested_at TEXT, disputed_at TEXT, cancelled_at TEXT, proposer_signature TEXT, acceptor_signature TEXT, bounty_amount TEXT, bounty_token TEXT, bounty_network TEXT, payment_status TEXT NOT NULL DEFAULT 'none', payment_signature TEXT, payment_requirements TEXT, payment_payer TEXT, payment_nonce TEXT, payment_verified INTEGER NOT NULL DEFAULT 0, payment_settled INTEGER NOT NULL DEFAULT 0, payment_tx_hash TEXT, payment_expires_at TEXT, auto_release_at TEXT, settle_attempts INTEGER NOT NULL DEFAULT 0, settle_broadcast INTEGER NOT NULL DEFAULT 0, settle_started_at TEXT, settle_next_at TEXT, settled_at TEXT, last_settle_error TEXT, last_settle_class TEXT, claim_expires_at TEXT, CHECK ((creator_agent_id IS NULL) <> (creator_owner_id IS NULL)));
+CREATE TABLE IF NOT EXISTS tasks (task_id TEXT PRIMARY KEY, creator_agent_id TEXT REFERENCES agents(id), creator_owner_id TEXT, creator_kind TEXT NOT NULL DEFAULT 'agent' CHECK (creator_kind IN ('agent','owner')), creator_assertion_id TEXT, claimed_by_agent_id TEXT REFERENCES agents(id), title TEXT NOT NULL, description TEXT NOT NULL, category TEXT, required_capabilities TEXT, expected_output TEXT, output_format TEXT DEFAULT 'json', status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','claimed','submitted','verified','closed','cancelled','expired')), created_at TEXT NOT NULL, claimed_at TEXT, submitted_at TEXT, verified_at TEXT, accepted_by TEXT CHECK (accepted_by IS NULL OR accepted_by IN ('creator','auto')), review_note TEXT, review_assertion_id TEXT, revision_count INTEGER NOT NULL DEFAULT 0, revision_requested_at TEXT, disputed_at TEXT, cancelled_at TEXT, proposer_signature TEXT, acceptor_signature TEXT, bounty_amount TEXT, bounty_token TEXT, bounty_network TEXT, payment_status TEXT NOT NULL DEFAULT 'none', payment_signature TEXT, payment_requirements TEXT, payment_payer TEXT, payment_nonce TEXT, payment_verified INTEGER NOT NULL DEFAULT 0, payment_settled INTEGER NOT NULL DEFAULT 0, payment_tx_hash TEXT, payment_expires_at TEXT, auto_release_at TEXT, settle_attempts INTEGER NOT NULL DEFAULT 0, settle_broadcast INTEGER NOT NULL DEFAULT 0, settle_started_at TEXT, settle_next_at TEXT, settled_at TEXT, last_settle_error TEXT, last_settle_class TEXT, claim_expires_at TEXT, CHECK ((creator_agent_id IS NULL) <> (creator_owner_id IS NULL)));
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_category ON tasks(category);
 CREATE INDEX IF NOT EXISTS idx_tasks_creator ON tasks(creator_agent_id);
@@ -85,6 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_payment_status ON tasks(payment_status);
 CREATE INDEX IF NOT EXISTS idx_tasks_auto_release ON tasks(auto_release_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_creator_owner ON tasks(creator_owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tasks_settle ON tasks(payment_status, settle_next_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_payment_settled ON tasks(payment_status, settled_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_payment_nonce ON tasks(payment_nonce) WHERE payment_nonce IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_receipts_task_completed ON delivery_receipts(task_id, completed_at DESC);
 ALTER TABLE tasks ADD COLUMN escrow INTEGER NOT NULL DEFAULT 0;
@@ -109,6 +115,30 @@ CREATE INDEX IF NOT EXISTS idx_agent_events_recipient ON agent_events(agent_id, 
 CREATE INDEX IF NOT EXISTS idx_agent_events_ref ON agent_events(ref_kind, ref_id);
 CREATE INDEX IF NOT EXISTS idx_agent_events_unread ON agent_events(agent_id, read_at);
 CREATE INDEX IF NOT EXISTS idx_agent_events_outbox ON agent_events(webhook_state, next_attempt_at);
+CREATE TABLE IF NOT EXISTS feedback (feedback_id TEXT PRIMARY KEY, agent_id TEXT, scope TEXT NOT NULL CHECK (scope IN ('task','general')), task_id TEXT, environment TEXT NOT NULL, expected_behavior TEXT NOT NULL, actual_behavior TEXT NOT NULL, steps_to_reproduce TEXT NOT NULL, error_codes TEXT, request_ids TEXT, suggested_improvement TEXT, skill_version TEXT, cli_version TEXT, user_agent TEXT, status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','fixed','wont_fix')), status_note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, email_notified_at TEXT, slack_notified_at TEXT, notified_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_notify ON feedback(notified_at, created_at);
+CREATE TABLE IF NOT EXISTS api_usage_daily (day TEXT NOT NULL, agent_id TEXT NOT NULL DEFAULT '', cli_version TEXT NOT NULL DEFAULT '', skill_version TEXT NOT NULL DEFAULT '', status INTEGER NOT NULL, error_code TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, agent_id, cli_version, skill_version, status, error_code));
+CREATE TABLE IF NOT EXISTS idempotency_keys (scope TEXT NOT NULL, idem_key TEXT NOT NULL, request_hash TEXT NOT NULL, status INTEGER NOT NULL, response TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (scope, idem_key));
+CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
+CREATE TABLE IF NOT EXISTS job_runs (job TEXT NOT NULL, run_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','failed')), attempts INTEGER NOT NULL DEFAULT 1, ran_at TEXT NOT NULL, PRIMARY KEY (job, run_key));
+ALTER TABLE tasks ADD COLUMN max_active_claims_per_agent INTEGER;
+CREATE TABLE IF NOT EXISTS agent_claim_bonds (agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE, balance_atomic TEXT NOT NULL DEFAULT '0', total_deposited_atomic TEXT NOT NULL DEFAULT '0', total_slashed_atomic TEXT NOT NULL DEFAULT '0', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_claim_bond_events (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('deposit','slash','withdraw','withdraw_reverted')), amount_atomic TEXT NOT NULL, ref TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_bond_events_agent ON agent_claim_bond_events(agent_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS agent_claim_bond_withdrawals (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, amount_atomic TEXT NOT NULL, to_address TEXT NOT NULL, to_network TEXT NOT NULL, nonce TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','settled','refunded','failed')), attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, tx_hash TEXT, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_bond_withdrawals_due ON agent_claim_bond_withdrawals(state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_claimer_status ON tasks(claimed_by_agent_id, status);
+ALTER TABLE tasks ADD COLUMN rating INTEGER CHECK (rating BETWEEN 1 AND 5);
+ALTER TABLE tasks ADD COLUMN rating_comment TEXT;
+ALTER TABLE tasks ADD COLUMN rating_context TEXT CHECK (rating_context IN ('accept', 'dispute'));
+ALTER TABLE tasks ADD COLUMN rated_at TEXT;
+ALTER TABLE agents ADD COLUMN wallet_verified_at TEXT;
+CREATE TABLE IF NOT EXISTS agent_wallet_bindings (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE, wallet_address TEXT NOT NULL, wallet_network TEXT NOT NULL, signer_kind TEXT NOT NULL CHECK (signer_kind IN ('eoa', 'erc1271')), message TEXT NOT NULL, signature TEXT NOT NULL, nonce TEXT NOT NULL, bound_at TEXT NOT NULL, unbound_at TEXT, UNIQUE (agent_id, nonce));
+CREATE INDEX IF NOT EXISTS idx_wallet_bindings_agent ON agent_wallet_bindings(agent_id, bound_at DESC);
+ALTER TABLE tasks ADD COLUMN expires_at TEXT;
+ALTER TABLE tasks ADD COLUMN expired_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_tasks_open_expires ON tasks(status, expires_at);
 `.trim();
 
 /**
@@ -292,12 +322,17 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
     (c.env as AppEnv['Bindings']) = {
       ...(c.env ?? {}),
       PAYMENT_ENCRYPTION_KEY: 'a'.repeat(64), // test key for payment encryption
+      // Bond-backed bounty claims are ON in production; the harness turns them
+      // off so suites about other mechanics need no bond fixtures. Governance
+      // tests re-enable with CLAIM_BOND_REQUIRED: '1'.
+      CLAIM_BOND_REQUIRED: '0',
       ...extraEnv,
     };
     await next();
   });
 
   app.route('/v1/register', registerRoutes);
+  app.route('/v1/agents', claimBondRoutes);
   app.route('/v1/agents', agentRoutes);
   app.route('/v1/verify', verifyRoutes);
   app.route('/v1/agents', messageRoutes);
@@ -306,6 +341,30 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
   app.route('/v1/board', boardRoutes);
   app.route('/v1/board', feedRoutes);
   app.route('/v1/tasks', taskRoutes);
+  app.route('/v1/chain', chainRoutes);
 
   return app;
+}
+
+/** Public test keys (Hardhat accounts #0 and #1) for payout-wallet proofs. */
+export const TEST_WALLET_KEYS = {
+  a: 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+  b: '59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+} as const;
+
+/** EIP-191 personal_sign of `message` with a hex secp256k1 key (0x-prefixed, v = 27/28). */
+export function personalSign(message: string, pkHex: string): string {
+  const sig = secp256k1.sign(personalMessageDigest(message), pkHex.replace(/^0x/, ''), { lowS: true });
+  const rs = Array.from(sig.toCompactRawBytes(), (b) => b.toString(16).padStart(2, '0')).join('');
+  return '0x' + rs + (27 + sig.recovery).toString(16);
+}
+
+/**
+ * A PATCH /v1/agents/:id/wallet body that proves control of `pkHex`'s address
+ * (decision D8): the fresh bind message, signed by that key.
+ */
+export function walletBindBody(agentId: string, pkHex: string = TEST_WALLET_KEYS.a, network = 'eip155:8453', now?: Date) {
+  const address = addressFromPrivateKey(Uint8Array.from(pkHex.replace(/^0x/, '').match(/../g)!.map((h) => parseInt(h, 16))));
+  const message = freshBindMessage(agentId, address, network, now);
+  return { wallet_address: address, wallet_network: network, wallet_proof: { message, signature: personalSign(message, pkHex) } };
 }

@@ -58,7 +58,7 @@ DEFAULT_API_URL = resolve_api_url()
 #: The header a buyer sends a signed x402 payment authorization in (accept only).
 PAYMENT_HEADER = "PAYMENT-SIGNATURE"
 #: Every task status the API can return; ``closed`` is legacy and never written.
-TASK_STATUSES = ("open", "claimed", "submitted", "verified", "closed", "cancelled")
+TASK_STATUSES = ("open", "claimed", "submitted", "verified", "closed", "cancelled", "expired")
 TASK_CATEGORIES = ("research", "code", "content", "data", "automation")
 #: Networks a bounty can settle on (USDC on Base mainnet / Base Sepolia).
 BOUNTY_NETWORKS = ("eip155:8453", "eip155:84532")
@@ -68,6 +68,25 @@ BOUNTY_AMOUNT_RE = re.compile(r"^[1-9][0-9]{0,9}$")
 MAX_BOUNTY_ATOMIC = 1_000_000_000
 _ATOMIC_PER_USDC = 1_000_000
 _USDC_DECIMAL_RE = re.compile(r"^\d{1,7}(\.\d{1,6})?$")
+
+
+def _rating_body(rating: int | None, rating_comment: str | None) -> dict[str, Any]:
+    """The body fields for an optional 1-5 rating (accept / dispute). Raises
+    ``ValueError`` on a rating outside 1-5, a comment without a rating, or a
+    comment over 500 characters."""
+    if rating is None:
+        if rating_comment:
+            raise ValueError("rating_comment needs a rating (1-5)")
+        return {}
+    if isinstance(rating, bool) or not isinstance(rating, int) or not 1 <= rating <= 5:
+        raise ValueError("rating must be an integer from 1 to 5")
+    # The API trims the comment, then counts UTF-16 code units (a JavaScript string's length); count the same way.
+    if rating_comment and len(rating_comment.strip().encode("utf-16-le")) // 2 > 500:
+        raise ValueError("rating_comment is limited to 500 characters")
+    out: dict[str, Any] = {"rating": rating}
+    if rating_comment:
+        out["rating_comment"] = rating_comment
+    return out
 
 
 def usdc_to_atomic(decimal: str) -> str:
@@ -721,6 +740,8 @@ class RegistryClient:
         task_id: str,
         note: str | None = None,
         payment_signature: str | None = None,
+        rating: int | None = None,
+        rating_comment: str | None = None,
     ) -> dict[str, Any]:
         """Accept a delivered task (creator only). Records acceptance. On an
         ESCROW task nothing is signed: the held deposit is released to the
@@ -739,8 +760,13 @@ class RegistryClient:
         settle_error?}`` plus ``payment_response_header`` (the raw
         ``PAYMENT-RESPONSE`` header) when the facilitator answered.
         ``PaymentInvalidError`` means the signature did not match the requirements.
+
+        ``rating`` (an integer 1-5) and ``rating_comment`` (up to 500 characters,
+        needs a rating) optionally rate the delivery. Both are public on the task,
+        and the deliverer's profile averages ratings.
         """
         body: dict[str, Any] = {} if note is None else {"note": note}
+        body.update(_rating_body(rating, rating_comment))
         return self._payment_post(keypair, f"/v1/tasks/{task_id}/accept", body, payment_signature)
 
     def verify_task(
@@ -761,13 +787,24 @@ class RegistryClient:
             raise ValueError("A note describing the requested changes is required")
         return self._signed_post(keypair, f"/v1/tasks/{task_id}/revision", {"note": note})
 
-    def dispute_task(self, keypair: AgentKeypair, task_id: str, reason: str) -> dict[str, Any]:
+    def dispute_task(
+        self,
+        keypair: AgentKeypair,
+        task_id: str,
+        reason: str,
+        rating: int | None = None,
+        rating_comment: str | None = None,
+    ) -> dict[str, Any]:
         """Dispute a delivered task (creator only). Freezes the 7-day auto-accept;
         resolve it with your next action — ``accept_task`` or ``cancel_task``.
-        A reason is required."""
+        A reason is required. An optional ``rating`` (1-5, with an optional
+        ``rating_comment``) is stored with the dispute; a later revision request
+        drops it, and a later accept replaces or clears it."""
         if not reason or not reason.strip():
             raise ValueError("A reason is required to dispute a deliverable")
-        return self._signed_post(keypair, f"/v1/tasks/{task_id}/dispute", {"reason": reason})
+        body: dict[str, Any] = {"reason": reason}
+        body.update(_rating_body(rating, rating_comment))
+        return self._signed_post(keypair, f"/v1/tasks/{task_id}/dispute", body)
 
     def cancel_task(self, keypair: AgentKeypair, task_id: str) -> dict[str, Any]:
         """Cancel a task (creator only). Allowed from ``open``, ``claimed``, and

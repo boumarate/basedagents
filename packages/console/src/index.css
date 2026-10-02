@@ -40,6 +40,11 @@ code { font-family: var(--mono); font-size: 0.9em; }
 
 /* ── buttons ── */
 .btn {
+  /* Also used on <a> (router Links): inline-block so the padding takes up
+     line height instead of overlapping the line above, and no link underline. */
+  display: inline-block;
+  text-align: center;
+  text-decoration: none;
   font: inherit;
   font-weight: 600;
   border-radius: 10px;
@@ -90,12 +95,30 @@ code { font-family: var(--mono); font-size: 0.9em; }
   display: grid; gap: 0.5rem; justify-items: start;
 }
 .owner-id { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); padding-left: 0.6rem; }
+.side-star { font-size: 0.8rem; line-height: 1.35; color: var(--muted); padding: 0 0.6rem; text-decoration: none; }
+.side-star:hover { color: var(--text); text-decoration: underline; }
 .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .content { flex: 1; width: 100%; max-width: 880px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
 @media (max-width: 860px) {
   .app { flex-direction: column; }
-  .sidebar { position: static; width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
-  .side-bottom { margin-top: 0.6rem; }
+  /* On a phone the tall nav column would fill the first screen; flow the same
+     links as a compact chip row under the brand instead. */
+  .sidebar {
+    position: static; width: 100%; height: auto;
+    border-right: none; border-bottom: 1px solid var(--border);
+    flex-direction: row; flex-wrap: wrap; align-items: center;
+    gap: 0.4rem; padding: 0.75rem 1rem;
+  }
+  .side-brand { width: 100%; padding: 0 0 0.4rem; }
+  /* Only the nav's own headings: .side-head also labels sections on task and board pages. */
+  .sidebar .side-head, .sidebar .side-empty, .sidebar .owner-id { display: none; }
+  .side-link {
+    border: 1px solid var(--border); background: var(--panel);
+    border-radius: 999px; padding: 0.3rem 0.75rem; font-size: 0.88rem;
+  }
+  .side-link.active { border-color: var(--accent-strong); }
+  .side-label { max-width: 40vw; }
+  .side-bottom { margin: 0 0 0 auto; padding: 0; border-top: none; display: flex; align-items: center; }
 }
 
 /* ── page ── */
@@ -112,11 +135,14 @@ code { font-family: var(--mono); font-size: 0.9em; }
   padding: 1.1rem 1.2rem;
 }
 .card-main { min-width: 0; }
-.card-title { font-weight: 600; font-size: 1.05rem; display: flex; align-items: center; gap: 0.6rem; }
+.card-title { font-weight: 600; font-size: 1.05rem; display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.6rem; min-width: 0; }
 .pill { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); background: #1c1a2e; border: 1px solid #363657; border-radius: 999px; padding: 0.1rem 0.5rem; }
-.card-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.card-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; min-width: 0; overflow-wrap: anywhere; }
 .card-meta .dot { opacity: 0.5; }
-.card-note { margin: 0.6rem 0 0; color: #dcdce8; font-style: italic; }
+.card-note { margin: 0.6rem 0 0; color: #dcdce8; font-style: italic; overflow-wrap: anywhere; }
+/* List-card preview of a long text: a plain excerpt, clamped to three lines. */
+.card-excerpt { margin: 0.55rem 0 0; color: #dcdce8; font-size: 0.92rem; line-height: 1.5; overflow-wrap: anywhere; }
+.card-excerpt, .card-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.75rem; }
 .chip { font-size: 0.78rem; color: #e6e6f0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 0.2rem 0.55rem; }
 .card-actions { display: flex; flex-direction: column; gap: 0.5rem; flex-shrink: 0; }
@@ -124,6 +150,7 @@ code { font-family: var(--mono); font-size: 0.9em; }
 /* ── empty state ── */
 .empty { margin-top: 2.5rem; text-align: center; color: var(--text); }
 .empty p { margin: 0.3rem 0; }
+.empty .btn { margin-top: 0.75rem; }
 
 /* ── decided rows ── */
 .decided { margin-top: 3rem; }
@@ -166,11 +193,11 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .field { display: grid; gap: 0.35rem; }
 .field-label { font-size: 0.85rem; font-weight: 500; }
 .field-hint { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
-.field input {
+.field input, .form-inline input {
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 9px; padding: 0.6rem 0.7rem;
 }
-.field input:focus { outline: none; border-color: var(--accent-strong); }
+.field input:focus, .form-inline input:focus { outline: none; border-color: var(--accent-strong); }
 .form .btn-primary { margin-top: 0.25rem; }
 .input-affix { display: flex; align-items: center; gap: 0.55rem; }
 .input-affix input { flex: 1 1 auto; }
@@ -265,7 +292,9 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .mini-activity { list-style: none; padding: 0; margin: 0.9rem 0 0; display: grid; gap: 0.25rem; font-size: 0.82rem; }
 
 @media (max-width: 560px) {
-  .card { flex-direction: column; }
+  .content { padding: 1.25rem 1rem 3rem; }
+  .page-head { flex-wrap: wrap; gap: 0.6rem; }
+  .card { flex-direction: column; padding: 1rem; }
   .card-actions { flex-direction: row; width: 100%; }
   .card-actions .btn { flex: 1; }
   .form-inline { grid-template-columns: 1fr; }
@@ -285,7 +314,7 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 
 /* ── agent detail page (/agents/:agentId) ── */
 .agent-head { align-items: flex-start; gap: 1rem; }
-.card-title-link { color: inherit; text-decoration: none; }
+.card-title-link { color: inherit; text-decoration: none; min-width: 0; overflow-wrap: anywhere; }
 .card-title-link:hover { text-decoration: underline; }
 .tool-row { justify-content: space-between; }
 .tool-main { min-width: 0; }
@@ -329,11 +358,11 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .empty-guide > p:first-child { text-align: center; font-weight: 600; margin-bottom: 1rem; }
 
 /* ── tasks (/tasks, /tasks/new, /tasks/:taskId) ── */
-.field textarea, .field select {
+.field textarea, .field select, .form-inline select {
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 9px; padding: 0.6rem 0.7rem;
 }
-.field textarea:focus, .field select:focus { outline: none; border-color: var(--accent-strong); }
+.field textarea:focus, .field select:focus, .form-inline select:focus { outline: none; border-color: var(--accent-strong); }
 .status-review { color: var(--warn); background: var(--warn-bg); }
 /* Task lifecycle statuses on the browse board. */
 .status-open { color: var(--ok); background: #10241a; }
@@ -346,11 +375,19 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 /* Inline filter row (browse board): bare inputs/selects, not .field-wrapped. */
 .form-row { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 1.25rem 0; }
 .explore-filters input { flex: 1 1 220px; }
+.explore-filters select { min-width: 0; }
 .explore-filters input, .explore-filters select {
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
   color: var(--text); font: inherit; font-size: 0.9rem; padding: 0.5rem 0.7rem;
+  max-width: 100%;
 }
 .explore-filters input:focus, .explore-filters select:focus { outline: none; border-color: var(--accent-strong); }
+/* Small screens: search on its own line, the two selects share the next.
+   (Placed after the .form-row flex rule so the grid wins the cascade.) */
+@media (max-width: 560px) {
+  .explore-filters { display: grid; grid-template-columns: 1fr 1fr; }
+  .explore-filters input { grid-column: 1 / -1; }
+}
 .banner-ok { color: #c8f5d6; background: #10241a; border: 1px solid #1d4a30; }
 .prewrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .timeline { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.35rem; font-size: 0.9rem; }
@@ -379,3 +416,70 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .queue-title:hover { text-decoration: underline; }
 .queue-amount { font-family: var(--mono); font-size: 0.85rem; color: var(--ok); white-space: nowrap; }
 .queue-meta { font-size: 0.82rem; }
+
+/* ── /admin/feedback (operator triage, WS5) ── */
+.fb-tabs { margin: 0.5rem 0 1rem; flex-wrap: wrap; }
+.fb-card .card-main { min-width: 0; width: 100%; }
+.fb-field { margin-top: 0.6rem; }
+.fb-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.fb-value { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9rem; }
+.fb-chip { display: inline-block; margin: 0.15rem 0.35rem 0 0; }
+.fb-actions { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-top: 0.9rem; }
+.fb-note { flex: 1 1 16rem; min-width: 0; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 0.45rem 0.6rem; }
+.fb-note:focus { outline: none; border-color: var(--accent-strong); }
+
+/* ── Agent Testing (testing/*) ── */
+/* Run + finding cards stack vertically (base .card is a flex row). */
+.card.testing-stack { flex-direction: column; align-items: stretch; gap: 0.5rem; }
+.card.testing-stack textarea, .card.testing-stack input[type="text"], .card.testing-stack input:not([type]) { width: 100%; box-sizing: border-box; }
+.card.testing-stack .form-inline { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.report-doc .card { margin-bottom: 0.75rem; }
+@media print {
+  .sidebar, .btn-row, .stale-banner { display: none !important; }
+  .page { max-width: none; }
+  .panel { break-inside: avoid; border-color: #bbb; }
+}
+
+/* ─── Public (no-session) testing intake ───────────────────────────────────
+   The app Layout is absent on /testing/request, so the page carries its own
+   width and gutter under the AuthNav. */
+.page-standalone { max-width: 900px; margin: 0 auto; padding: 1.5rem 16px 4rem; }
+
+/* Intake validation: outlines + fix-list appear after a submit attempt, so a
+   missing field can never silently swallow the click. */
+.field-invalid > .field-label { color: var(--danger); }
+.field-invalid input, .field-invalid textarea, .field-invalid select { border-color: var(--danger); }
+.banner-warn ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+.banner-warn .link { color: inherit; text-decoration: underline; text-align: left; }
+
+/* Secondary "request a change" block under the pay button: its own quiet
+   section, never an inline cram next to the primary action. */
+.change-request { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); max-width: 640px; display: grid; gap: 0.75rem; }
+
+/* Run review card: stacked controls; the baseline recorder folds behind a
+   summary so an unrun baseline is one quiet line, not a wall of selects. */
+.review-actions { display: grid; gap: 0.6rem; }
+.review-fold summary { cursor: pointer; color: var(--accent); }
+.review-fold[open] summary { margin-bottom: 0.5rem; }
+
+/* Review money-consequence callout: the one line the operator must read
+   before the passkey — color keyed to the selected marketplace action. */
+.review-consequence { border-left: 3px solid var(--border); background: var(--panel-2); padding: 0.55rem 0.75rem; border-radius: 8px; }
+.review-consequence-accept { border-left-color: var(--ok); }
+.review-consequence-revision, .review-consequence-dispute { border-left-color: var(--warn); }
+.review-consequence-cancel { border-left-color: var(--danger); }
+.review-consequence-none { color: var(--muted); }
+.draft-findings { margin: 0.3rem 0 0; padding-left: 1.2rem; display: grid; gap: 0.35rem; }
+
+/* Task-board card previews clamp to three lines (.card-excerpt / .card-clamp,
+   defined with the card rules); the full brief lives on the task page. */
+
+/* Review page: optional 1-5 rating (D11) */
+.rating-picker { display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.5rem; }
+.rating-star {
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--muted); font-size: 1.05rem; line-height: 1; padding: 0.35rem 0.5rem; cursor: pointer;
+}
+.rating-star.on { color: var(--warn); border-color: var(--warn); }
+.rating-star:disabled { cursor: default; opacity: 0.6; }
+.rating-value { margin-left: 0.4rem; }

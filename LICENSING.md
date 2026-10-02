@@ -52,7 +52,7 @@ outside `src/control/` stays open. See `CONTROL_PLANE.md` for the
 architecture.
 
 > The Keyring credential vault (`packages/keyring`, `@basedagents/keyring`) and
-> its recipe library were retired in September 2026 and removed from the repo.
+> its recipe library were retired in October 2026 and removed from the repo.
 > Published versions remain available on npm under Apache-2.0.
 
 ## Contributors & consent

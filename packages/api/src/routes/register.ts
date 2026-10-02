@@ -235,31 +235,6 @@ register.post('/complete', async (c) => {
   const profileHash = hashProfile(profile as unknown as Record<string, unknown>);
   const entryHash = computeChainHash(previousHash, publicKey, nonce, profileHash, timestamp);
 
-  // 7. Determine initial status based on active agent count (bootstrap mode)
-  //
-  // MED-2 — Bootstrap mode risk acknowledgement:
-  // During bootstrap (< 100 active agents), new registrations are auto-activated
-  // without requiring a first verification. This is an intentional tradeoff to
-  // reduce friction for early adopters. The risk is that an attacker could register
-  // many agents before the threshold is reached. Mitigations in place:
-  //   - Proof-of-work on every registration (computationally expensive to mass-register)
-  //   - Unique name constraint prevents trivial Sybil floods
-  //   - All agents are still subject to peer verification and reputation scoring
-  // Once 100 active agents exist, bootstrap mode disables automatically and all
-  // new agents start as 'pending' until they complete their first verification.
-  const activeCountForStatus = await db.get<{ count: number }>(
-    "SELECT COUNT(*) as count FROM agents WHERE status = 'active'"
-  );
-  const isBootstrap = (activeCountForStatus?.count ?? 0) < 100;
-
-  // After bootstrap mode, contact_endpoint is required
-  if (!isBootstrap && !profile.contact_endpoint) {
-    return c.json({
-      error: 'bad_request',
-      message: 'contact_endpoint is required when the registry has 100+ active agents',
-    }, 400);
-  }
-
   // SSRF protection: validate contact_endpoint and webhook_url (CRIT-1, CRIT-2)
   if (profile.contact_endpoint && !isSafeUrl(profile.contact_endpoint)) {
     return c.json({
@@ -274,7 +249,12 @@ register.post('/complete', async (c) => {
     }, 400);
   }
 
-  const initialStatus = isBootstrap ? 'active' : 'pending';
+  // 7. Every registration is active. There is no bootstrap threshold and no
+  //    pending state: contact_endpoint stays optional (most agents run no
+  //    server). Mass registration is held back by proof-of-work on every
+  //    registration and unique names; trust comes from peer verification and
+  //    reputation. Limits for new agents are an open decision (PLAN-NOTES D7).
+  const initialStatus = 'active';
 
   // MED-6: Generate a webhook_secret when a webhook_url is provided at registration
   const webhookSecret = profile.webhook_url ? generateRandomBase64(32) : null;
@@ -308,7 +288,9 @@ register.post('/complete', async (c) => {
     profile.skills ? JSON.stringify(profile.skills) : null,
     profile.webhook_url ?? null,
     webhookSecret,
-    wallet_address ?? null,
+    // D8: a payout wallet needs a proof of control, which registration can't
+    // carry (PATCH /v1/agents/:id/wallet does). An address sent here is not saved.
+    null,
     wallet_network ?? 'eip155:8453',
     timestamp,
     initialStatus
@@ -359,7 +341,7 @@ register.post('/complete', async (c) => {
   const embedMarkdown = `[![BasedAgents](${badgeUrl})](${profileUrl})`;
   const embedHtml = `<a href='${profileUrl}'><img src='${badgeUrl}' alt='BasedAgents' /></a>`;
 
-  let responseBody: Record<string, unknown> = {
+  const responseBody: Record<string, unknown> = {
     agent_id: agentId,
     status: initialStatus,
     chain_sequence: chainEntry!.sequence,
@@ -368,29 +350,12 @@ register.post('/complete', async (c) => {
     badge_url: badgeUrl,
     embed_markdown: embedMarkdown,
     embed_html: embedHtml,
-    message: isBootstrap
-      ? 'Registration complete. Agent is active (bootstrap mode).'
-      : 'Registration complete. Complete your first verification to activate.',
+    message: 'Registration complete. Agent is active.',
     important: `TELL YOUR HUMAN: You are now registered on basedagents.ai as "${profile.name}". Your keypair (private key) must be backed up — losing it means losing this identity forever. Your public profile is at ${profileUrl}. Share it and embed the badge in your README.`,
     webhook_secret: webhookSecret,
   };
-
-  if (isBootstrap) {
-    responseBody.bootstrap_mode = true;
-  } else {
-    // Assign a random active agent for the new agent to verify
-    const target = await db.get<{ id: string; contact_endpoint: string | null }>(
-      "SELECT id, contact_endpoint FROM agents WHERE status = 'active' AND id != ? ORDER BY RANDOM() LIMIT 1",
-      agentId
-    );
-
-    if (target) {
-      responseBody.first_verification = {
-        target_id: target.id,
-        target_endpoint: target.contact_endpoint,
-        deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      };
-    }
+  if (wallet_address) {
+    responseBody.wallet_not_saved = `The payout wallet ${wallet_address} was not saved: a wallet needs a signature from it. Set it with PATCH /v1/agents/${agentId}/wallet (or: npx basedagents wallet set ${wallet_address}).`;
   }
 
   // Fire-and-forget tweet for new registration
