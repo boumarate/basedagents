@@ -19,10 +19,6 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Every surface a base-case user sees before opening the advanced door. */
 const SURFACES = [
-  'packages/console/src/pages/Link.tsx',
-  'packages/console/src/pages/Claim.tsx',
-  'packages/console/src/pages/Welcome.tsx',
-  'packages/console/src/pages/Invited.tsx',
   'packages/console/src/pages/Home.tsx',
   'packages/console/src/pages/Agent.tsx',
   'packages/console/src/pages/AddAgent.tsx',
@@ -35,13 +31,7 @@ const SURFACES = [
   'packages/console/src/pages/TaskReview.tsx',
   // Pills + error copy shared by the three task pages render to the same human.
   'packages/console/src/components/TaskBits.tsx',
-  'packages/console/src/components/AgentSetup.tsx',
-  'packages/console/src/components/AddAgentGuide.tsx',
   'packages/console/src/components/Layout.tsx',
-  'packages/console/src/lib/providerCards.ts',
-  'packages/console/src/lib/outcomes.ts',
-  // The shared hook's window.confirm strings render to the same human.
-  'packages/console/src/lib/agentActions.ts',
   // The marketing homepage speaks to the same base-case human — same rule.
   // (The "Are you an agent?" section is agent-facing but must still pass:
   // machine copy that needs the technical words belongs on /docs/agents.)

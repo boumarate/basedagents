@@ -37,9 +37,8 @@ export function canonicalJsonStringify(value: unknown): string {
 /**
  * The action hash a passkey signs: base64url(sha256(utf8(canonical))).
  *
- * This MUST match the control plane's actionChallenge and the daemon's
- * (packages/keyring/src/control-actions.ts) byte for byte — they are the two
- * sides of the same contract (CONTROL_PLANE.md §2.1). The console recomputes it
+ * This MUST match the control plane's actionChallenge byte for byte — they are
+ * the two sides of the same contract (CONTROL_PLANE.md §2.1). The console recomputes it
  * from the server-returned `action_canonical` and refuses to sign unless it
  * equals the server-returned `challenge`: client-side WYSIWYS, so a compromised
  * control plane cannot make the human sign a challenge that does not match the

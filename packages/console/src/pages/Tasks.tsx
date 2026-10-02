@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { control } from '../api/control.js';
 import type { OwnerTask } from '../api/types.js';
-import { ensurePasskey } from '../lib/firstApproval.js';
+import { ensurePasskey } from '../lib/ceremony.js';
 import { useOwner } from '../state/session.js';
 import { EscrowPill, TaskReviewPills, TaskStatusPill, fmtDate, taskErrText } from '../components/TaskBits.js';
 
