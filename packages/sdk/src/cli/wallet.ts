@@ -214,6 +214,28 @@ function pendingBinds(agentId: string, address: string, network: string, now = D
 function dropPendingBinds(list: PendingBind[]): void {
   for (const p of list) { try { unlinkSync(p.file); } catch { /* already gone */ } }
 }
+/** Circle's chain names (circle wallet ... --chain) for the networks a payout wallet can bind on. */
+const CIRCLE_CHAINS: Record<string, string> = { 'eip155:8453': 'BASE', 'eip155:84532': 'BASE-SEPOLIA' };
+/**
+ * The Circle CLI command that signs a bind message with a Circle agent wallet,
+ * or null off the networks Circle names. The message goes hex-encoded (--hex)
+ * so its line breaks reach the signer exactly as the registry rebuilds them.
+ */
+export function circleSignCommand(message: string, address: string, network: string): string | null {
+  const chain = CIRCLE_CHAINS[network];
+  if (!chain) return null;
+  return `circle wallet sign message 0x${Buffer.from(message, 'utf8').toString('hex')} --hex --address ${address} --chain ${chain}`;
+}
+/**
+ * Circle's own fix when its CLI answers "Wallet not deployed": a zero-amount transfer
+ * to itself deploys the wallet (Circle's paymaster covers the gas). The deployed
+ * wallet then signs and is checked per ERC-1271.
+ */
+export function circleDeployCommand(address: string, network: string): string | null {
+  const chain = CIRCLE_CHAINS[network];
+  if (!chain) return null;
+  return `circle wallet transfer ${address} --amount 0 --address ${address} --chain ${chain} --token usdc`;
+}
 /** The browser page that asks a wallet to sign a bind message (the message rides in the URL fragment, never sent to a server). */
 export function signPageUrl(message: string): string {
   return `https://app.basedagents.ai/sign-wallet#m=${Buffer.from(message, 'utf8').toString('base64url')}`;
@@ -238,8 +260,10 @@ ${bold('Usage:')}
   basedagents wallet set 0x1234...abcd        Set it. Signs with the key in
                                               $BASEDAGENTS_WALLET_PRIVATE_KEY when set
                                               (read locally, never sent or printed);
-                                              otherwise prints a link and the message
-                                              to sign in your wallet, and exits ${EXIT_SIGNATURE_REQUIRED}
+                                              otherwise prints a link, the message to
+                                              sign in your wallet, and the matching
+                                              'circle wallet sign message' command for a
+                                              Circle agent wallet, and exits ${EXIT_SIGNATURE_REQUIRED}
   basedagents wallet set 0x1234...abcd --signature 0x...
                                               Finish with the wallet's signature
   basedagents wallet clear                    Remove the wallet
@@ -375,8 +399,10 @@ ${bold('Options:')}
     savePendingBind({ agent_id: agentId, address, network, message, created_at: new Date().toISOString() });
     const url = signPageUrl(message);
     const next = `basedagents wallet set ${address}${network !== 'eip155:8453' ? ` --network ${network}` : ''} --nonce ${bindMessageNonce(message)} --signature`;
+    const circle = circleSignCommand(message, address, network);
+    const circleDeploy = circleDeployCommand(address, network);
     if (jsonMode) {
-      console.log(JSON.stringify({ signature_required: true, message, sign_url: url, next: `${next} <0x...>` }, null, 2));
+      console.log(JSON.stringify({ signature_required: true, message, sign_url: url, circle_sign_command: circle, circle_deploy_command: circleDeploy, next: `${next} <0x...>` }, null, 2));
     } else {
       console.error('');
       console.error(`  ${bold('Sign to prove this wallet is yours.')} It costs nothing and moves no funds.`);
@@ -386,6 +412,12 @@ ${bold('Options:')}
       console.error('');
       console.log(message);
       console.error('');
+      if (circle && circleDeploy) {
+        console.error(`  ${dim('With a Circle agent wallet, sign it with the Circle CLI:')}`);
+        console.error(`    ${cyan(circle)}`);
+        console.error(`  ${dim('If it answers "Wallet not deployed", deploy the wallet with a zero-amount transfer to itself, then sign again:')}`);
+        console.error(`    ${cyan(circleDeploy)}`);
+      }
       console.error(`  Then run: ${cyan(`${next} 0x...`)}`);
       console.error(`  ${dim('An agent with the wallet key can instead set BASEDAGENTS_WALLET_PRIVATE_KEY and rerun.')}`);
       console.error('');

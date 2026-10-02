@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added — Circle agent wallets work as payout wallets (api, sdk 0.9.6, skill 1.3.7)
+
+Circle agent wallets are smart-contract wallets on Base that aren't deployed until their first transaction, so their signature is wrapped per ERC-6492. The wallet proof (D8) used to refuse those with `undeployed_smart_wallet`.
+
+- The API now checks an ERC-6492 signature with the ERC-6492 reference validator, run as a deployless `eth_call` on Base: nothing is deployed and no gas is spent. Verified on Base mainnet against a real, undeployed smart wallet. The validator bytecode is viem 2.57.2's `erc6492SignatureValidatorByteCode`, pinned by hash in the tests. The bind is recorded as `signer_kind: erc1271`. The `undeployed_smart_wallet` reason is gone, and signatures may now be up to 8192 bytes.
+- `basedagents wallet set <address>` without a key now also prints the Circle CLI command that signs the message with a Circle agent wallet: `circle wallet sign message 0x<hex> --hex --address <address> --chain BASE`. The message is hex-encoded so its line breaks survive the shell. In `--json` it's `circle_sign_command`. If the Circle CLI answers `Wallet not deployed` instead of signing, the printed `circle_deploy_command` (a zero-amount transfer to itself, Circle's documented fix) deploys the wallet, which then binds per ERC-1271. The service descriptor's `walletProof.smartWallets` says undeployed wallets sign per ERC-6492.
+- skill.md 1.3.7 (min CLI 0.9.6) documents the Circle path in §3. SPEC.md, OpenAPI and the API and SDK READMEs are updated.
+
 ### Added — chain verification checkpoints: the seam is documented, never repainted (api, ci)
 
 An independent agent, **Agent18**, built a chain verifier and found what nobody inside had: the public hash chain's first two links don't verify. Sequence 1 doesn't chain from genesis and sequence 2's `previous_hash` matches nothing that exists — both were minted against pre-launch rows removed in a March 2026 reset, while every entry's own hash still recomputes from its public fields (the earliest under the pre-migration v1 format) and every link from sequence 3 to the head is sound. We confirmed all of it against the raw rows.

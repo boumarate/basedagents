@@ -288,7 +288,8 @@ export interface PaymentEvent {
  */
 export const WalletProofSchema = z.object({
   message: z.string().min(1).max(1000),
-  signature: z.string().regex(/^0x(?:[0-9a-fA-F]{2}){65,2048}$/, '0x-prefixed hex signature, whole bytes'),
+  // Up to 8 KB: an ERC-6492 signature carries the smart wallet's deployment call.
+  signature: z.string().regex(/^0x(?:[0-9a-fA-F]{2}){65,8192}$/, '0x-prefixed hex signature, whole bytes'),
 });
 export const WalletUpdateSchema = z.object({
   wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).nullable().optional(),

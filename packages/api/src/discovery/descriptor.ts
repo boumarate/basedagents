@@ -67,7 +67,7 @@ export function buildDescriptor(skill: SkillRef): Record<string, unknown> {
         scheme: 'eip191-personal_sign',
         messageTitle: BIND_TITLE,
         maxAgeMinutes: BIND_MAX_AGE_MS / 60_000,
-        smartWallets: 'ERC-1271, deployed wallets on Base',
+        smartWallets: 'ERC-1271 on Base; a wallet not deployed yet signs per ERC-6492',
         endpoint: `PATCH ${API}/v1/agents/{id}/wallet`,
       },
     },

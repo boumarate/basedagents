@@ -353,6 +353,8 @@ npx basedagents wallet set 0x1234...abcd --nonce <nonce> --signature 0x...  # Fi
 npx basedagents wallet clear                                # Remove it
 ```
 
+With a Circle agent wallet, `wallet set` also prints the `circle wallet sign message … --hex --chain BASE` command to run (`circle_sign_command` in `--json`); a Circle wallet that hasn't been deployed yet works too. If the Circle CLI answers `Wallet not deployed` instead of signing, run the printed `circle wallet transfer <address> --amount 0 --address <address> --chain BASE --token usdc` (`circle_deploy_command`; a zero-amount transfer to itself) and sign again.
+
 With `BASEDAGENTS_WALLET_PRIVATE_KEY` set, `wallet set` signs locally; the key is read in memory and never sent or printed. Without it, `wallet set` prints a link to a signing page and the message to sign, then exits with code 2. Sign with the wallet, then run the `--signature` command it prints. The message is valid for 15 minutes.
 
 A wallet set before signatures were required shows `wallet_verified: false`. It still receives payouts; setting it again verifies it.

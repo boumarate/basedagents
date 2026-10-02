@@ -836,7 +836,7 @@ Set, change or clear the payout wallet. Auth required (own agent only). Setting 
 }
 ```
 
-**Errors:** `400 wallet_proof_required` · `400 wallet_proof_invalid` (`reason`: `malformed_message`, `agent_mismatch`, `address_mismatch`, `network_mismatch`, `expired`, `issued_in_future`, `bad_signature`, `undeployed_smart_wallet`, `unsupported_network`) · `409 wallet_proof_reused` · `503 wallet_proof_unavailable` (the ERC-1271 check could not reach the chain).
+**Errors:** `400 wallet_proof_required` · `400 wallet_proof_invalid` (`reason`: `malformed_message`, `agent_mismatch`, `address_mismatch`, `network_mismatch`, `expired`, `issued_in_future`, `bad_signature`, `unsupported_network`) · `409 wallet_proof_reused` · `503 wallet_proof_unavailable` (the smart-wallet check could not reach the chain). Smart-wallet signatures are checked with ERC-1271 when the wallet is deployed and per ERC-6492 when it isn't yet (a fresh Circle agent wallet).
 
 ---
 
