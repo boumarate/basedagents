@@ -7,7 +7,7 @@
  *   npx tsx scripts/sync-positioning.ts --check    # exit 1 and list the drifted files
  *
  * Surfaces: positioning.json · README hero (markers) · packages/web/index.html
- * head (markers) · sdk / mcp / keyring package.json descriptions ·
+ * head (markers) · sdk / mcp package.json descriptions ·
  * packages/mcp/server.json · Python pyproject + __init__ docstring line ·
  * agent.json (tagline, note, marketplace block) · ai-plugin.json descriptions ·
  * _headers (X-Agent-Instructions) · llms.txt · sitemap.xml · openapi.json info.
@@ -59,7 +59,7 @@ upsert('packages/web/src/content/positioning.json', JSON.stringify({
 
 ${p.supplyLine} ${p.trustLine}
 
-${p.paymentLine} ${p.keyringLine} Open source — the registry API, SDKs, CLI and MCP server are Apache-2.0.
+${p.paymentLine} Open source — the registry API, SDKs, CLI and MCP server are Apache-2.0.
 
 **[basedagents.ai](${SITE_URL}) · [Open tasks](${SITE_URL}/tasks) · [Post a task](${p.ctas.postTask.href}) · [API](${API_URL}) · [npm](https://www.npmjs.com/package/basedagents) · [MCP Registry](https://glama.ai/mcp/servers/io.github.maxfain/basedagents)**`;
   upsert(rel, replaceBetween(src, '<!-- positioning:start -->', '<!-- positioning:end -->', hero, rel));
@@ -126,10 +126,6 @@ jsonFile('packages/sdk/package.json', (d) => { d.description = packageBlurb.sdk;
 jsonFile('packages/mcp/package.json', (d) => { d.description = packageBlurb.mcp; });
 if (packageBlurb.mcpRegistry.length > 100) throw new Error(`packageBlurb.mcpRegistry is ${packageBlurb.mcpRegistry.length} chars; the MCP Registry allows 100`);
 jsonFile('packages/mcp/server.json', (d) => { d.description = packageBlurb.mcpRegistry; });
-jsonFile('packages/keyring/package.json', (d) => {
-  const base = String(d.description ?? '').replace(/\s*Part of BasedAgents, the task marketplace for AI agents\.\s*$/, '');
-  d.description = `${base} ${packageBlurb.keyringNote}`;
-});
 {
   const rel = 'packages/python/pyproject.toml'; const src = readFileSync(join(ROOT, rel), 'utf8');
   upsert(rel, src.replace(/^description = ".*"$/m, `description = ${JSON.stringify(packageBlurb.python)}`));
@@ -187,8 +183,8 @@ upsert('packages/web/public/llms.txt', `# ${p.name}
 > ${p.supplyLine}
 > ${p.trustLine}
 > ${p.paymentLine}
-> Open source: npm \`basedagents\` (SDK + CLI), \`@basedagents/mcp\` (MCP server), PyPI \`basedagents\`,
-> \`@basedagents/keyring\`; source github.com/maxfain/basedagents; provenance block in /.well-known/agent.json.
+> Open source: npm \`basedagents\` (SDK + CLI), \`@basedagents/mcp\` (MCP server), PyPI \`basedagents\`;
+> source github.com/maxfain/basedagents; provenance block in /.well-known/agent.json.
 
 ## For AI agents: start here
 
@@ -216,10 +212,6 @@ Service descriptor: ${SITE_URL}/.well-known/basedagents.json. \`GET /\` on any B
 - Agents: \`${p.commands.post}\` prints the x402 deposit to sign (payTo = the registry's escrow wallet) and exits 2;
   rerun with --payment-signature. \`--no-escrow\` declares the bounty and pays the deliverer when you accept.
 - Review: accept releases the escrow; request changes (max 3 rounds); dispute. Silence for 7 days accepts.
-
-## Keyring (secondary)
-
-${p.keyringLine} https://basedagents.ai/keyring · \`npx @basedagents/keyring init\`
 
 ## Network-restricted sandboxes
 
@@ -253,7 +245,7 @@ allow api.basedagents.ai at task time; register where the network is open. Guide
   const url = (path: string, prio: string) => `  <url><loc>${SITE_URL}${path}</loc><priority>${prio}</priority></url>`;
   const rows = [
     ...PRERENDERED_ROUTES.map((r, i) => url(r, i === 0 ? '1.0' : '0.9')),
-    ...STATIC_ROUTES.map((r) => url(r, r === '/codex' ? '0.6' : '0.8')),
+    ...STATIC_ROUTES.map((r) => url(r, '0.8')),
     ...INDEXED_SPA_ROUTES.map((r) => url(r, '0.7')),
   ];
   upsert('packages/web/public/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${rows.join('\n')}\n</urlset>\n`);
