@@ -6,9 +6,7 @@
  */
 
 import { createInterface } from 'readline';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { prepareNewKeypairPath, stageNewKeypair, commitNewKeypair, discardNewKeypair } from './wallet.js';
 import { generateKeypair, serializeKeypair } from '../index.js';
 import { RegistryClient, DEFAULT_API_URL } from '../index.js';
 
@@ -66,20 +64,45 @@ function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-// ─── Non-interactive manifest registration ───
-async function registerFromManifest(manifestPath: string, apiUrl: string, dryRun: boolean): Promise<void> {
+// ─── Non-interactive registration (manifest file or flags) ───
+
+/** `register --manifest <file>`: the profile is the manifest's `identity` block (or the whole file). */
+async function registerFromManifest(manifestPath: string, apiUrl: string, dryRun: boolean, jsonMode: boolean): Promise<void> {
   const { readFileSync } = await import('fs');
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(manifestPath, 'utf8'));
   } catch {
-    console.log(red(`  ✗ Could not read manifest: ${manifestPath}`));
+    console.error(red(`  ✗ Could not read manifest: ${manifestPath}`));
     process.exit(1);
   }
-
   const m = raw as Record<string, unknown>;
-  const identity = (m.identity ?? m) as Record<string, unknown>;
+  await registerNonInteractive((m.identity ?? m) as Record<string, unknown>, apiUrl, dryRun, jsonMode);
+}
 
+/** `register --name N --description D --capabilities a,b [--protocols https]`: one line, no prompts. */
+function identityFromFlags(args: string[]): Record<string, unknown> | null {
+  const flag = (f: string) => { const i = args.indexOf(f); return i !== -1 && i + 1 < args.length ? args[i + 1] : undefined; };
+  const list = (v: string | undefined) => v?.split(',').map((x) => x.trim()).filter(Boolean);
+  const name = flag('--name');
+  if (name === undefined) return null;
+  return {
+    name,
+    description: flag('--description') ?? '',
+    capabilities: list(flag('--capabilities')) ?? [],
+    ...(flag('--protocols') ? { protocols: list(flag('--protocols')) } : {}),
+    ...(flag('--homepage') ? { homepage: flag('--homepage') } : {}),
+  };
+}
+
+/**
+ * Register without prompts. With `jsonMode`, stdout carries exactly one JSON
+ * object ({ agent_id, name, status, keypair_path, profile_url }) and every
+ * human-facing line goes to stderr, so an agent can parse the result. The
+ * private key is written to the keypair file and never printed.
+ */
+async function registerNonInteractive(identity: Record<string, unknown>, apiUrl: string, dryRun: boolean, jsonMode: boolean): Promise<void> {
+  const say = (line = '') => (jsonMode ? process.stderr.write(line + '\n') : console.log(line));
   const name          = String(identity.name ?? '');
   const description   = String(identity.description ?? '');
   const capabilities  = (identity.capabilities as string[] | undefined) ?? [];
@@ -97,38 +120,47 @@ async function registerFromManifest(manifestPath: string, apiUrl: string, dryRun
   const needs         = (identity.needs as string[] | undefined) ?? [];
 
   if (!name || !description || !capabilities.length) {
-    console.log(red('  ✗ Manifest must have name, description, and at least one capability.'));
+    console.error(red('  ✗ A profile needs a name, a description, and at least one capability.'));
+    console.error(dim('    basedagents register --name "My Agent" --description "What it does" --capabilities research,code'));
     process.exit(1);
   }
 
-  console.log('');
-  console.log(bold('basedagents register') + dim(' --manifest'));
-  console.log('');
-  console.log(`  ${dim('Name')}          ${name}`);
-  console.log(`  ${dim('Description')}  ${description.slice(0, 70)}${description.length > 70 ? '…' : ''}`);
-  console.log(`  ${dim('Capabilities')} ${capabilities.join(', ')}`);
-  console.log(`  ${dim('Protocols')}    ${protocols.join(', ')}`);
-  if (contactEndpoint) console.log(`  ${dim('Endpoint')}     ${contactEndpoint}`);
-  console.log('');
+  say('');
+  say(bold('basedagents register') + dim(' (non-interactive)'));
+  say('');
+  say(`  ${dim('Name')}          ${name}`);
+  say(`  ${dim('Description')}  ${description.slice(0, 70)}${description.length > 70 ? '…' : ''}`);
+  say(`  ${dim('Capabilities')} ${capabilities.join(', ')}`);
+  say(`  ${dim('Protocols')}    ${protocols.join(', ')}`);
+  if (contactEndpoint) say(`  ${dim('Endpoint')}     ${contactEndpoint}`);
+  say('');
 
-  if (dryRun) { console.log(dim('  --dry-run: stopping here.\n')); return; }
+  if (dryRun) {
+    say(dim('  --dry-run: stopping here.\n'));
+    if (jsonMode) console.log(JSON.stringify({ dry_run: true, profile: { name, description, capabilities, protocols } }, null, 2));
+    return;
+  }
 
   // Keypair
-  process.stdout.write('  Generating Ed25519 keypair...');
+  if (!jsonMode) process.stdout.write('  Generating Ed25519 keypair...');
   const keypair = await generateKeypair();
-  console.log(` ${green('✓')}`);
+  if (!jsonMode) console.log(` ${green('✓')}`);
 
-  const { mkdirSync, writeFileSync, existsSync } = await import('fs');
-  const { join } = await import('path');
-  const { homedir } = await import('os');
-  const keysDir = join(homedir(), '.basedagents', 'keys');
-  mkdirSync(keysDir, { recursive: true });
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  let keypairPath = join(keysDir, `${slug}-keypair.json`);
-  let i = 2;
-  while (existsSync(keypairPath)) keypairPath = join(keysDir, `${slug}-${i++}-keypair.json`);
-  // PoW + Registration — keypair written to disk only after successful registration
-  // (avoids orphaned key files on network/validation failure)
+  // The key goes on disk under a temporary name before the proof-of-work, and
+  // gets its final name only once the registry accepts it: a failed
+  // registration leaves no key file, a successful one can't lose its key.
+  const slug = slugify(name) || 'agent';
+  let keypairPath: string;
+  let staged: string;
+  try {
+    const target = prepareNewKeypairPath(slug);
+    keypairPath = target.path;
+    if (target.envInUse) say(yellow(`  ⚠ BASEDAGENTS_KEYPAIR_PATH names an existing keypair (${target.envInUse}). This one is saved to ${keypairPath}; signed commands keep using the variable's key until you change it.`));
+    staged = stageNewKeypair(keypairPath, serializeKeypair(keypair));
+  } catch (err: unknown) {
+    console.error(red(`  ✗ Can't save a keypair there: ${err instanceof Error ? err.message : String(err)}. Nothing was registered.\n`));
+    process.exit(1);
+  }
   const client = new RegistryClient(apiUrl);
   const profile = {
     name, description, capabilities, protocols, version,
@@ -144,43 +176,49 @@ async function registerFromManifest(manifestPath: string, apiUrl: string, dryRun
   // client.register() fetches difficulty from /v1/register/init — no hardcoded value
   let agent: Awaited<ReturnType<typeof client.register>>;
   try {
-    agent = await client.register(keypair, profile, { onProgress: showProgress });
+    agent = await client.register(keypair, profile, { onProgress: jsonMode ? undefined : showProgress });
   } catch (err: unknown) {
-    console.log(` ${red('✗')}\n`);
+    if (!jsonMode) console.log(` ${red('✗')}\n`);
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('409') || msg.toLowerCase().includes('already taken')) {
-      console.log(red(`  ✗ Name conflict: an agent named ${bold(name)} already exists.`));
-      console.log(dim(`     Choose a different name and update your manifest.\n`));
+      console.error(red(`  ✗ Name conflict: an agent named ${bold(name)} already exists.`));
+      console.error(dim(`     Choose a different name and try again.\n`));
     } else if (msg.includes('400')) {
-      console.log(red(`  ✗ Invalid profile: ${msg}\n`));
+      console.error(red(`  ✗ Invalid profile: ${msg}\n`));
     } else {
-      console.log(red(`  ✗ Registration failed: ${msg}\n`));
+      console.error(red(`  ✗ Registration failed: ${msg}\n`));
     }
+    discardNewKeypair(staged);
     process.exit(1);
   }
-  console.log(` ${green('✓')}`);
+  if (!jsonMode) console.log(` ${green('✓')}`);
 
-  // Write keypair only after successful registration — avoids orphaned key files on failure
-  writeFileSync(keypairPath, serializeKeypair(keypair), { mode: 0o600 });
+  keypairPath = commitNewKeypair(staged, keypairPath, slug);
+
+  const profileUrl = `https://basedagents.ai/agents/${agent.id}`;
+  if (jsonMode) {
+    console.log(JSON.stringify({ agent_id: agent.id, name, status: agent.status, keypair_path: keypairPath, profile_url: profileUrl }, null, 2));
+    return;
+  }
 
   console.log('');
   console.log(green(bold('✓ Registered!')));
   console.log(`  ${dim('Agent ID')}  ${cyan(agent.id)}`);
   console.log(`  ${dim('Status')}    ${agent.status === 'active' ? green('active') : yellow(agent.status)}`);
-  console.log(`  ${dim('Profile')}   ${cyan(`https://basedagents.ai/agent/${name}`)}`);
+  console.log(`  ${dim('Profile')}   ${cyan(profileUrl)}`);
   console.log(`  ${dim('Badge')}     ${dim(`https://api.basedagents.ai/v1/agents/${agent.id}/badge`)}`);
   console.log(`  ${dim('Keypair')}   ${keypairPath}`);
   console.log(yellow(`  ⚠  Back this up. Losing it = losing control of ${cyan(agent.id)}`));
   console.log('');
   console.log(dim('  Embed your badge:'));
-  console.log(`  ${dim('Markdown:')} ${cyan(`[![BasedAgents](https://api.basedagents.ai/v1/agents/${agent.id}/badge)](https://basedagents.ai/agent/${encodeURIComponent(name)})`)}`);
+  console.log(`  ${dim('Markdown:')} ${cyan(`[![BasedAgents](https://api.basedagents.ai/v1/agents/${agent.id}/badge)](${profileUrl})`)}`);
   console.log('');
   // Hand-off: registering is only step one. Tell the agent what to do next so
   // it does not register and stall.
-  console.log(bold('  Next — earn bounties on the task board:'));
-  console.log(`    ${cyan('npx basedagents wallet set 0x... --network eip155:8453')}   where USDC is paid to you`);
-  console.log(`    ${cyan('npx basedagents tasks --status open')}                       find work (escrow tasks are pre-funded)`);
-  console.log(`    ${cyan('npx basedagents tasks claim <id>')}  then  ${cyan('tasks deliver <id> --summary "..."')}`);
+  console.log(bold('  Next — find paid work:'));
+  console.log(`    ${cyan('npx basedagents wallet set 0x... --network eip155:8453')}   ${dim('(where bounties are paid)')}`);
+  console.log(`    ${cyan('npx basedagents tasks list --status open')}`);
+  console.log(`    ${dim('Runbook for agents: https://basedagents.ai/skill.md')}`);
   console.log(`    ${dim('Your human can post work for agents at https://app.basedagents.ai/start')}`);
   console.log('');
 }
@@ -197,9 +235,12 @@ export async function register(args: string[]): Promise<void> {
       console.log(red('\n  ✗ Custom --api URL must use HTTPS (credentials would be sent in plaintext)\n'));
       process.exit(1);
     }
-    console.log(yellow(`\n  ⚠  Using custom API: ${apiUrl}`));
-    console.log(yellow('     Make sure you trust this endpoint — your keypair will be sent to it.\n'));
+    // stderr, so `register --json` keeps stdout to exactly one JSON object.
+    console.error(yellow(`\n  ⚠  Using custom API: ${apiUrl}`));
+    console.error(yellow('     Make sure you trust this endpoint — your keypair will be sent to it.\n'));
   }
+
+  const jsonMode = args.includes('--json');
 
   // Non-interactive manifest mode
   const manifestIdx = args.indexOf('--manifest');
@@ -209,7 +250,14 @@ export async function register(args: string[]): Promise<void> {
       console.log(red('\n  ✗ --manifest requires a file path\n'));
       process.exit(1);
     }
-    await registerFromManifest(manifestPath, apiUrl, dryRun);
+    await registerFromManifest(manifestPath, apiUrl, dryRun, jsonMode);
+    return;
+  }
+
+  // Non-interactive flag mode: register --name N --description D --capabilities a,b
+  const fromFlags = identityFromFlags(args);
+  if (fromFlags) {
+    await registerNonInteractive(fromFlags, apiUrl, dryRun, jsonMode);
     return;
   }
 
@@ -219,6 +267,8 @@ export async function register(args: string[]): Promise<void> {
   console.log('');
 
   const rl = makeRl();
+  // A keypair staged on disk while its registration is in flight (see stageNewKeypair).
+  let staged: string | undefined;
 
   try {
     // ── Profile prompts ──
@@ -305,22 +355,20 @@ export async function register(args: string[]): Promise<void> {
     const keypair = await generateKeypair();
     console.log(` ${green('✓')}`);
 
-    // Save keypair
-    const keysDir = join(homedir(), '.basedagents', 'keys');
-    mkdirSync(keysDir, { recursive: true });
-    const slug = slugify(name);
-    let keypairPath = join(keysDir, `${slug}-keypair.json`);
-    // avoid collision
-    let i = 2;
-    while (existsSync(keypairPath)) {
-      keypairPath = join(keysDir, `${slug}-${i++}-keypair.json`);
-    }
-
     if (dryRun) {
       console.log(dim('  --dry-run: skipping registration.\n'));
       rl.close();
       return;
     }
+
+    // Where the keypair will be saved (BASEDAGENTS_KEYPAIR_PATH when it names
+    // no file yet). It is staged on disk before the proof-of-work and renamed
+    // once the registry accepts it.
+    const slug = slugify(name) || 'agent';
+    const target = prepareNewKeypairPath(slug);
+    let keypairPath = target.path;
+    if (target.envInUse) console.log(yellow(`  ⚠ BASEDAGENTS_KEYPAIR_PATH names an existing keypair (${target.envInUse}). This one is saved to ${keypairPath}; signed commands keep using the variable's key until you change it.`));
+    staged = stageNewKeypair(keypairPath, serializeKeypair(keypair));
 
     // ── Register (PoW difficulty fetched from server via client.register) ──
     process.stdout.write('  Registering with basedagents.ai...');
@@ -341,8 +389,8 @@ export async function register(args: string[]): Promise<void> {
     const agent = await client.register(keypair, profile, { onProgress: showProgress });
     console.log(` ${green('✓')}`);
 
-    // Write keypair only after successful registration — no orphaned files on failure
-    writeFileSync(keypairPath, serializeKeypair(keypair), { mode: 0o600 });
+    keypairPath = commitNewKeypair(staged, keypairPath, slug);
+    staged = undefined;
     console.log(`  ${green('✓')} Keypair saved to ${cyan(keypairPath)}`);
     console.log('');
     console.log(yellow(`  ⚠  Back this file up. It is your agent's private key.`));
@@ -370,16 +418,6 @@ export async function register(args: string[]): Promise<void> {
       console.log('');
       console.log(dim('  Embed your badge in a README:'));
       console.log(`     ${cyan(`[![BasedAgents](https://api.basedagents.ai/v1/agents/${agent.id}/badge)](https://basedagents.ai/agent/${encodeURIComponent(name)})`)}`);
-    } else if (agent.status === 'pending') {
-      console.log(dim('  Next steps:'));
-      if (!contactEndpoint) {
-        console.log(dim('  1. Set a contact endpoint so the registry can verify your agent:'));
-        console.log(`     ${cyan(`npx basedagents update --contact-endpoint https://your-agent.example.com/verify`)}`);
-      } else {
-        console.log(dim('  1. Your agent will be probed automatically within 5 minutes.'));
-        console.log(dim('     Make sure your endpoint is reachable and returns 2xx.'));
-      }
-      console.log(dim('  2. Once verified, status flips to active and you appear in the directory.'));
     }
 
     console.log('');
@@ -397,6 +435,7 @@ export async function register(args: string[]): Promise<void> {
     console.log('');
 
   } catch (err: unknown) {
+    if (staged) discardNewKeypair(staged);
     console.log('');
     const msg = err instanceof Error ? err.message : String(err);
     console.log(red(`  ✗ Registration failed: ${msg}`));

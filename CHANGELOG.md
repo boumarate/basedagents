@@ -12,7 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 The credential vault never found users while the task marketplace did, so
 Keyring is being removed from the repo in stages. This step decouples the
-published `basedagents` package (**0.8.0**):
+published `basedagents` package (**0.10.0**):
 
 - `basedagents` no longer depends on `@basedagents/keyring` — an install of the
   sdk/CLI no longer pulls in undici and playwright-core through it.
@@ -23,6 +23,7 @@ published `basedagents` package (**0.8.0**):
 - `basedagents register` now hands off to the task board (set a wallet, find
   open tasks) instead of "set up key custody".
 - The clean-container smoke test packs and drives the sdk alone.
+
 ### Removed — Keyring, step 3: the API control plane keeps only what the marketplace uses
 
 - Gone from `/v1/owner`: the approvals inbox and grant approvals, every
