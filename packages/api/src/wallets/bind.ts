@@ -164,17 +164,19 @@ export function rpcEndpoints(env: unknown, network: string): string[] {
 /** The node processed the call and refused it (e.g. the wallet's isValidSignature reverted): a "no", not an outage. */
 class RpcRejected extends Error {}
 
-/** One endpoint gets at most this long per call. */
-const RPC_ATTEMPT_MS = 5_000;
 /**
- * All the RPC work for one proof (every endpoint, both calls) fits in this, well inside
- * the SDK's 30 s request timeout, so a bind that succeeds on a late endpoint still lands.
+ * Each RPC call (one proof makes at most two) settles within this, so the worst case,
+ * 18 s, stays well inside the SDK's 30 s request timeout.
  */
-export const RPC_BUDGET_MS = 15_000;
+export const RPC_CALL_BUDGET_MS = 9_000;
+/** A call that hasn't answered by then also goes to the next endpoint (a hedged request). */
+export const RPC_HEDGE_MS = 1_500;
 
-async function rpcOnce(url: string, method: string, params: unknown[], timeoutMs: number): Promise<string> {
+async function rpcOnce(url: string, method: string, params: unknown[], timeoutMs: number, cancel: AbortSignal): Promise<string> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const onCancel = () => ctrl.abort();
+  cancel.addEventListener('abort', onCancel);
   try {
     const res = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -189,34 +191,57 @@ async function rpcOnce(url: string, method: string, params: unknown[], timeoutMs
     throw new Error(`RPC ${method}: ${reason}`);
   } finally {
     clearTimeout(timer);
+    cancel.removeEventListener('abort', onCancel);
   }
 }
 
 /**
- * An RPC caller for one proof. Each call goes to the first endpoint that answers; a revert
- * is the contract's answer and stops there, anything else (429, 5xx, timeout, a node that
- * lacks the method) moves on to the next. The endpoint that answered goes first for the
- * next call, and every attempt shares one deadline (RPC_BUDGET_MS).
+ * An RPC caller for one proof. A call starts on the first endpoint; a failure (429, 5xx, a
+ * node that lacks the method) starts the next one at once, and so does silence for
+ * RPC_HEDGE_MS, so one hanging node never keeps a healthy one from being tried. The first
+ * answer wins and the rest are cancelled; a revert is the contract's answer and wins too.
+ * Each call has its own RPC_CALL_BUDGET_MS. The endpoint that answered goes first next time.
  */
 function rpcCaller(urls: string[]): (method: string, params: unknown[]) => Promise<string> {
-  const deadline = Date.now() + RPC_BUDGET_MS;
   let order = urls;
-  return async (method, params) => {
-    let last: unknown = new Error(`RPC ${method}: no endpoint answered within ${RPC_BUDGET_MS / 1000} s`);
-    for (const url of order) {
+  return (method, params) => new Promise<string>((resolve, reject) => {
+    const deadline = Date.now() + RPC_CALL_BUDGET_MS;
+    const queue = [...order];
+    const cancel = new AbortController();
+    let inFlight = 0;
+    let done = false;
+    let hedge: ReturnType<typeof setTimeout> | undefined;
+    let last: unknown = new Error(`RPC ${method}: no endpoint answered within ${RPC_CALL_BUDGET_MS / 1000} s`);
+    const finish = (settle: () => void) => {
+      if (done) return;
+      done = true;
+      clearTimeout(hedge);
+      cancel.abort();
+      settle();
+    };
+    const launch = (): void => {
+      clearTimeout(hedge);
+      if (done) return;
+      const url = queue.shift();
       const left = deadline - Date.now();
-      if (left <= 0) break;
-      try {
-        const result = await rpcOnce(url, method, params, Math.min(RPC_ATTEMPT_MS, left));
-        order = [url, ...order.filter((u) => u !== url)];
-        return result;
-      } catch (err) {
-        if (err instanceof RpcRejected) throw err;
-        last = err;
+      if (!url || left <= 0) {
+        if (inFlight === 0) finish(() => reject(last));
+        return;
       }
-    }
-    throw last;
-  };
+      inFlight++;
+      rpcOnce(url, method, params, left, cancel.signal).then(
+        (result) => finish(() => { order = [url, ...order.filter((u) => u !== url)]; resolve(result); }),
+        (err: unknown) => {
+          inFlight--;
+          if (err instanceof RpcRejected) { finish(() => reject(err)); return; }
+          last = err;
+          launch();
+        },
+      );
+      if (queue.length > 0) hedge = setTimeout(launch, RPC_HEDGE_MS);
+    };
+    launch();
+  });
 }
 
 /** ABI-encode isValidSignature(bytes32 hash, bytes signature). */

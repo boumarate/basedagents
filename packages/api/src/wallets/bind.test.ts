@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import {
-  buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage, rpcEndpoints, RPC_BUDGET_MS,
+  buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage, rpcEndpoints, RPC_CALL_BUDGET_MS, RPC_HEDGE_MS,
   BIND_FOOTER, ERC6492_VALIDATOR_BYTECODE, type BindFields,
 } from './bind.js';
 import { createHash } from 'node:crypto';
@@ -169,22 +169,49 @@ describe('verifyBindProof', () => {
       expect(seen).toEqual(['https://mainnet.base.org', 'https://mainnet.base.org']);
     });
 
-    it('stops within the RPC budget when every endpoint hangs (inside the SDK\'s 30 s timeout)', async () => {
+    const hangingFetch = (healthy: string[] = []) => vi.fn((url: string, init: RequestInit) => {
+      if (healthy.includes(url)) {
+        const req = JSON.parse(String(init.body)) as { method: string };
+        const result = req.method === 'eth_getCode' ? '0x6080' : '0x1626ba7e' + '0'.repeat(56);
+        return Promise.resolve(new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 }));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    });
+
+    it('a hanging endpoint never keeps a healthy one from being tried (hedged after RPC_HEDGE_MS)', async () => {
       vi.useFakeTimers();
       try {
-        const hang = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
-          init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
-        }));
-        vi.stubGlobal('fetch', hang);
+        const f = hangingFetch(['https://mainnet.base.org']);
+        vi.stubGlobal('fetch', f);
         let settled = false;
         const pending = verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })
           .finally(() => { settled = true; });
-        await vi.advanceTimersByTimeAsync(RPC_BUDGET_MS);
+        await vi.advanceTimersByTimeAsync(RPC_HEDGE_MS);
+        expect(settled).toBe(true);
+        expect(await pending).toMatchObject({ ok: true, signerKind: 'erc1271' });
+        // eth_getCode: the configured node hangs, the hedge reaches mainnet.base.org; eth_call goes straight there.
+        expect(f.mock.calls.map((c) => c[0])).toEqual(['https://rpc.test', 'https://mainnet.base.org', 'https://mainnet.base.org']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('when every endpoint hangs, every one is still tried and the call gives up within its budget', async () => {
+      vi.useFakeTimers();
+      try {
+        const f = hangingFetch();
+        vi.stubGlobal('fetch', f);
+        let settled = false;
+        const pending = verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })
+          .finally(() => { settled = true; });
+        await vi.advanceTimersByTimeAsync(RPC_CALL_BUDGET_MS);
         expect(settled).toBe(true);
         expect(await pending).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
-        expect(RPC_BUDGET_MS).toBeLessThan(30_000);
-        // Four endpoints, 5 s each, 15 s budget: the fourth and the eth_call are never tried.
-        expect(hang).toHaveBeenCalledTimes(3);
+        expect(f).toHaveBeenCalledTimes(4); // the configured node and all three public ones
+        // A proof makes at most two calls; both budgets together stay inside the SDK's 30 s.
+        expect(2 * RPC_CALL_BUDGET_MS).toBeLessThan(30_000);
       } finally {
         vi.useRealTimers();
       }
