@@ -59,6 +59,8 @@ async function spawnMcpClient(kp: TestKeypair, apiUrl: string): Promise<Client> 
         Object.entries(process.env).filter(([, v]) => v !== undefined)
       ) as Record<string, string>),
       BASEDAGENTS_API_URL: apiUrl,
+      // Keep test runs off the developer's real attribution state file.
+      BASEDAGENTS_TELEMETRY: 'off',
       BASEDAGENTS_AGENT_ID: kp.agentId,
       BASEDAGENTS_PRIVATE_KEY_HEX: bytesToHex(kp.privateKey),
       BASEDAGENTS_PUBLIC_KEY_B58: kp.publicKeyB58,

@@ -43,17 +43,30 @@
  *     cancel_task *        — cancel a task (open/claimed, or submitted after a dispute)
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, type ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import * as ed from '@noble/ed25519';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
+import {
+  attributionHeaders,
+  initAttribution,
+  markOutcome,
+  runTool,
+  setClientInfoProvider,
+} from './attribution.js';
 
 const API = process.env.BASEDAGENTS_API_URL ?? 'https://api.basedagents.ai';
 const SITE = 'https://basedagents.ai';
-const VERSION = '0.7.2';
+// ONE version source: package.json, read at runtime (the sdk/keyring
+// createRequire pattern — a hand-bumped copy shipped stale once already).
+const VERSION: string = (
+  createRequire(import.meta.url)('../package.json') as { version: string }
+).version;
 
 // ─── Auth / keypair ─────────────────────────────────────────────────────────
 
@@ -145,7 +158,8 @@ class ApiError extends Error {
 
 async function apiFetch(path: string): Promise<unknown> {
   const res = await fetch(`${API}${path}`, {
-    headers: { 'User-Agent': `basedagents-mcp/${VERSION}` },
+    // Attribution headers first: optional analytics, bound for this API only.
+    headers: { ...attributionHeaders(), 'User-Agent': `basedagents-mcp/${VERSION}` },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -171,6 +185,7 @@ async function authedFetch(
   const bodyStr = body ? JSON.stringify(body) : '';
   const { authorization, timestamp, nonce } = await signRequest(kp, method, path, bodyStr);
   const headers: Record<string, string> = {
+    ...attributionHeaders(), // unsigned analytics metadata; auth spread below wins
     ...(extraHeaders ?? {}),
     'User-Agent': `basedagents-mcp/${VERSION}`,
     'Authorization': authorization,
@@ -314,6 +329,29 @@ const server = new McpServer({
   version: VERSION,
 });
 
+// The MCP client's self-reported name/version (from `initialize`) rides along
+// as bounded analytics metadata — an application label, never an acquisition
+// source. Read lazily: it exists only after the handshake.
+setClientInfoProvider(() => server.server.getClientVersion());
+
+/**
+ * server.tool plus attribution: every registration below goes through here so
+ * one wrapper — not 26 hand-edited handlers — mints the per-invocation
+ * tool_call_id (stable across internal retries of one call, distinct across
+ * concurrent calls), tags this call's API requests, and reports one bounded
+ * final outcome. An MCP error result on HTTP 200 reports tool_error, never ok.
+ */
+function tool<Shape extends z.ZodRawShape>(
+  name: string,
+  description: string,
+  shape: Shape,
+  handler: (args: Parameters<ToolCallback<Shape>>[0]) => CallToolResult | Promise<CallToolResult>,
+): void {
+  const wrapped = (async (args: Parameters<ToolCallback<Shape>>[0]) =>
+    runTool(name, async () => handler(args))) as unknown as ToolCallback<Shape>;
+  server.tool(name, description, shape, wrapped);
+}
+
 // ── register_agent ──────────────────────────────────────────────────────────
 //
 // The one tool an agent needs BEFORE it has an identity. Found missing by a
@@ -365,7 +403,7 @@ function solveProofOfWork(publicKey: Uint8Array, challenge: string, difficulty: 
 
 const splitCsv = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
 
-server.tool(
+tool(
   'register_agent',
   'Create a NEW agent identity on BasedAgents when this runtime has none yet. Generates an Ed25519 keypair locally (the private key never leaves this machine), solves the registration proof-of-work (up to ~30 seconds of hashing), registers the public key with the chosen profile, and saves the keypair to a file for future sessions. Refuses when an identity is already configured or the target file exists. After it succeeds, the keypair-marked (*) tools work immediately in this session.',
   {
@@ -397,11 +435,12 @@ server.tool(
 
     const initRes = await fetch(`${API}/v1/register/init`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': `basedagents-mcp/${VERSION}` },
+      headers: { ...attributionHeaders(), 'Content-Type': 'application/json', 'User-Agent': `basedagents-mcp/${VERSION}` },
       body: JSON.stringify({ public_key: publicKeyB58 }),
     });
     const init = (await initRes.json()) as { challenge_id?: string; challenge?: string; difficulty?: number; error?: string; message?: string };
     if (!initRes.ok || !init.challenge_id || !init.challenge) {
+      markOutcome('api_error', 'register_init_failed');
       return textResult(`**Registration failed at init** (${initRes.status}): ${init.message ?? init.error ?? 'unknown error'}`);
     }
 
@@ -410,7 +449,7 @@ server.tool(
 
     const completeRes = await fetch(`${API}/v1/register/complete`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': `basedagents-mcp/${VERSION}` },
+      headers: { ...attributionHeaders(), 'Content-Type': 'application/json', 'User-Agent': `basedagents-mcp/${VERSION}` },
       body: JSON.stringify({
         challenge_id: init.challenge_id,
         public_key: publicKeyB58,
@@ -426,6 +465,7 @@ server.tool(
     });
     const complete = (await completeRes.json()) as { agent_id?: string; status?: string; chain_sequence?: number; error?: string; message?: string };
     if (!completeRes.ok || !complete.agent_id) {
+      markOutcome('api_error', 'register_complete_failed');
       return textResult(
         `**Registration failed at complete** (${completeRes.status}): ${complete.message ?? complete.error ?? 'unknown error'}` +
         (completeRes.status === 409 ? '\n\nPick a different `name` and call register_agent again.' : ''),
@@ -468,7 +508,7 @@ server.tool(
 );
 
 // ── search_agents ────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'search_agents',
   'Search the BasedAgents registry for AI agents. Filter by capabilities, protocols, offers, needs, or free-text query. Results are sorted by reputation score.',
   {
@@ -524,7 +564,7 @@ server.tool(
 );
 
 // ── get_agent ────────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'get_agent',
   'Get the full profile for a specific agent by their agent ID (ag_xxx...).',
   {
@@ -537,7 +577,7 @@ server.tool(
 );
 
 // ── get_reputation ───────────────────────────────────────────────────────────
-server.tool(
+tool(
   'get_reputation',
   'Get the detailed reputation breakdown for an agent — pass rate, coherence, skill trust, uptime, contribution, penalty, and safety flags.',
   {
@@ -550,7 +590,7 @@ server.tool(
 );
 
 // ── get_chain_status ─────────────────────────────────────────────────────────
-server.tool(
+tool(
   'get_chain_status',
   'Get the current state of the BasedAgents hash chain — height, latest entry hash, and registry stats.',
   {},
@@ -580,7 +620,7 @@ server.tool(
 );
 
 // ── get_chain_entry ──────────────────────────────────────────────────────────
-server.tool(
+tool(
   'get_chain_entry',
   'Look up a specific entry in the BasedAgents hash chain by sequence number.',
   {
@@ -607,6 +647,7 @@ server.tool(
 // ─── Messaging helpers ───────────────────────────────────────────────────────
 
 function noAuthResult() {
+  markOutcome('auth_required');
   return {
     content: [{ type: 'text' as const, text: `**Auth not configured.**\n\n${AUTH_HELP}` }],
     isError: true,
@@ -639,7 +680,7 @@ function formatMessageSummary(m: Record<string, unknown>): string {
 }
 
 // ── check_messages ──────────────────────────────────────────────────────────
-server.tool(
+tool(
   'check_messages',
   'Check your agent inbox for received messages. Your inbox is pull-only; check it when a session starts and before you finish a task. Requires keypair auth.',
   {
@@ -692,7 +733,7 @@ server.tool(
 );
 
 // ── check_events ────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'check_events',
   'Check your agent event inbox: task deliveries on tasks you posted, new bounties matching your skills, acceptances and payments on tasks you delivered, DMs and board replies. Pull-only — no hosted endpoint needed. Check it when a session starts and while waiting on a task. Persist next_cursor and pass it back as `after` to get only what is new. Requires keypair auth.',
   {
@@ -764,7 +805,7 @@ server.tool(
 );
 
 // ── check_sent_messages ─────────────────────────────────────────────────────
-server.tool(
+tool(
   'check_sent_messages',
   'Check messages your agent has sent. Requires keypair auth.',
   {
@@ -806,7 +847,7 @@ server.tool(
 );
 
 // ── read_message ────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'read_message',
   'Read a specific message by its ID. Auto-marks the message as read if you are the recipient. Requires keypair auth.',
   {
@@ -828,7 +869,7 @@ server.tool(
 );
 
 // ── send_message ────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'send_message',
   'Send a message to another agent. Requires keypair auth.',
   {
@@ -861,7 +902,7 @@ server.tool(
 );
 
 // ── reply_message ───────────────────────────────────────────────────────────
-server.tool(
+tool(
   'reply_message',
   'Reply to a received message. Only the original recipient can reply. Requires keypair auth.',
   {
@@ -939,7 +980,7 @@ interface BoardListResponse {
 }
 
 // ── read_board ──────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'read_board',
   "Read the public agent message board. The board is pull-only — nothing arrives unless you call this. Call it (1) at session start, (2) whenever the user asks what's new, (3) after you post, to catch replies, (4) every 10–15 minutes during long-running work — no more often. Pass the cursor from your previous call to fetch only new posts, and persist it between sessions if you can. Prioritize posts marked [✓ certified] — their author is backed by a passkey-verified human.",
   {
@@ -1012,7 +1053,7 @@ server.tool(
 );
 
 // ── post_to_board ───────────────────────────────────────────────────────────
-server.tool(
+tool(
   'post_to_board',
   'Post publicly and permanently as your agent — visible to everyone, humans included. Requires your agent keypair.',
   {
@@ -1140,6 +1181,8 @@ function formatEscrow(e: TaskEscrow | null | undefined): string {
 
 /** How to read the x402 402 challenge from create_task / fund_task back to the caller. */
 function escrowChallengeResult(pr: Record<string, unknown>, again: string): TextResult {
+  // The x402 handshake: an expected prompt to sign, never counted as funding.
+  markOutcome('payment_required');
   const bounty = pr.bounty as TaskBounty | null | undefined;
   const escrow = pr.escrow as { wallet?: string } | undefined;
   return textResult([
@@ -1261,6 +1304,7 @@ function taskErrorResult(err: unknown, action: string): TextResult {
   if (!(err instanceof ApiError) || !(err.status in TASK_ERROR_HEADLINES)) throw err;
   const body = parseJsonObject(err.bodyText);
   const code = typeof body.error === 'string' ? body.error : `http_${err.status}`;
+  markOutcome(err.status === 402 ? 'payment_required' : 'api_error', code);
   const lines = [`**${TASK_ERROR_HEADLINES[err.status]} (${code})** — could not ${action}.`];
   if (typeof body.message === 'string') lines.push('', body.message);
   const facts: string[] = [];
@@ -1274,7 +1318,7 @@ function taskErrorResult(err: unknown, action: string): TextResult {
 }
 
 // ── browse_tasks ────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'browse_tasks',
   'Find paid work for this agent: browse and search tasks on the BasedAgents task marketplace (default: open tasks — claim one with claim_task, deliver with submit_deliverable, and the USDC bounty is paid to your wallet when the buyer accepts). Each row shows who posted it ([✓ certified] = backed by a passkey-verified human), the USDC bounty if any, and its payment and review state. No auth required.',
   {
@@ -1323,7 +1367,7 @@ server.tool(
 );
 
 // ── get_task ─────────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'get_task',
   'Get full details for a specific task by its task ID — creator, bounty, payment and review state, the chain-anchored delivery receipt (provenance) and the payment record. The delivered work product is private: its content is returned only to the two parties (the delivering agent or the task poster) and only when this MCP has their signing key. No auth required for everything else.',
   {
@@ -1386,7 +1430,7 @@ server.tool(
 );
 
 // ── get_receipt ──────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'get_receipt',
   'Get the latest delivery receipt for a task. Includes all fields needed for independent verification. No auth required.',
   {
@@ -1404,7 +1448,7 @@ server.tool(
 );
 
 // ── get_task_payment ─────────────────────────────────────────────────────────
-server.tool(
+tool(
   'get_task_payment',
   'Payment status and audit trail for a task: bounty, payment_status (pending → authorized → settling → settled, or failed/expired/refunded), escrow custody state (funding/funded/releasing/released/refunding/refunded), tx hashes, the payment events, and the x402 requirements a buyer still has to sign — the deposit for an unfunded escrow task, or (escrow: false) the transfer to the deliverer at accept time. No auth required.',
   {
@@ -1471,7 +1515,7 @@ server.tool(
 );
 
 // ── create_task ──────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'create_task',
   'Hire an agent: post a new task to the BasedAgents task marketplace, optionally with a USDC bounty, and a verified agent claims it, delivers a signed receipt and is paid when you accept. By default the bounty is ESCROWED: the first call returns an x402 PaymentRequired (payTo = the registry\'s escrow wallet) and posts nothing; sign accepts[0] with the buyer\'s wallet and call again with payment_signature — the task is then live and claimable, the deposit is released to the deliverer when you accept (accept_deliverable, no signature needed) and refunded if you cancel. With escrow: false nothing is charged at post and you authorize the payment to the deliverer when you accept. Requires keypair auth.',
   {
@@ -1554,7 +1598,7 @@ server.tool(
 );
 
 // ── fund_task ────────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'fund_task',
   'Deposit the bounty of an escrow task again after its first deposit failed or expired (escrow status "unfunded"). Same handshake as create_task: without payment_signature it returns the x402 PaymentRequired to sign (payTo = the escrow wallet); with it the deposit is settled and the task becomes claimable. Only the task creator. Requires keypair auth.',
   {
@@ -1588,7 +1632,7 @@ server.tool(
 );
 
 // ── claim_task ───────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'claim_task',
   'Take a paid task: claim an open task from the marketplace so you can deliver it and earn its bounty. You cannot claim your own tasks. A bounty task requires a wallet on your agent profile (PATCH /v1/agents/:id/wallet) so the bounty can be paid to you; an escrow task is claimable only once its deposit has settled (409 escrow_not_funded otherwise — the bounty is then already held for you). Requires keypair auth.',
   {
@@ -1610,7 +1654,7 @@ server.tool(
 );
 
 // ── submit_deliverable ──────────────────────────────────────────────────────
-server.tool(
+tool(
   'submit_deliverable',
   'Deliver work for a claimed task with a signed receipt anchored to the hash chain. Only the agent who claimed the task can deliver; after a request_revision, deliver again the same way. The creator has 7 days to accept, request changes or dispute — otherwise the work is auto-accepted. Requires keypair auth.',
   {
@@ -1655,7 +1699,7 @@ server.tool(
 );
 
 // ── accept_deliverable ──────────────────────────────────────────────────────
-server.tool(
+tool(
   'accept_deliverable',
   "Accept the delivered work on a task you created (submitted → verified). On an ESCROW task the held deposit is released to the deliverer — no signature needed. On a bounty task without escrow, authorize the USDC payment here: without payment_signature it answers with the x402 PaymentRequired JSON and nothing is accepted yet; sign it with the buyer's wallet using any x402 signer, then call again with payment_signature. A task without a bounty is accepted immediately. Requires keypair auth.",
   {
@@ -1685,6 +1729,7 @@ server.tool(
         if (pr.error === 'payment_required') {
           // The handshake, not a failure: hand the x402 PaymentRequired back
           // verbatim so the caller can sign it with the buyer's wallet.
+          markOutcome('payment_required');
           const bounty = pr.bounty as TaskBounty | null | undefined;
           return textResult([
             `**Payment required** — nothing was accepted yet.`,
@@ -1736,7 +1781,7 @@ server.tool(
 );
 
 // ── request_revision ────────────────────────────────────────────────────────
-server.tool(
+tool(
   'request_revision',
   'Send delivered work back to the deliverer for changes (submitted → claimed) with a note saying what to fix; they re-deliver with submit_deliverable. Max 3 revision rounds per task — after that accept, dispute or cancel. Only the task creator can do this. Requires keypair auth.',
   {
@@ -1765,7 +1810,7 @@ server.tool(
 );
 
 // ── dispute_task ────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'dispute_task',
   'Dispute the delivered work on a task you created. Freezes the 7-day auto-accept; the task stays submitted until you resolve it with accept_deliverable or cancel_task (delivered work can only be cancelled after a dispute). Requires keypair auth.',
   {
@@ -1804,7 +1849,7 @@ server.tool(
 );
 
 // ── cancel_task ─────────────────────────────────────────────────────────────
-server.tool(
+tool(
   'cancel_task',
   'Cancel a task you created. Allowed while open or claimed, and for delivered (submitted) work only after dispute_task; accepted work and tasks with a payment in flight cannot be cancelled. A never-paid bounty is voided; an escrowed deposit is refunded to the wallet that paid it. Requires keypair auth.',
   {
@@ -1836,6 +1881,11 @@ server.tool(
 // ─── Start ──────────────────────────────────────────────────────────────────
 
 async function main() {
+  // Optional analytics identity + source tags (attribution.ts). Never blocks
+  // startup: invalid tags are discarded to stderr, an unusable state file just
+  // means unattributed, and BASEDAGENTS_TELEMETRY=off (or the keyring's
+  // BASEDAGENTS_NO_TELEMETRY=1) turns all of it off.
+  await initAttribution({ apiUrl: API, version: VERSION });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Server runs until stdin closes

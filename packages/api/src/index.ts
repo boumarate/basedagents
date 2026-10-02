@@ -47,6 +47,7 @@ import ladderRoutes from './control/ladder.js';
 import funnelRoutes, { VOTABLE_PROVIDERS } from './routes/funnel.js';
 import feedbackRoutes from './routes/feedback.js';
 import adminRoutes from './control/admin.js';
+import { acquisitionCapture } from './acquisition/capture.js';
 import { runTaskCron } from './cron/tasks.js';
 import claimBondRoutes from './routes/claim-bond.js';
 import { paymentsDisabledReason } from './payments/index.js';
@@ -202,6 +203,14 @@ app.use('*', async (c, next) => {
   })().catch((err) => console.error('[telemetry] usage record failed:', err));
   try { c.executionCtx.waitUntil(work); } catch { await work; }
 });
+
+// ─── Acquisition attribution capture ───
+// Optional, unsigned X-BasedAgents-Installation-Id / -Acquisition-* headers on
+// normal traffic become private attribution records (migration 0048). Same
+// contract as the telemetry middleware above: runs after the response, writes
+// via waitUntil, never changes a response, never grants anything. Gated by
+// ACQUISITION_ANALYTICS ('0' disables).
+app.use('*', acquisitionCapture);
 
 // ─── Rate limiting middleware (durable) ───
 app.use('*', async (c, next) => {

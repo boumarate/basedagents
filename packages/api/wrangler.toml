@@ -36,6 +36,12 @@ STRIPE_PRICE_PRO_YEARLY = ""
 # file, like the price ids above; set HERE, not the dashboard (plain vars are
 # replaced wholesale on every deploy). Host defaults to https://us.i.posthog.com.
 POSTHOG_PROJECT_TOKEN = "phc_sDSFNrjkniWVhvBekx2UL4PkwrmT6jMeWnyswdC3S2LV"
+# Acquisition attribution (migration 0048, src/acquisition/). "0" turns the
+# capture middleware + conversion instrumentation off; default on.
+# INTERNAL_AGENT_IDS: extra ids excluded from acquisition reports (joined with
+# HOUSE_ACCOUNT_IDS at query time) — monitoring and smoke-test identities.
+ACQUISITION_ANALYTICS = "1"
+INTERNAL_AGENT_IDS = ""
 # House accounts: paid tasks they posted carry `sponsored: true` in GET /v1/tasks/settled
 # (the platform paying for work, labeled as such). Agent ids are public; add the
 # console owner id (ow_…) that posts house tasks from app.basedagents.ai too.
@@ -99,6 +105,10 @@ POW_DIFFICULTY = "4"
 CHALLENGE_TTL_SECONDS = "300"
 AUTH_MAX_CLOCK_SKEW = "60"
 ENVIRONMENT = "staging"
+# Acquisition attribution: on, like production — staging writes to its own D1
+# database, so rehearsal traffic never mixes into production reports.
+ACQUISITION_ANALYTICS = "1"
+INTERNAL_AGENT_IDS = ""
 # PostHog stays UNSET here on purpose: the production token would mix staging
 # rehearsal events into the live project's funnels. Staging logs one loud
 # "analytics are OFF" line per isolate (by design). To measure staging, make a

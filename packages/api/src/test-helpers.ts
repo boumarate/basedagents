@@ -27,6 +27,7 @@ import feedRoutes from './routes/feed.js';
 import taskRoutes from './routes/tasks.js';
 import chainRoutes from './routes/chain.js';
 import claimBondRoutes from './routes/claim-bond.js';
+import { acquisitionCapture } from './acquisition/capture.js';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { freshBindMessage, personalMessageDigest } from './wallets/bind.js';
 import { addressFromPrivateKey } from './payments/house-wallet.js';
@@ -139,6 +140,19 @@ CREATE INDEX IF NOT EXISTS idx_wallet_bindings_agent ON agent_wallet_bindings(ag
 ALTER TABLE tasks ADD COLUMN expires_at TEXT;
 ALTER TABLE tasks ADD COLUMN expired_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_tasks_open_expires ON tasks(status, expires_at);
+CREATE TABLE IF NOT EXISTS mcp_installations (installation_id TEXT PRIMARY KEY, first_observed_at TEXT NOT NULL, source_at_first_observation TEXT NOT NULL DEFAULT 'unknown', campaign_at_first_observation TEXT NOT NULL DEFAULT '', method_at_first_observation TEXT NOT NULL DEFAULT 'unknown', first_known_source TEXT, first_known_campaign TEXT, first_known_source_at TEXT, first_known_method TEXT, latest_source TEXT NOT NULL DEFAULT '', latest_campaign TEXT NOT NULL DEFAULT '', latest_source_at TEXT NOT NULL DEFAULT '', acquisition_id TEXT NOT NULL DEFAULT '', interface TEXT NOT NULL DEFAULT '', client_name TEXT NOT NULL DEFAULT '', client_version TEXT NOT NULL DEFAULT '', mcp_version TEXT NOT NULL DEFAULT '', last_seen_day TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS idx_mcp_inst_first ON mcp_installations(first_observed_at);
+CREATE TABLE IF NOT EXISTS acquisition_touches (id TEXT PRIMARY KEY, installation_id TEXT NOT NULL, source TEXT NOT NULL, campaign TEXT NOT NULL DEFAULT '', acquisition_id TEXT NOT NULL DEFAULT '', method TEXT NOT NULL, interface TEXT NOT NULL DEFAULT '', observed_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_touch_dedupe ON acquisition_touches(installation_id, source, campaign, acquisition_id, method);
+CREATE TABLE IF NOT EXISTS installation_agent_links (installation_id TEXT NOT NULL, agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE, first_linked_at TEXT NOT NULL, PRIMARY KEY (installation_id, agent_id));
+CREATE INDEX IF NOT EXISTS idx_links_agent ON installation_agent_links(agent_id);
+CREATE TABLE IF NOT EXISTS agent_acquisition (agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE, registered_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'unknown', campaign TEXT NOT NULL DEFAULT '', acquisition_id TEXT NOT NULL DEFAULT '', installation_id TEXT NOT NULL DEFAULT '', interface TEXT NOT NULL DEFAULT '', method TEXT NOT NULL DEFAULT 'unknown');
+CREATE INDEX IF NOT EXISTS idx_agent_acq_source ON agent_acquisition(source, registered_at);
+CREATE TABLE IF NOT EXISTS acquisition_ids (id TEXT PRIMARY KEY, source TEXT NOT NULL, campaign TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_acq_ids_expires ON acquisition_ids(expires_at);
+CREATE TABLE IF NOT EXISTS mcp_tool_outcomes (tool_call_id TEXT PRIMARY KEY, installation_id TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', tool_name TEXT NOT NULL, outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'tool_error', 'api_error', 'auth_required', 'payment_required', 'network_error')), error_code TEXT NOT NULL DEFAULT '', client_time TEXT NOT NULL DEFAULT '', received_at TEXT NOT NULL, interface TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS idx_outcomes_received ON mcp_tool_outcomes(received_at);
+CREATE TABLE IF NOT EXISTS installation_usage_daily (day TEXT NOT NULL, installation_id TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', interface TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL CHECK (kind IN ('discovery', 'meaningful')), count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, installation_id, agent_id, interface, kind));
 `.trim();
 
 /**
@@ -330,6 +344,11 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
     };
     await next();
   });
+
+  // Same acquisition capture as production (src/index.ts) so attribution
+  // semantics are exercised by the API suites and the MCP stdio E2E tests.
+  // Analytics-only: it never changes a response.
+  app.use('*', acquisitionCapture);
 
   app.route('/v1/register', registerRoutes);
   app.route('/v1/agents', claimBondRoutes);

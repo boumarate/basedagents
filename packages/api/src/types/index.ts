@@ -561,6 +561,14 @@ export type Bindings = {
   // Open-task expiry (decision D13, tasks/expiry.ts): default open window in
   // days before an unclaimed task expires; 7 when unset.
   TASK_OPEN_TTL_DAYS?: string;
+  // Acquisition attribution (migration 0048, acquisition/). '0' turns the
+  // capture middleware and conversion-event instrumentation off; anything else
+  // (including unset) leaves it on. INTERNAL_AGENT_IDS: comma-separated agent
+  // (ag_…) / owner (ow_…) ids excluded from acquisition reports by default
+  // (monitoring, smoke tests) — joined with HOUSE_ACCOUNT_IDS at query time,
+  // never classified from a client header.
+  ACQUISITION_ANALYTICS?: string;
+  INTERNAL_AGENT_IDS?: string;
   // PostHog product analytics + Error Tracking (lib/posthog.ts). Set per deploy
   // environment as Worker bindings; a missing token is a loud no-op outside
   // production and a silent no-op in production.
