@@ -6,8 +6,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import {
   buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage,
-  BIND_FOOTER, type BindFields,
+  BIND_FOOTER, ERC6492_VALIDATOR_BYTECODE, type BindFields,
 } from './bind.js';
+import { createHash } from 'node:crypto';
 
 const hex = (b: Uint8Array) => '0x' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 /** Hardhat account #0 — a public test key. */
@@ -147,12 +148,42 @@ describe('verifyBindProof', () => {
       expect(f).not.toHaveBeenCalled();
     });
 
-    it('explains a counterfactual (ERC-6492) signature instead of calling out', async () => {
-      const f = vi.fn();
-      vi.stubGlobal('fetch', f);
+    it('checks an ERC-6492 signature (a smart wallet not deployed yet) with the reference validator, deployless', async () => {
       const sig6492 = '0x' + 'cd'.repeat(100) + '6492649264926492649264926492649264926492649264926492649264926492';
-      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: sig6492 })).toMatchObject({ ok: false, reason: 'undeployed_smart_wallet' });
-      expect(f).not.toHaveBeenCalled();
+      const answer = (result: string) => vi.fn(async (_url: string, _init: RequestInit) =>
+        new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 }));
+
+      const valid = answer('0x01');
+      vi.stubGlobal('fetch', valid);
+      expect(await verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: sig6492 }))
+        .toMatchObject({ ok: true, signerKind: 'erc1271' });
+      expect(valid).toHaveBeenCalledTimes(1); // one eth_call, no getCode: the validator handles both cases
+      const req = JSON.parse(String((valid.mock.calls[0][1] as RequestInit).body)) as { method: string; params: [{ to?: string; data: string }, string] };
+      expect(req.method).toBe('eth_call');
+      expect(req.params[0].to).toBeUndefined();
+      const data = req.params[0].data;
+      expect(data.startsWith(ERC6492_VALIDATOR_BYTECODE)).toBe(true);
+      const args = data.slice(ERC6492_VALIDATOR_BYTECODE.length);
+      const sigHex = sig6492.slice(2);
+      expect(args).toBe(
+        SMART.slice(2).padStart(64, '0')
+        + hex(personalMessageDigest(msg)).slice(2)
+        + (96).toString(16).padStart(64, '0')
+        + (sigHex.length / 2).toString(16).padStart(64, '0')
+        + sigHex.padEnd(Math.ceil(sigHex.length / 64) * 64, '0'),
+      );
+
+      vi.stubGlobal('fetch', answer('0x00'));
+      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: sig6492 })).toMatchObject({ ok: false, reason: 'bad_signature' });
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted' } }), { status: 200 })));
+      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: sig6492 })).toMatchObject({ ok: false, reason: 'bad_signature' });
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connection refused'); }));
+      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: sig6492 })).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
+    });
+
+    it('pins the validator bytecode (viem 2.57.2 erc6492SignatureValidatorByteCode)', () => {
+      expect(createHash('sha256').update(ERC6492_VALIDATOR_BYTECODE).digest('hex'))
+        .toBe('037d6b69e53bae264a9a752be534c6373b3f829fb606456f184d2ba841de6ea4');
     });
   });
 });

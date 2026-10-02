@@ -1967,8 +1967,8 @@
                       },
                       "signature": {
                         "type": "string",
-                        "pattern": "^0x(?:[0-9a-fA-F]{2}){65,2048}$",
-                        "description": "0x-prefixed personal_sign signature (65 bytes for an EOA; longer for smart wallets)"
+                        "pattern": "^0x(?:[0-9a-fA-F]{2}){65,8192}$",
+                        "description": "0x-prefixed personal_sign signature: 65 bytes for an EOA, longer for a smart wallet (ERC-1271, or ERC-6492-wrapped when the wallet is not deployed yet), up to 8192 bytes"
                       }
                     }
                   }
@@ -1989,7 +1989,7 @@
             }
           },
           "400": {
-            "description": "bad_request (validation); wallet_proof_required (no proof: `sign_this` carries a fresh message to sign); wallet_proof_invalid (`reason`: malformed_message, agent_mismatch, address_mismatch, network_mismatch, expired, issued_in_future, bad_signature, undeployed_smart_wallet, unsupported_network)",
+            "description": "bad_request (validation); wallet_proof_required (no proof: `sign_this` carries a fresh message to sign); wallet_proof_invalid (`reason`: malformed_message, agent_mismatch, address_mismatch, network_mismatch, expired, issued_in_future, bad_signature, unsupported_network)",
             "content": {
               "application/json": {
                 "schema": {
