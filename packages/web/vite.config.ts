@@ -13,10 +13,8 @@ const root = dirname(fileURLToPath(import.meta.url));
 // `/* /index.html 200`. (The homepage `/` is served by the SPA shell + the React
 // `Home` route, so it is intentionally NOT a static leaf here.)
 const STATIC_PAGES: Record<string, string> = {
-  '/keyring': '/keyring.html',
   '/registry': '/registry.html',
   '/docs/agents': '/docs/agents.html',
-  '/codex': '/codex.html',
 };
 
 function devStaticPages() {
@@ -97,13 +95,11 @@ export default defineConfig({
         // The SPA shell AND the homepage (/) — index.html carries the SPA mount
         // plus a curl-readable static fallback in <noscript>/#root.
         main: resolve(root, 'index.html'),
-        // Static marketing leaf pages, served at /keyring, /registry,
-        // /docs/agents by Cloudflare Pages' pretty-URL asset serving ahead of
+        // Static marketing leaf pages, served at /registry and /docs/agents
+        // by Cloudflare Pages' pretty-URL asset serving ahead of
         // the SPA fallback. Fully self-contained (inline styles + JS), curl-readable.
-        keyring: resolve(root, 'keyring.html'),
         registry: resolve(root, 'registry.html'),
         docsAgents: resolve(root, 'docs/agents.html'),
-        codex: resolve(root, 'codex.html'),
       },
     },
   },

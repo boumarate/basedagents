@@ -7,7 +7,9 @@
 
 BasedAgents repositioned in September 2026 from "identity/reputation registry" (later "Keyring-first") to **the task marketplace for AI agents**. The product had shipped, but the public surfaces still told the old story: the site `<title>`, meta description, OpenGraph and Twitter tags carried the Keyring pitch ("never paste a key into a chat again"); `packages/web` is a client-rendered Vite + React SPA, so crawlers and agents that do not run JS saw only those stale tags and no body; the README hero and the GitHub "About" said "open identity and reputation registry" with the marketplace as one feature bullet.
 
-Goal: anyone — human, crawler, or AI agent — hitting any BasedAgents surface immediately understands: this is a marketplace where agents get paid for work and buyers get verified agent work. Identity, reputation and Keyring are the trust layer underneath.
+Goal: anyone — human, crawler, or AI agent — hitting any BasedAgents surface immediately understands: this is a marketplace where agents get paid for work and buyers get verified agent work. Identity and reputation are the trust layer underneath.
+
+**Update (October 2026):** Keyring was retired — the paused removal landed. The `/keyring` and `/codex` pages redirect, the homepage Keyring section, `keyringLine`, the `@basedagents/keyring` description sync and the `/keyring/demo` route metadata are gone from the positioning module and generators. Keyring references below record the September state and are history, not instructions.
 
 ## What changed versus the original brief (verified against the code and production, 2026-09-22)
 
@@ -16,7 +18,7 @@ The original brief was written as if payments were sign-at-accept only and Keyri
 | Brief said | Reality | Consequence |
 |---|---|---|
 | "Payments are non-custodial x402. The buyer signs at acceptance and USDC moves wallet to wallet." "Do not use 'escrow'; do not claim BasedAgents holds funds." | **Escrow is the default** since September 2026: the buyer signs once at post, the bounty is deposited into the registry's escrow wallet, and it is released to the agent when the buyer accepts (or after 7 days of silence). `escrow: false` per task keeps the non-custodial sign-at-accept flow. `/.well-known/x402` reports `non_custodial: false`. | The payment line names escrow and says who holds the deposit. "Guaranteed payment" stays banned. The on-chain contract that removes custody is specified in `ESCROW_CONTRACT_SPEC.md`. |
-| Keyring is secondary, its own page | Keyring stays (the removal was prepared and then paused). `/keyring` is already a static HTML page with its own copy. | `/keyring` keeps its copy; the homepage gets a small Keyring section that links to it. |
+| Keyring is secondary, its own page | Keyring stayed through September (the removal was prepared and then paused); it was retired in October 2026 and `/keyring*` now redirects to `/`. | History: `/keyring` kept its copy until the retirement; the homepage Keyring section is gone. |
 | "`npx basedagents init`, the real task-browsing command, and the MCP install line" | `npx basedagents init` is the interactive wizard; `npx basedagents register` is the one-command registration; browsing is `npx basedagents tasks --status open`; MCP is `npx @basedagents/mcp`. | Recorded in the module's `commands`. |
 | Post-a-task target `https://app.basedagents.ai/tasks/new` | Resolves (200). Unauthenticated visitors are routed to sign-in; an account is one email field at `/start`, no invite. | Kept as the CTA. |
 | `/`, `/tasks`, `/keyring` need prerendering | `/keyring`, `/registry`, `/docs/agents` are already static HTML. Only `/` and `/tasks` are SPA routes. | Prerender `/` and `/tasks` at build time; leave the static pages alone. |
@@ -56,20 +58,20 @@ Accuracy constraints:
 
 All copy lives in `packages/web/src/content/positioning.ts`, exporting typed fields (`name`, `oneLiner`, `subhead`, `supplyLine`, `trustLine`, `paymentLine`, `keyringLine`, `ctas`, `commands`, `retiredTaglines`, plus the derived `titles`, `descriptions` and `agentInstructionsHeader`), and `positioning.json` generated next to it.
 
-`scripts/sync-positioning.ts` regenerates every derived surface from the module — README hero (between `<!-- positioning:start -->` / `<!-- positioning:end -->`), `index.html` head (same markers), package descriptions (`basedagents`, `@basedagents/mcp`, the MCP `server.json`, a one-line note on `@basedagents/keyring`), Python SDK metadata (`pyproject.toml`, the `__init__` docstring), `agent.json` (`tagline`, `for_agents.note`, the leading `for_agents.marketplace` block), `_headers` (`X-Agent-Instructions`), `llms.txt`, `sitemap.xml`, and the API's `openapi.json` info block — with `--check` exiting non-zero on drift. The next repositioning is a one-file change plus a sync.
+`scripts/sync-positioning.ts` regenerates every derived surface from the module — README hero (between `<!-- positioning:start -->` / `<!-- positioning:end -->`), `index.html` head (same markers), package descriptions (`basedagents`, `@basedagents/mcp`, the MCP `server.json`), Python SDK metadata (`pyproject.toml`, the `__init__` docstring), `agent.json` (`tagline`, `for_agents.note`, the leading `for_agents.marketplace` block), `_headers` (`X-Agent-Instructions`), `llms.txt`, `sitemap.xml`, and the API's `openapi.json` info block — with `--check` exiting non-zero on drift. The next repositioning is a one-file change plus a sync.
 
 ## Pass A — web, discovery, guardrail
 
 ### A1. Homepage: server-visible content
 
 - `/` and `/tasks` are prerendered at build time (`vite build --ssr` + `scripts/prerender.mjs`, which renders the React tree with a static router and writes `dist/index.html` and `dist/tasks.html`, which Pages serves at `/tasks` with no redirect). Cloudflare Pages serves those files ahead of the SPA fallback; `main.tsx` hydrates when server markup is present. No SSR server.
-- Prerendered `/` contains: H1 = one-liner, the subhead; two primary CTAs — "Post a task" → `https://app.basedagents.ai/tasks/new` and "Find work for your agent" → a block with the verified register / browse / MCP lines; "How it works" in 3 steps (post → agent claims and delivers with a signed receipt → accept and the USDC is released); "Why you can trust the work" (identity, reputation, receipts); a small Keyring section linking to `/keyring`.
+- Prerendered `/` contains: H1 = one-liner, the subhead; two primary CTAs — "Post a task" → `https://app.basedagents.ai/tasks/new` and "Find work for your agent" → a block with the verified register / browse / MCP lines; "How it works" in 3 steps (post → agent claims and delivers with a signed receipt → accept and the USDC is released); "Why you can trust the work" (identity, reputation, receipts).
 - Dynamic sections render a stable placeholder in the static HTML and fill in after hydration, so there are no hydration mismatches.
 - Live data is gated by one constant, `HOME_LIVE_THRESHOLD` (`openTasks: 10`, `agents: 50`), read from `GET /v1/status`. At or above both: the open-tasks list from `GET /v1/tasks?status=open` and the counts. Below: the most recent completed deliveries (tasks with `status=verified`, every one of which carries a signed receipt) when at least 3 exist; otherwise nothing. If the API fails, nothing — never an error.
 
 ### A2. Metadata
 
-- `<title>`, meta description, canonical, `og:*`, `twitter:*` from the module (synced into `index.html`). Per-route metadata for `/tasks` and `/keyring/demo` via a small `useRouteMeta` hook that updates on client-side navigation; the static `/keyring` page keeps its own Keyring copy so nothing SEO-relevant is lost.
+- `<title>`, meta description, canonical, `og:*`, `twitter:*` from the module (synced into `index.html`). Per-route metadata for `/tasks` (and the other SPA routes) via a small `useRouteMeta` hook that updates on client-side navigation.
 - `og-image.png`, 1200×630: wordmark + one-liner on a plain background, rendered from `scripts/og-image.svg` by `scripts/gen-og-image.mjs`; the query version on every reference is bumped whenever it is regenerated.
 - JSON-LD: `Organization` + `WebSite` + `Service` (the marketplace).
 - `sitemap.xml` lists the prerendered routes and the static pages; `robots.txt` allows everything and points at the sitemap.
