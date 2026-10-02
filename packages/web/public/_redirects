@@ -1,4 +1,4 @@
-# Static marketing pages (/, /keyring, /registry, /docs/agents) are served as
+# Static marketing pages (/, /registry, /docs/agents) are served as
 # ASSETS by Cloudflare Pages BEFORE this rule; every other path falls through to
 # the React SPA served AT /index.html.
 #
@@ -24,10 +24,11 @@
 # static copy here drifted from it; keep the URL working with a redirect.
 /.well-known/x402  https://api.basedagents.ai/.well-known/x402  302
 
-# Generic alias for the sandbox recovery page (codex.html is served as an asset
-# at /codex ahead of these rules). Destination is the pretty URL, NEVER the
-# .html asset — see the warning above.
-/sandbox           /codex                              301
+# Retired pages (Keyring, the Codex sandbox walkthrough) — keep old links alive.
+/keyring           /                                   301
+/keyring/*         /                                   301
+/codex             /docs/agents#sandboxes              301
+/sandbox           /docs/agents#sandboxes              301
 
 # Everything not served as a static asset is the React SPA.
 /*                 /index.html                          200

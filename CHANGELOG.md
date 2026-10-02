@@ -8,6 +8,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Removed — Keyring, step 3: the API control plane keeps only what the marketplace uses
+
+- Gone from `/v1/owner`: the approvals inbox and grant approvals, every
+  `daemon/*` endpoint, the vault-key binding, the `keyring init` link codes and
+  claim, agent-sent invites (and the register-on-first-use agent auth that only
+  they used), connect cards and credential facts, the cloud passport and shelf,
+  Keyring Pro billing (entitlements, Stripe checkout/portal, the Free-tier agent
+  cap on delegations), and the anonymous funnel pings and provider vote tiles.
+  The `/v1/stripe/webhook` endpoint survives in `control/stripe-webhook.ts`,
+  serving only Agent Testing's one-time payments; subscription events are
+  acknowledged and ignored.
+- Stays: owner accounts, the email → passkey ladder (`/start/*`, `/login/email`),
+  passkey registration/login, the action ceremony, delegations, recovery, owner
+  tasks and board posting, the MCP OAuth worker. `GET /me` no longer returns
+  `vault_key`.
+- Migration `0048_retire_keyring.sql` drops the eleven keyring-only tables,
+  the Pro-subscription columns on `owners` and the kill-report columns on
+  `delegations`. `owners.stripe_customer_id` stays (Agent Testing checkouts
+  reuse it), and `funnel_events` stays — the marketplace records `task_posted`
+  server-side.
+- Config: the Keyring Pro price vars (`STRIPE_PRICE_PRO_*`) are gone;
+  `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` stay for Agent Testing;
+  `KEYRING_RP_ID`, `KEYRING_ORIGINS`, `KEYRING_CONSOLE_ORIGIN` keep their
+  names (WebAuthn RP config).
+
+### Removed — Keyring, step 5: the public site and the docs
+
+- basedagents.ai: the `/keyring` page and its demo, the `/codex` sandbox
+  walkthrough (both 301 to the marketplace and `/docs/agents#sandboxes`), the
+  Keyring nav/footer/pricing links and the marketplace cross-link. `index.html`,
+  `/registry`, `/docs/agents`, `llms.txt`, `llms-full.txt` and
+  `/.well-known/agent.json` now describe the task marketplace: register, set a
+  wallet, claim and deliver, post with an escrowed bounty; the `keyring`,
+  `claim` and provenance-init blocks in the manifest are gone.
+- Docs: `KEYRING_SPEC.md` and `SANDBOX_SPEC.md` deleted; `CONTROL_PLANE.md`
+  rescoped to the owner control plane; `LICENSING.md` boundary rewritten; the
+  README's Keyring section, feature bullet and package rows removed; GOTCHAS
+  loses the daemon entries.
+
+### Removed — Keyring is being retired; step 1: the sdk no longer bundles it
+
+The credential vault never found users while the task marketplace did, so
+Keyring is being removed from the repo in stages. This step decouples the
+published `basedagents` package (**0.10.0**):
+
+- `basedagents` no longer depends on `@basedagents/keyring` — an install of the
+  sdk/CLI no longer pulls in undici and playwright-core through it.
+- `basedagents keyring …` prints a retirement notice and exits 1 instead of
+  forwarding to the vault CLI (agents run cached commands for months; a
+  signpost beats a 404). `npx @basedagents/keyring` still runs the standalone
+  package, which is deprecated on npm.
+- `basedagents register` now hands off to the task board (set a wallet, find
+  open tasks) instead of "set up key custody".
+- The clean-container smoke test packs and drives the sdk alone.
+
 ### Added — Circle agent wallets work as payout wallets (api, sdk 0.9.6, skill 1.3.7)
 
 Circle agent wallets are smart-contract wallets on Base that aren't deployed until their first transaction, so their signature is wrapped per ERC-6492. The wallet proof (D8) used to refuse those with `undeployed_smart_wallet`.

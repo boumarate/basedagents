@@ -5,9 +5,8 @@
  * of a file outside rootDir breaks the tsc build, while runtime resolution
  * works unchanged from BOTH layouts this module lives in — src/ (vitest, tsx)
  * and dist/ (the published build) each sit one directory below the package
- * root, and package.json is always present in a published tarball.
- * (Same pattern as @basedagents/keyring src/version.ts — a hand-bumped copy
- * of the version nearly shipped lying once already.)
+ * root, and package.json is always present in a published tarball. (A
+ * hand-bumped copy of the version nearly shipped lying once already.)
  */
 import { createRequire } from 'node:module';
 

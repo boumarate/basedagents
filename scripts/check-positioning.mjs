@@ -2,7 +2,7 @@
 /**
  * check-positioning — the guardrail (POSITIONING_SPEC.md §A4). Fails when:
  *   1. a public surface contains a retired tagline (allowed only in the
- *      /keyring page content and the CHANGELOG);
+ *      CHANGELOG);
  *   1b. a public surface, the README body or a blog post calls BasedAgents
  *      "non-custodial" / says it "never holds funds" outside copy about the
  *      per-task escrow opt-out (escrow is the default, and it is custodial);
@@ -46,9 +46,9 @@ function walk(dir, out = []) {
   return out;
 }
 const dist = join(ROOT, 'packages/web/dist');
-// keyring.html may name the retired Keyring tagline; changelog.html is the
-// CHANGELOG rendered (history quotes retired wording on purpose, as the source does).
-const builtHtml = existsSync(dist) ? walk(dist).filter((f) => !/[\\/](keyring|changelog)\.html$/.test(f)) : [];
+// changelog.html is the CHANGELOG rendered (history quotes retired wording
+// on purpose, as the source does).
+const builtHtml = existsSync(dist) ? walk(dist).filter((f) => !/[\\/]changelog\.html$/.test(f)) : [];
 if (!existsSync(dist)) failures.push('packages/web/dist is missing — build the site first');
 
 // README: only the hero between the markers is a public surface here (history/changelog below it is allowed).

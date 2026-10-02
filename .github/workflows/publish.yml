@@ -16,9 +16,7 @@
 #   pypi.org   → project basedagents → Publishing → add a GitHub publisher
 #                with the same owner/repo/workflow and environment "publish".
 #
-# Order matters for the npm pair: the sdk pins @basedagents/keyring, so
-# keyring publishes first (GOTCHAS: "Publish the sdk with EVERY keyring
-# publish"). mcp and python are independent; the MCP Registry listing
+# The npm jobs are independent and run in parallel. The MCP Registry listing
 # (server.json) publishes after the npm package it points at, and needs no
 # setup: GitHub OIDC proves ownership of the io.github.maxfain/* namespace.
 
@@ -57,7 +55,6 @@ jobs:
       actions: read
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
-      keyring: ${{ steps.detect.outputs.keyring }}
       sdk: ${{ steps.detect.outputs.sdk }}
       mcp: ${{ steps.detect.outputs.mcp }}
       registry: ${{ steps.detect.outputs.registry }}
@@ -92,7 +89,6 @@ jobs:
             if npm view "${name}@${version}" version >/dev/null 2>&1; then echo false; else echo true; fi
           }
           {
-            echo "keyring=$(npm_unpublished packages/keyring)"
             echo "sdk=$(npm_unpublished packages/sdk)"
             echo "mcp=$(npm_unpublished packages/mcp)"
             name=$(jq -r .name packages/mcp/server.json); version=$(jq -r .version packages/mcp/server.json)
@@ -103,37 +99,10 @@ jobs:
             echo "python=$(curl -sSf -o /dev/null "https://pypi.org/pypi/basedagents/${pyver}/json" && echo false || echo true)"
           } | tee -a "$GITHUB_OUTPUT"
 
-  keyring:
-    name: npm @basedagents/keyring
-    needs: gate
-    if: needs.gate.outputs.keyring == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: publish
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      # Trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10.
-      - run: npm install -g npm@latest && npm --version
-      - run: npm ci
-      - name: Publish if unpublished
-        run: scripts/publish-if-unpublished.sh packages/keyring
-
   sdk:
     name: npm basedagents (sdk + cli)
-    # After keyring when keyring publishes too (the sdk pins it); on its own otherwise.
-    needs: [gate, keyring]
-    if: >-
-      always() && needs.gate.result == 'success' && needs.gate.outputs.sdk == 'true' &&
-      (needs.keyring.result == 'success' || needs.keyring.result == 'skipped')
+    needs: gate
+    if: needs.gate.outputs.sdk == 'true' 
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: publish

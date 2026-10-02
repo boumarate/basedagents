@@ -10,19 +10,11 @@ import type {
   RegistrationOptionsResponse,
   LoginOptionsResponse,
   OwnerMe,
-  KeyringRequest,
   ActionBeginResponse,
-  ApproveBeginResponse,
   OwnerAssertion,
   Delegation,
-  VaultKeyBinding,
   RecoverOptionsResponse,
   RecoverFinishResponse,
-  BillingInfo,
-  LinkInfo,
-  ClaimResult,
-  ConnectionInfo,
-  CredentialFact,
   BoardPost,
   OwnerTask,
   OwnerTaskDetail,
@@ -97,16 +89,17 @@ async function request<T>(method: string, path: string, body?: unknown, extraHea
 }
 
 export const control = {
-  // ── Registration (bind a passkey to the owner id derived from the vault key) ──
-  registerBegin(vaultPublicKey: string, email?: string): Promise<RegistrationOptionsResponse> {
-    return request('POST', '/register/begin', { vault_public_key: vaultPublicKey, email });
+  // ── Registration (bind a passkey to the account; the key is the account id's
+  // base58 half — see lib/owner.ts — and rides the wire under its legacy name) ──
+  registerBegin(accountKey: string, email?: string): Promise<RegistrationOptionsResponse> {
+    return request('POST', '/register/begin', { vault_public_key: accountKey, email });
   },
   registerFinish(
-    vaultPublicKey: string,
+    accountKey: string,
     reg: RegistrationResult,
   ): Promise<{ owner_id: string; credential_id: string }> {
     return request('POST', '/register/finish', {
-      vault_public_key: vaultPublicKey,
+      vault_public_key: accountKey,
       attestationObject: reg.attestationObject,
       clientDataJSON: reg.clientDataJSON,
       transports: reg.transports,
@@ -128,16 +121,13 @@ export const control = {
   me(): Promise<OwnerMe> {
     return request('GET', '/me');
   },
-  listRequests(status?: string): Promise<{ requests: KeyringRequest[] }> {
-    return request('GET', `/requests${status ? `?status=${encodeURIComponent(status)}` : ''}`);
-  },
 
   // ── Generic action ceremony ("signature to act") ──
   actionBegin(actionType: string, params: Record<string, unknown>): Promise<ActionBeginResponse> {
     return request('POST', '/action/begin', { action_type: actionType, params });
   },
 
-  // ── Delegations (owner → agent edges) ──
+  // ── Delegations (owner → agent edges: the agents this account vouches for) ──
   createDelegation(
     agentId: string,
     label: string | null,
@@ -157,22 +147,7 @@ export const control = {
     return request('POST', `/delegations/${encodeURIComponent(delegationId)}/revoke`, { nonce, assertion });
   },
 
-  // ── Vault-key binding (unlocks daemonAuth for `based sync`) ──
-  bindVaultKey(vaultPublicKey: string, nonce: string, assertion: OwnerAssertion): Promise<VaultKeyBinding> {
-    return request('POST', '/vault-binding', { vault_public_key: vaultPublicKey, nonce, assertion });
-  },
-
-  // ── Authority ladder / onboarding ──
-  linkStatus(code: string): Promise<LinkInfo> {
-    return request('GET', `/link/${encodeURIComponent(code)}`);
-  },
-  /** Omit `email` to send to the start-code-attached address on the link. */
-  linkClaim(code: string, email?: string): Promise<{ ok: true }> {
-    return request('POST', `/link/${encodeURIComponent(code)}/claim`, email ? { email } : {});
-  },
-  claimFinish(token: string): Promise<ClaimResult> {
-    return request('POST', '/claim/finish', { token });
-  },
+  // ── Email magic links + the web "Get started" door ──
   loginEmail(email: string): Promise<{ ok: true }> {
     return request('POST', '/login/email', { email });
   },
@@ -185,52 +160,11 @@ export const control = {
   startFinish(token: string): Promise<{ has_account: boolean; start_code?: string }> {
     return request('POST', '/start/finish', { token });
   },
-  // Create (or sign into) an email-only BUYER account from the verified start
-  // code — for people who want to post/hire, not run an agent. Mints the
-  // session cookie; the account holds no vault and gets a passkey on first post.
+  // Create (or sign into) the account behind a just-verified start code — the
+  // brand-new-address half of /start. Mints the session cookie; the account
+  // gets its passkey at its first action (post a task, connect an agent).
   startBuyer(startCode: string): Promise<{ owner_id: string; created: boolean }> {
     return request('POST', '/start/buyer', { start_code: startCode });
-  },
-  inviteClaim(token: string): Promise<{ ok: true; email: string; next_step: string }> {
-    return request('POST', '/invites/claim', { token });
-  },
-  createConnection(input: {
-    agent_id: string; provider: string; label?: string; env_var?: string;
-    /** Required for kind 'sealed' (the default); absent for kinds 'provision'/'rotate'/'remove'. */
-    sealed_secret?: string;
-    /** 'provision' asks the machine to mint the token itself; 'rotate' asks it to
-     *  replace one minted key in place; 'remove' asks it to revoke + burn + drop
-     *  one key. rotate_credential_id names the target for rotate/remove. */
-    kind?: 'sealed' | 'provision' | 'rotate' | 'remove';
-    rotate_credential_id?: string;
-  }): Promise<{ id: string; status: string }> {
-    return request('POST', '/connections', input);
-  },
-  listConnections(): Promise<{ connections: ConnectionInfo[] }> {
-    return request('GET', '/connections');
-  },
-  listCredentialFacts(): Promise<{ facts: CredentialFact[] }> {
-    return request('GET', '/credential-facts');
-  },
-
-  // Cloud passport (SANDBOX_SPEC §4b): file a request carrying only a
-  // browser-held public key; poll for the sealed blob (one-shot read).
-  createPassport(browser_public_key: string): Promise<{ id: string; status: string }> {
-    return request('POST', '/passport', { browser_public_key });
-  },
-  getPassport(id: string): Promise<{ status: string; sealed_passport: string | null }> {
-    return request('GET', `/passport/${encodeURIComponent(id)}`);
-  },
-
-  // ── Billing ("local is free, hosted is paid") ──
-  getBilling(): Promise<BillingInfo> {
-    return request('GET', '/billing');
-  },
-  billingCheckout(interval: 'monthly' | 'yearly'): Promise<{ url: string }> {
-    return request('POST', '/billing/checkout', { interval });
-  },
-  billingPortal(): Promise<{ url: string }> {
-    return request('POST', '/billing/portal');
   },
 
   // ── Recovery (CONTROL_PLANE.md §6) ──
@@ -380,21 +314,6 @@ export const control = {
     signed?: SignedAction,
   ): Promise<{ ok: true; task_id: string; submission_public: boolean; published_at: string | null }> {
     return request('POST', `/tasks/${encodeURIComponent(taskId)}/publish`, { publish, ...(signed ?? {}) });
-  },
-
-  // ── Approve ceremony ("signature to act") ──
-  approveBegin(requestId: string): Promise<ApproveBeginResponse> {
-    return request('POST', `/requests/${encodeURIComponent(requestId)}/approve/begin`);
-  },
-  approve(
-    requestId: string,
-    nonce: string,
-    assertion: OwnerAssertion,
-  ): Promise<{ request: KeyringRequest; approval_id: string }> {
-    return request('POST', `/requests/${encodeURIComponent(requestId)}/approve`, { nonce, assertion });
-  },
-  deny(requestId: string, reason?: string): Promise<KeyringRequest> {
-    return request('POST', `/requests/${encodeURIComponent(requestId)}/deny`, { reason });
   },
 };
 
