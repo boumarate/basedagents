@@ -10,7 +10,7 @@ export function AuthNav() {
         <span className="brand-mark">◈</span> BasedAgents
       </a>
       <div className="auth-nav-links">
-        <a href="https://basedagents.ai/keyring">Keyring</a>
+        <a href="https://basedagents.ai/tasks">Tasks</a>
         <a href="https://basedagents.ai/registry">Registry</a>
         <a href="https://basedagents.ai/docs/getting-started">Docs</a>
         <a href="https://github.com/maxfain/basedagents" target="_blank" rel="noopener noreferrer">GitHub</a>

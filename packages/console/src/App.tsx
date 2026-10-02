@@ -6,17 +6,9 @@ import Layout from './components/Layout.js';
 import Login from './pages/Login.js';
 import Start from './pages/Start.js';
 import Recover from './pages/Recover.js';
-import LinkPage from './pages/Link.js';
-import Claim from './pages/Claim.js';
-import Invited from './pages/Invited.js';
 import Home from './pages/Home.js';
-import Welcome from './pages/Welcome.js';
-import Approvals from './pages/Approvals.js';
 import AgentPage from './pages/Agent.js';
 import AddAgent from './pages/AddAgent.js';
-import Delegations from './pages/Delegations.js';
-import Vault from './pages/Vault.js';
-import Billing from './pages/Billing.js';
 import BoardPage from './pages/Board.js';
 import TasksPage from './pages/Tasks.js';
 import Explore from './pages/Explore.js';
@@ -73,15 +65,13 @@ export default function App() {
       <StaleTabBanner />
       <BrowserRouter>
         <Routes>
+          {/* Public pages (no session yet): sign in, get started, recover. Their
+              magic links land back on the same paths as /login#t=, /start#t=
+              and /recover#t=. */}
           <Route path="/login" element={<Login />} />
-          {/* /start is the web "Get started" door; /signup 301s to it. */}
           <Route path="/start" element={<Start />} />
           <Route path="/signup" element={<Navigate to="/start" replace />} />
           <Route path="/recover" element={<Recover />} />
-          {/* The onboarding ladder's public pages (no session yet). */}
-          <Route path="/link" element={<LinkPage />} />
-          <Route path="/claim" element={<Claim />} />
-          <Route path="/invited" element={<Invited />} />
           {/* Public audit intake: no account — every request is operator-
               reviewed, so submission needs only an email (signed-in visitors
               are redirected to the in-app form). */}
@@ -90,19 +80,16 @@ export default function App() {
           <Route element={<Protected />}>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<Home />} />
-            <Route path="/welcome" element={<Welcome />} />
-            <Route path="/approvals" element={<Approvals />} />
             <Route path="/agents" element={<AgentsIndex />} />
             <Route path="/agents/new" element={<AddAgent />} />
             <Route path="/agents/:agentId" element={<AgentPage />} />
-            <Route path="/delegations" element={<Delegations />} />
+            {/* The old manager page: connecting an agent by its id lives on /agents/new now. */}
+            <Route path="/delegations" element={<Navigate to="/agents/new" replace />} />
             <Route path="/explore" element={<Explore />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/tasks/new" element={<TaskNew />} />
             <Route path="/tasks/:taskId" element={<TaskReview />} />
             <Route path="/board" element={<BoardPage />} />
-            <Route path="/vault" element={<Vault />} />
-            <Route path="/settings/billing" element={<Billing />} />
             <Route path="/admin/feedback" element={<AdminFeedback />} />
             {/* Agent Testing (customer + operator) */}
             <Route path="/testing" element={<TestingAudits />} />
