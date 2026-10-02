@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import {
-  buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage,
+  buildBindMessage, parseBindMessage, personalMessageDigest, recoverSigner, verifyBindProof, freshBindMessage, rpcEndpoints,
   BIND_FOOTER, ERC6492_VALIDATOR_BYTECODE, type BindFields,
 } from './bind.js';
 import { createHash } from 'node:crypto';
@@ -139,6 +139,41 @@ describe('verifyBindProof', () => {
       // A node that is rate limiting us is an outage, not a verdict.
       vi.stubGlobal('fetch', reverting({ code: -32005, message: 'limit exceeded' }));
       expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
+    });
+
+    it('moves on to the next endpoint when one is rate limited or down, configured ones first', async () => {
+      const seen: string[] = [];
+      vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+        seen.push(url);
+        if (url === 'https://rpc.test') return new Response('Too Many Requests', { status: 429 });
+        if (url === 'https://mainnet.base.org') throw new Error('connection reset');
+        const req = JSON.parse(String(init.body)) as { method: string };
+        const result = req.method === 'eth_getCode' ? '0x6080' : '0x1626ba7e' + '0'.repeat(56);
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
+      }));
+      const res = await verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) });
+      expect(res).toMatchObject({ ok: true, signerKind: 'erc1271' });
+      const once = ['https://rpc.test', 'https://mainnet.base.org', 'https://base-rpc.publicnode.com'];
+      expect(seen).toEqual([...once, ...once]); // eth_getCode, then eth_call
+    });
+
+    it('a revert is the answer: it never moves on to another endpoint', async () => {
+      const seen: string[] = [];
+      vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+        seen.push(url);
+        const req = JSON.parse(String(init.body)) as { method: string };
+        const body = req.method === 'eth_getCode' ? { jsonrpc: '2.0', id: 1, result: '0x6080' } : { jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted' } };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }));
+      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'bad_signature' });
+      expect(seen).toEqual(['https://mainnet.base.org', 'https://mainnet.base.org']);
+    });
+
+    it('lists the configured endpoints (comma-separated) before the public ones, without repeats', () => {
+      expect(rpcEndpoints({ BASE_RPC_URL: ' https://a.test, https://mainnet.base.org ,' }, 'eip155:8453'))
+        .toEqual(['https://a.test', 'https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org']);
+      expect(rpcEndpoints({}, 'eip155:84532')).toEqual(['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com', 'https://base-sepolia.drpc.org']);
+      expect(rpcEndpoints({}, 'eip155:1')).toEqual([]);
     });
 
     it('refuses a signature that is not whole bytes, without calling out', async () => {

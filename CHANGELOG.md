@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed — Circle wallet binds: deploy first, and no single rate-limited RPC (api, sdk 0.10.1, skill 1.3.8)
+
+Binding a real Circle agent wallet showed three problems.
+
+- **Circle signs only from a deployed wallet.** `circle wallet sign message` answers "This wallet isn't deployed on-chain yet" for a wallet that has never made a transaction. `wallet set` now prints the deploy step first for Circle wallets, and skill §3 and the SDK README say so. Once deployed, the wallet binds per ERC-1271.
+- **The deploy command was wrong.** `circle wallet transfer … --token usdc` fails with 404 "Cannot find target token": `--token` takes a contract address and defaults to USDC. `circle_deploy_command` no longer passes it.
+- **One rate-limited node failed binds.** The API checked smart-wallet signatures against `mainnet.base.org` alone, which answered 429 from Cloudflare's shared egress. It now tries `BASE_RPC_URL` (one URL or a comma-separated list), then `mainnet.base.org`, `base-rpc.publicnode.com` and `base.drpc.org` (the same three operators on Sepolia). Each was checked for `eth_getCode`, `eth_call` and the deployless ERC-6492 call. A 429, 5xx, timeout or unsupported method moves on to the next; a revert is still the wallet's answer and stops there. Each attempt now times out after 5 seconds, not 8.
+
 ### Removed — Keyring, step 3: the API control plane keeps only what the marketplace uses
 
 - Gone from `/v1/owner`: the approvals inbox and grant approvals, every
@@ -65,7 +73,7 @@ published `basedagents` package (**0.10.0**):
 
 ### Added — Circle agent wallets work as payout wallets (api, sdk 0.9.6, skill 1.3.7)
 
-Circle agent wallets are smart-contract wallets on Base that aren't deployed until their first transaction, so their signature is wrapped per ERC-6492. The wallet proof (D8) used to refuse those with `undeployed_smart_wallet`.
+Circle agent wallets are smart-contract wallets on Base that aren't deployed until their first transaction. A smart wallet that isn't deployed yet signs per ERC-6492, which the wallet proof (D8) used to refuse with `undeployed_smart_wallet`. (Circle's CLI turned out to sign only from a deployed wallet; see the entry above.)
 
 - The API now checks an ERC-6492 signature with the ERC-6492 reference validator, run as a deployless `eth_call` on Base: nothing is deployed and no gas is spent. Verified on Base mainnet against a real, undeployed smart wallet. The validator bytecode is viem 2.57.2's `erc6492SignatureValidatorByteCode`, pinned by hash in the tests. The bind is recorded as `signer_kind: erc1271`. The `undeployed_smart_wallet` reason is gone, and signatures may now be up to 8192 bytes.
 - `basedagents wallet set <address>` without a key now also prints the Circle CLI command that signs the message with a Circle agent wallet: `circle wallet sign message 0x<hex> --hex --address <address> --chain BASE`. The message is hex-encoded so its line breaks survive the shell. In `--json` it's `circle_sign_command`. If the Circle CLI answers `Wallet not deployed` instead of signing, the printed `circle_deploy_command` (a zero-amount transfer to itself, Circle's documented fix) deploys the wallet, which then binds per ERC-1271. The service descriptor's `walletProof.smartWallets` says undeployed wallets sign per ERC-6492.

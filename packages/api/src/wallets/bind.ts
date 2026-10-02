@@ -21,10 +21,10 @@
  *
  * Verification: an EOA signature is recovered with secp256k1 (no network).
  * Otherwise, on Base (eip155:8453 / 84532), over JSON-RPC (BASE_RPC_URL /
- * BASE_SEPOLIA_RPC_URL; public endpoints by default):
+ * BASE_SEPOLIA_RPC_URL first, then public endpoints; a 429 or outage moves on to the next):
  *  - a deployed smart-contract wallet is asked through ERC-1271 isValidSignature;
  *  - a signature wrapped per ERC-6492 (a smart wallet not deployed yet, such as
- *    a fresh Circle agent wallet) is checked counterfactually by the ERC-6492
+ *    a fresh Coinbase Smart Wallet) is checked counterfactually by the ERC-6492
  *    reference validator, run as a deployless eth_call: nothing is deployed and
  *    no gas is spent.
  */
@@ -144,17 +144,29 @@ export type ProofResult =
   | { ok: false; reason: ProofFailure; detail: string }
   | { ok: false; reason: 'rpc_unavailable'; detail: string };
 
-const RPC_DEFAULTS: Record<string, { env: string; url: string }> = {
-  'eip155:8453': { env: 'BASE_RPC_URL', url: 'https://mainnet.base.org' },
-  'eip155:84532': { env: 'BASE_SEPOLIA_RPC_URL', url: 'https://sepolia.base.org' },
+// Public endpoints, tried in order after any configured in the env var (a comma-separated
+// list). Each was checked for eth_getCode, eth_call and a deployless eth_call (ERC-6492).
+// Public nodes rate-limit, and Workers share egress IPs, so one 429 must not fail a bind.
+const RPC_DEFAULTS: Record<string, { env: string; urls: string[] }> = {
+  'eip155:8453': { env: 'BASE_RPC_URL', urls: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'] },
+  'eip155:84532': { env: 'BASE_SEPOLIA_RPC_URL', urls: ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com', 'https://base-sepolia.drpc.org'] },
 };
+
+/** The endpoints to try for a chain: the configured ones first, then the public defaults. */
+export function rpcEndpoints(env: unknown, network: string): string[] {
+  const chain = RPC_DEFAULTS[network];
+  if (!chain) return [];
+  const configured = (((env ?? {}) as Record<string, string | undefined>)[chain.env] ?? '')
+    .split(',').map((u) => u.trim()).filter(Boolean);
+  return [...new Set([...configured, ...chain.urls])];
+}
 
 /** The node processed the call and refused it (e.g. the wallet's isValidSignature reverted): a "no", not an outage. */
 class RpcRejected extends Error {}
 
-async function rpc(url: string, method: string, params: unknown[]): Promise<string> {
+async function rpcOnce(url: string, method: string, params: unknown[]): Promise<string> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
+  const timer = setTimeout(() => ctrl.abort(), 5000);
   try {
     const res = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -170,6 +182,23 @@ async function rpc(url: string, method: string, params: unknown[]): Promise<stri
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Call the first endpoint that answers. A revert is the contract's answer and stops here;
+ * anything else (429, 5xx, timeout, a node that lacks the method) moves on to the next.
+ */
+async function rpc(urls: string[], method: string, params: unknown[]): Promise<string> {
+  let last: unknown = new Error(`RPC ${method}: no endpoint`);
+  for (const url of urls) {
+    try {
+      return await rpcOnce(url, method, params);
+    } catch (err) {
+      if (err instanceof RpcRejected) throw err;
+      last = err;
+    }
+  }
+  throw last;
 }
 
 /** ABI-encode isValidSignature(bytes32 hash, bytes signature). */
@@ -217,14 +246,13 @@ export async function verifyBindProof(
 
   const sig = args.signature.replace(/^0x/, '').toLowerCase();
   if (sig.length % 2 !== 0 || !/^[0-9a-f]+$/.test(sig)) return { ok: false, reason: 'bad_signature', detail: 'The signature is not whole bytes of hex.' };
-  const chain = RPC_DEFAULTS[args.network];
-  if (!chain) return { ok: false, reason: 'bad_signature', detail: 'The signature was not made by this wallet.' };
-  const url = ((env ?? {}) as Record<string, string | undefined>)[chain.env] || chain.url;
+  const urls = rpcEndpoints(env, args.network);
+  if (urls.length === 0) return { ok: false, reason: 'bad_signature', detail: 'The signature was not made by this wallet.' };
   if (sig.endsWith(ERC6492_SUFFIX)) {
     // A smart wallet's signature wrapped per ERC-6492 (deployed or not yet): the
     // reference validator answers 0x01 for a valid one, in a deployless call.
     try {
-      const result = await rpc(url, 'eth_call', [{ data: erc6492ValidatorCall(args.address, digest, args.signature) }, 'latest']);
+      const result = await rpc(urls, 'eth_call', [{ data: erc6492ValidatorCall(args.address, digest, args.signature) }, 'latest']);
       if (/^0x0*1$/i.test(result)) return { ok: true, signerKind: 'erc1271', fields };
       return { ok: false, reason: 'bad_signature', detail: 'The smart wallet did not accept this signature (checked per ERC-6492).' };
     } catch (err) {
@@ -233,9 +261,9 @@ export async function verifyBindProof(
     }
   }
   try {
-    const code = await rpc(url, 'eth_getCode', [args.address, 'latest']);
+    const code = await rpc(urls, 'eth_getCode', [args.address, 'latest']);
     if (!code || code === '0x') return { ok: false, reason: 'bad_signature', detail: 'The signature was not made by this wallet.' };
-    const result = await rpc(url, 'eth_call', [{ to: args.address, data: isValidSignatureCall(digest, args.signature) }, 'latest']);
+    const result = await rpc(urls, 'eth_call', [{ to: args.address, data: isValidSignatureCall(digest, args.signature) }, 'latest']);
     if (result.replace(/^0x/, '').slice(0, 8).toLowerCase() === ERC1271_MAGIC) return { ok: true, signerKind: 'erc1271', fields };
     return { ok: false, reason: 'bad_signature', detail: 'The smart wallet did not accept this signature (ERC-1271).' };
   } catch (err) {
