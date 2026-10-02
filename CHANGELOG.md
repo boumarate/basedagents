@@ -8,6 +8,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Removed — Keyring, step 3: the API control plane keeps only what the marketplace uses
+
+- Gone from `/v1/owner`: the approvals inbox and grant approvals, every
+  `daemon/*` endpoint, the vault-key binding, the `keyring init` link codes and
+  claim, agent-sent invites (and the register-on-first-use agent auth that only
+  they used), connect cards and credential facts, the cloud passport and shelf,
+  Keyring Pro billing (entitlements, Stripe checkout/portal, the Free-tier agent
+  cap on delegations), and the anonymous funnel pings and provider vote tiles.
+  The `/v1/stripe/webhook` endpoint survives in `control/stripe-webhook.ts`,
+  serving only Agent Testing's one-time payments; subscription events are
+  acknowledged and ignored.
+- Stays: owner accounts, the email → passkey ladder (`/start/*`, `/login/email`),
+  passkey registration/login, the action ceremony, delegations, recovery, owner
+  tasks and board posting, the MCP OAuth worker. `GET /me` no longer returns
+  `vault_key`.
+- Migration `0048_retire_keyring.sql` drops the eleven keyring-only tables,
+  the Pro-subscription columns on `owners` and the kill-report columns on
+  `delegations`. `owners.stripe_customer_id` stays (Agent Testing checkouts
+  reuse it), and `funnel_events` stays — the marketplace records `task_posted`
+  server-side.
+- Config: the Keyring Pro price vars (`STRIPE_PRICE_PRO_*`) are gone;
+  `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` stay for Agent Testing;
+  `KEYRING_RP_ID`, `KEYRING_ORIGINS`, `KEYRING_CONSOLE_ORIGIN` keep their
+  names (WebAuthn RP config).
+
 ### Removed — Keyring, step 5: the public site and the docs
 
 - basedagents.ai: the `/keyring` page and its demo, the `/codex` sandbox

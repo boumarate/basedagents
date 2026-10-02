@@ -34,8 +34,6 @@ const MIGRATION_SQL =
   // (checkRateLimit) reads it.
   readFileSync(join(MIGRATIONS_DIR, '0021_rate_limit_table.sql'), 'utf-8') +
   readFileSync(join(MIGRATIONS_DIR, '0023_owner_accounts.sql'), 'utf-8') +
-  // 0024: keyring_requests + grant_approvals — delegation revoke retires rows
-  // in both (store.retireAgentWork), so the revoke test needs the real tables.
   readFileSync(join(MIGRATIONS_DIR, '0024_keyring_approvals.sql'), 'utf-8') +
   readFileSync(join(MIGRATIONS_DIR, '0025_owner_recovery.sql'), 'utf-8') +
   readFileSync(join(MIGRATIONS_DIR, '0026_owner_billing.sql'), 'utf-8') +
@@ -43,7 +41,10 @@ const MIGRATION_SQL =
   // 0033: board_posts — owner board posting writes it, and the public read
   // path (mounted below) joins it back against the control-plane tables
   // (GOTCHAS.md: explicit per-harness migration lists).
-  readFileSync(join(MIGRATIONS_DIR, '0033_board.sql'), 'utf-8');
+  readFileSync(join(MIGRATIONS_DIR, '0033_board.sql'), 'utf-8') +
+  readFileSync(join(MIGRATIONS_DIR, '0032_daemon_kill_confirm.sql'), 'utf-8') +
+  // 0040 retires the keyring tables/columns — the harness sees prod's schema.
+  readFileSync(join(MIGRATIONS_DIR, '0048_retire_keyring.sql'), 'utf-8');
 
 const te = new TextEncoder();
 const RP_ID = 'basedagents.ai';
@@ -323,21 +324,6 @@ describe('happy path: sessions to look, signatures to act', () => {
     expect(chain.ok).toBe(true);
     const head = await store.getOwnerChainHead(auth.ownerId);
     expect(head.sequence).toBe(1);
-  });
-
-  it('also supports vault-binding via the same ceremony', async () => {
-    const auth = await Authenticator.create();
-    await register(auth);
-    const cookie = await login(auth);
-
-    const { challenge, nonce } = await actionBegin(cookie, 'bind_vault_key', { vault_public_key: auth.vaultB58 });
-    const assertion = await auth.assert(challenge, 2);
-    const res = await post('/v1/owner/vault-binding', { vault_public_key: auth.vaultB58, nonce, assertion }, cookie);
-    expect(res.status).toBe(200);
-    const binding = (await res.json()) as { status: string; vault_public_key: string };
-    expect(binding.status).toBe('active');
-    expect(binding.vault_public_key).toBe(auth.vaultB58);
-    expect(await store.getActiveVaultKey(auth.ownerId)).not.toBeNull();
   });
 
   it('revokes a delegation with a fresh assertion', async () => {

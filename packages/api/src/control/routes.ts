@@ -36,7 +36,6 @@ import {
   base64urlEncode,
   base64urlDecode,
 } from './webauthn.js';
-import { checkAgentLimit } from './entitlements.js';
 import { insertOwnerBoardPost, OWNER_BOARD_HOURLY } from '../mcp/board-post.js';
 import { authorSqlParts, mapPost, type PostRow } from '../routes/board.js';
 import { base58Encode, base58Decode, sha256, bytesToHex, canonicalJsonStringify } from '../crypto/index.js';
@@ -168,11 +167,6 @@ const ActionBeginSchema = z.object({
 // The nonce is folded into the signed canonical action so each ceremony's
 // action_hash is unique — single-use consumption then defeats assertion replay
 // even for authenticators that report a static signature counter of 0.
-const VaultBindingSchema = z.object({
-  vault_public_key: z.string().min(1),
-  nonce: z.string().min(1),
-  assertion: AssertionSchema,
-});
 
 const CreateDelegationSchema = z.object({
   agent_id: z.string().min(1),
@@ -626,9 +620,6 @@ app.get('/me', ownerSession, async (c) => {
   const owner = await store.getOwner(ownerId);
   const creds = await store.listCredentials(ownerId);
   const delegations = await store.listDelegationsByOwner(ownerId);
-  // Binding status only — lets the console show whether the local daemon can
-  // authenticate (daemonAuth requires an active owner_vault_keys row).
-  const vaultKey = await store.getActiveVaultKey(ownerId);
   // Metadata only (created_at) — the code itself was shown once and never stored.
   const recoveryCode = await store.getOpenRecoveryCode(ownerId);
   return c.json({
@@ -642,9 +633,6 @@ app.get('/me', ownerSession, async (c) => {
       backed_up: cr.backed_up === 1,
     })),
     delegations,
-    vault_key: vaultKey
-      ? { id: vaultKey.id, vault_public_key: vaultKey.vault_public_key, bound_at: vaultKey.bound_at }
-      : null,
     recovery_code: recoveryCode ? { created_at: recoveryCode.created_at } : null,
     // The ladder rung of THIS session + whether the first approval must mint
     // a passkey (credentials.length === 0 conveys it too; explicit is kinder).
@@ -708,40 +696,6 @@ app.post('/action/begin', ownerSession, async (c) => {
   });
 });
 
-app.post('/vault-binding', ownerSession, async (c) => {
-  const ownerId = getOwnerId(c);
-  let body: unknown;
-  try {
-    body = await parseJson(c);
-  } catch {
-    return err(c, 400, 'bad_request', 'invalid JSON body');
-  }
-  const parsed = VaultBindingSchema.safeParse(body);
-  if (!parsed.success) return err(c, 400, 'bad_request', 'validation failed');
-
-  // The vault key MUST be the one this owner id is derived from.
-  if (ownerIdFromVaultB58(parsed.data.vault_public_key) !== ownerId) {
-    return err(c, 400, 'bad_request', 'vault_public_key does not match owner');
-  }
-
-  const canonical = canonicalJsonStringify({
-    action_type: 'bind_vault_key',
-    owner_id: ownerId,
-    nonce: parsed.data.nonce,
-    vault_public_key: parsed.data.vault_public_key,
-  });
-  const outcome = await verifyAndRecordAction(c, ownerId, 'bind_vault_key', canonical, parsed.data.assertion);
-  if (!outcome.ok) return outcome.res;
-
-  const store = getStore(c);
-  const binding = await store.createVaultBinding({
-    ownerId,
-    vaultPublicKey: parsed.data.vault_public_key,
-    bindingAssertionId: outcome.row.id,
-  });
-  return c.json(binding);
-});
-
 app.post('/delegations', ownerSession, async (c) => {
   const ownerId = getOwnerId(c);
   let body: unknown;
@@ -752,28 +706,6 @@ app.post('/delegations', ownerSession, async (c) => {
   }
   const parsed = CreateDelegationSchema.safeParse(body);
   if (!parsed.success) return err(c, 400, 'bad_request', 'validation failed');
-
-  // Billing enforcement point #1 (of exactly two): the agent is the unit of
-  // scale, so the Nth+1 ACTIVE delegation is blocked on the Free tier.
-  // Revocation, kill switch, leases, and daemon traffic are never gated.
-  {
-    const store = getStore(c);
-    const owner = await store.getOwner(ownerId);
-    if (owner) {
-      const limit = await checkAgentLimit(store, owner);
-      if (!limit.allowed) {
-        return c.json(
-          {
-            error: 'plan_limit',
-            message: `Your plan allows ${limit.maxAgents} delegated agents (you have ${limit.activeAgents}). Upgrade to add more.`,
-            active_agents: limit.activeAgents,
-            max_agents: limit.maxAgents,
-          },
-          402,
-        );
-      }
-    }
-  }
 
   const label = parsed.data.label ?? null;
   const canonical = canonicalJsonStringify({

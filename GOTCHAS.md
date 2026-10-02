@@ -220,7 +220,7 @@ to *fail* must break origin/challenge, not the attestation blob.
 The control-plane test files each build an in-memory SQLite from explicit
 migration files (`rawDb.exec(SQL_0023)` …). A new migration that existing
 queries depend on must be added to **every** harness
-(`routes.test.ts`, `store.test.ts`, `approvals.test.ts`, `recovery.test.ts`) —
+(`routes.test.ts`, `store.test.ts`, `ladder.test.ts`, `recovery.test.ts`) —
 forgetting this is 28 mysterious `no such column` failures at once.
 
 ### `node.ts` replays the FULL migration chain, one transaction per file
