@@ -16,17 +16,28 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
   const [protoFilter, setProtoFilter] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('reputation');
   const [statusTab, setStatusTab] = useState<StatusTab>('all');
+  const [page, setPage] = useState(1);
 
   const searchParams = useMemo<SearchParams>(() => {
-    const params: SearchParams = { sort: sortBy, limit: 100 };
+    const params: SearchParams = { sort: sortBy, limit: 100, page };
     if (search) params.q = search;
     if (capFilter) params.capabilities = capFilter;
     if (protoFilter) params.protocols = protoFilter;
     if (statusTab !== 'all') params.status = statusTab;
     return params;
-  }, [search, capFilter, protoFilter, sortBy, statusTab]);
+  }, [search, capFilter, protoFilter, sortBy, statusTab, page]);
 
-  const { agents, total, loading, usingMock } = useAgentSearch(searchParams);
+  // Any filter change starts the list over from page 1 (batched with the
+  // filter update, so no fetch ever pairs new filters with an old page).
+  const withPageReset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
+  const changeSearch = withPageReset(setSearch);
+  const changeCapFilter = withPageReset(setCapFilter);
+  const changeProtoFilter = withPageReset(setProtoFilter);
+  const changeSortBy = withPageReset(setSortBy);
+  const changeStatusTab = withPageReset(setStatusTab);
+
+  const { agents, total, totalPages, loading, usingMock } = useAgentSearch(searchParams);
+  const hasMore = !usingMock && page < totalPages;
 
   // Extract unique capabilities and protocols for filter dropdowns
   const allCapabilities = useMemo(
@@ -74,7 +85,7 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
             {!bare && <KeypairLoader />}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>Sort by</span>
-            <select value={sortBy} onChange={e => setSortBy(e.target.value as SortOption)} style={selectStyle}>
+            <select value={sortBy} onChange={e => changeSortBy(e.target.value as SortOption)} style={selectStyle}>
               <option value="reputation">Reputation</option>
               <option value="registered_at">Newest</option>
               <option value="name">Name</option>
@@ -88,7 +99,7 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
           {(['all', 'active', 'pending'] as StatusTab[]).map(tab => (
             <button
               key={tab}
-              onClick={() => setStatusTab(tab)}
+              onClick={() => changeStatusTab(tab)}
               style={{
                 background: 'none',
                 border: 'none',
@@ -114,7 +125,7 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
             type="text"
             placeholder="Search agents…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => changeSearch(e.target.value)}
             style={{
               flex: '1 1 200px',
               background: 'var(--bg-tertiary)',
@@ -127,16 +138,16 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
               outline: 'none',
             }}
           />
-          <select value={capFilter} onChange={e => setCapFilter(e.target.value)} style={selectStyle}>
+          <select value={capFilter} onChange={e => changeCapFilter(e.target.value)} style={selectStyle}>
             <option value="">All Capabilities</option>
             {allCapabilities.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <select value={protoFilter} onChange={e => setProtoFilter(e.target.value)} style={selectStyle}>
+          <select value={protoFilter} onChange={e => changeProtoFilter(e.target.value)} style={selectStyle}>
             <option value="">All Protocols</option>
             {allProtocols.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
           {(capFilter || protoFilter) && (
-            <button onClick={() => { setCapFilter(''); setProtoFilter(''); }} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 13, cursor: 'pointer', padding: '8px 4px' }}>
+            <button onClick={() => { setCapFilter(''); setProtoFilter(''); setPage(1); }} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 13, cursor: 'pointer', padding: '8px 4px' }}>
               Clear
             </button>
           )}
@@ -144,15 +155,15 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
 
 
 
-        {/* Loading state */}
-        {loading && (
+        {/* Loading state (first page only — the grid stays up while more load) */}
+        {loading && agents.length === 0 && (
           <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--text-tertiary)' }}>
             <p>Loading agents...</p>
           </div>
         )}
 
         {/* Grid */}
-        {!loading && agents.length > 0 && (
+        {agents.length > 0 && (
           <div
             style={{
               display: 'grid',
@@ -166,12 +177,34 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
           </div>
         )}
 
+        {/* Load more */}
+        {hasMore && agents.length > 0 && (
+          <div style={{ textAlign: 'center', marginTop: 28 }}>
+            <button
+              onClick={() => setPage(p => p + 1)}
+              disabled={loading}
+              style={{
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                color: 'var(--text-secondary)',
+                padding: '10px 24px',
+                fontSize: 14,
+                fontFamily: 'var(--font-sans)',
+                cursor: loading ? 'default' : 'pointer',
+              }}
+            >
+              {loading ? 'Loading…' : `Load more (${total - agents.length} remaining)`}
+            </button>
+          </div>
+        )}
+
         {/* Empty state */}
         {!loading && agents.length === 0 && (
           <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--text-tertiary)' }}>
             <p>No agents match your filters.</p>
             <button
-              onClick={() => { setSearch(''); setCapFilter(''); setProtoFilter(''); }}
+              onClick={() => { setSearch(''); setCapFilter(''); setProtoFilter(''); setPage(1); }}
               style={{
                 background: 'none',
                 border: 'none',

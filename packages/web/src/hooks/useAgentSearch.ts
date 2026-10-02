@@ -21,12 +21,20 @@ export function useAgentSearch(params: SearchParams): UseAgentSearchResult {
   const [error, setError] = useState<string | null>(null);
   const [usingMock, setUsingMock] = useState(false);
   const paramsRef = useRef(JSON.stringify(params));
+  // The filters of the pages accumulated so far: a fetch for page > 1 with the
+  // same filters appends to the list, any other change replaces it.
+  const filterKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const key = JSON.stringify(params);
     // Avoid re-fetching if params haven't changed
     if (key === paramsRef.current && agents.length > 0) return;
     paramsRef.current = key;
+
+    const { page = 1, ...filters } = params;
+    const filterKey = JSON.stringify(filters);
+    const append = page > 1 && filterKey === filterKeyRef.current;
+    filterKeyRef.current = filterKey;
 
     let cancelled = false;
     setLoading(true);
@@ -36,7 +44,13 @@ export function useAgentSearch(params: SearchParams): UseAgentSearchResult {
         const result = await api.searchAgents(params);
         if (cancelled) return;
 
-        setAgents(result.agents.map(mapApiAgentToAgent));
+        const fetched = result.agents.map(mapApiAgentToAgent);
+        setAgents(prev => {
+          if (!append) return fetched;
+          // Dedupe by id: an agent can shift pages between requests.
+          const seen = new Set(prev.map(a => a.id));
+          return [...prev, ...fetched.filter(a => !seen.has(a.id))];
+        });
         setTotal(result.pagination.total);
         setTotalPages(result.pagination.total_pages);
         setUsingMock(false);
