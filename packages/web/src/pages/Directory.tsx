@@ -26,7 +26,7 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
     return params;
   }, [search, capFilter, protoFilter, sortBy, statusTab]);
 
-  const { agents, total, loading, loadingMore, hasMore, loadMore, usingMock } = useAgentSearch(searchParams);
+  const { agents, total, loading, loadingMore, hasMore, loadMore, error, usingMock } = useAgentSearch(searchParams);
 
   // Extract unique capabilities and protocols for filter dropdowns
   const allCapabilities = useMemo(
@@ -170,6 +170,11 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
         {/* Load more */}
         {!loading && hasMore && (
           <div style={{ textAlign: 'center', marginTop: 28 }}>
+            {error && !loadingMore && (
+              <p style={{ color: 'var(--text-tertiary)', fontSize: 13, margin: '0 0 10px' }}>
+                Couldn't load more agents — try again.
+              </p>
+            )}
             <button
               onClick={loadMore}
               disabled={loadingMore}
@@ -184,7 +189,7 @@ export default function Directory({ bare = false }: { bare?: boolean }): React.R
                 cursor: loadingMore ? 'default' : 'pointer',
               }}
             >
-              {loadingMore ? 'Loading…' : `Load more (${total - agents.length} remaining)`}
+              {loadingMore ? 'Loading…' : error ? 'Retry' : `Load more (${total - agents.length} remaining)`}
             </button>
           </div>
         )}
