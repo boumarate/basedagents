@@ -100,118 +100,107 @@ describe('verifyBindProof', () => {
   describe('smart wallets on Base (ERC-1271)', () => {
     const SMART = '0x' + 'ab'.repeat(20);
     const msg = buildBindMessage({ ...FIELDS, address: SMART });
-    const rpcStub = (code: string, callResult: string) => vi.fn(async (_url: string, init: RequestInit) => {
-      const req = JSON.parse(String(init.body)) as { method: string };
-      const result = req.method === 'eth_getCode' ? code : callResult;
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
+    const MAGIC = '0x1626ba7e' + '0'.repeat(56);
+    const sig65 = '0x' + 'cd'.repeat(65);
+    const json = (body: object) => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, ...body }), { status: 200 });
+    /** fetch that answers per endpoint: a result, an RPC error, an HTTP status, a throw, or a delayed result. */
+    type Plan = { result: string } | { error: { code: number; message: string } } | { status: number } | { fail: true } | { after: number; result: string } | { hang: true };
+    const byUrl = (plans: Record<string, Plan>, fallback: Plan) => vi.fn((url: string, init: RequestInit) => {
+      const plan = plans[url] ?? fallback;
+      if ('fail' in plan) return Promise.reject(new Error('connection reset'));
+      if ('status' in plan) return Promise.resolve(new Response('busy', { status: plan.status }));
+      if ('error' in plan) return Promise.resolve(json({ error: plan.error }));
+      if ('result' in plan && !('after' in plan)) return Promise.resolve(json({ result: plan.result }));
+      return new Promise<Response>((resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        if ('after' in plan) setTimeout(() => resolve(json({ result: plan.result })), plan.after);
+      });
     });
+    const prove = (env: Record<string, string> = {}) => verifyBindProof(env, { ...base, address: SMART, message: msg, signature: sig65 });
 
-    it('asks a deployed contract wallet through isValidSignature', async () => {
-      const f = rpcStub('0x6080', '0x1626ba7e' + '0'.repeat(56));
+    it('asks a deployed contract wallet through isValidSignature, in one eth_call', async () => {
+      const f = byUrl({}, { result: MAGIC });
       vi.stubGlobal('fetch', f);
-      const res = await verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(200) });
-      expect(res).toMatchObject({ ok: true, signerKind: 'erc1271' });
+      expect(await prove({ BASE_RPC_URL: 'https://rpc.test' })).toMatchObject({ ok: true, signerKind: 'erc1271' });
+      expect(f).toHaveBeenCalledTimes(1);
       expect(f.mock.calls[0][0]).toBe('https://rpc.test');
-      const call = JSON.parse(String((f.mock.calls[1][1] as RequestInit).body)) as { params: Array<{ to: string; data: string }> };
+      const call = JSON.parse(String((f.mock.calls[0][1] as RequestInit).body)) as { method: string; params: Array<{ to: string; data: string }> };
+      expect(call.method).toBe('eth_call');
       expect(call.params[0].to).toBe(SMART);
       expect(call.params[0].data.startsWith('0x1626ba7e' + hex(personalMessageDigest(msg)).slice(2))).toBe(true);
     });
 
-    it('refuses when the contract says no, when there is no contract, and when the RPC is down', async () => {
-      vi.stubGlobal('fetch', rpcStub('0x6080', '0xffffffff' + '0'.repeat(56)));
-      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'bad_signature' });
-      vi.stubGlobal('fetch', rpcStub('0x', '0x'));
-      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'bad_signature' });
-      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connection refused'); }));
-      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
+    it('refuses when every node says no (wrong answer, or no code at the address), and is unavailable when none answers', async () => {
+      const no = byUrl({}, { result: '0xffffffff' + '0'.repeat(56) });
+      vi.stubGlobal('fetch', no);
+      expect(await prove()).toMatchObject({ ok: false, reason: 'bad_signature' });
+      expect(no).toHaveBeenCalledTimes(3); // a no needs every endpoint to agree
+      vi.stubGlobal('fetch', byUrl({}, { result: '0x' }));
+      expect(await prove()).toMatchObject({ ok: false, reason: 'bad_signature' });
+      vi.stubGlobal('fetch', byUrl({}, { fail: true }));
+      expect(await prove()).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
     });
 
-    it('a wallet that reverts on a bad signature (e.g. a Safe) is a "no" (400), not an outage (503)', async () => {
-      const reverting = (error: { code: number; message: string }) => vi.fn(async (_url: string, init: RequestInit) => {
-        const req = JSON.parse(String(init.body)) as { method: string };
-        const body = req.method === 'eth_getCode' ? { jsonrpc: '2.0', id: 1, result: '0x6080' } : { jsonrpc: '2.0', id: 1, error };
-        return new Response(JSON.stringify(body), { status: 200 });
-      });
-      vi.stubGlobal('fetch', reverting({ code: 3, message: 'execution reverted: GS026' }));
-      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'bad_signature' });
-      vi.stubGlobal('fetch', reverting({ code: -32000, message: 'execution reverted' }));
-      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'bad_signature' });
-      // A node that is rate limiting us is an outage, not a verdict.
-      vi.stubGlobal('fetch', reverting({ code: -32005, message: 'limit exceeded' }));
-      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
-    });
-
-    it('moves on to the next endpoint when one is rate limited or down, configured ones first', async () => {
-      const seen: string[] = [];
-      vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-        seen.push(url);
-        if (url === 'https://rpc.test') return new Response('Too Many Requests', { status: 429 });
-        if (url === 'https://mainnet.base.org') throw new Error('connection reset');
-        const req = JSON.parse(String(init.body)) as { method: string };
-        const result = req.method === 'eth_getCode' ? '0x6080' : '0x1626ba7e' + '0'.repeat(56);
-        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
-      }));
-      const res = await verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) });
-      expect(res).toMatchObject({ ok: true, signerKind: 'erc1271' });
-      // eth_getCode walks the list; eth_call goes straight to the endpoint that answered.
-      expect(seen).toEqual(['https://rpc.test', 'https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base-rpc.publicnode.com']);
-    });
-
-    it('a revert is the answer: it never moves on to another endpoint', async () => {
-      const seen: string[] = [];
-      vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-        seen.push(url);
-        const req = JSON.parse(String(init.body)) as { method: string };
-        const body = req.method === 'eth_getCode' ? { jsonrpc: '2.0', id: 1, result: '0x6080' } : { jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted' } };
-        return new Response(JSON.stringify(body), { status: 200 });
-      }));
-      expect(await verifyBindProof({}, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })).toMatchObject({ ok: false, reason: 'bad_signature' });
-      expect(seen).toEqual(['https://mainnet.base.org', 'https://mainnet.base.org']);
-    });
-
-    const hangingFetch = (healthy: string[] = []) => vi.fn((url: string, init: RequestInit) => {
-      if (healthy.includes(url)) {
-        const req = JSON.parse(String(init.body)) as { method: string };
-        const result = req.method === 'eth_getCode' ? '0x6080' : '0x1626ba7e' + '0'.repeat(56);
-        return Promise.resolve(new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 }));
-      }
-      return new Promise<Response>((_resolve, reject) => {
-        init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
-      });
-    });
-
-    it('a hanging endpoint never keeps a healthy one from being tried (hedged after RPC_HEDGE_MS)', async () => {
+    it('a lagging node\'s "no code yet" never beats another node\'s yes (a wallet deployed seconds ago)', async () => {
       vi.useFakeTimers();
       try {
-        const f = hangingFetch(['https://mainnet.base.org']);
-        vi.stubGlobal('fetch', f);
-        let settled = false;
-        const pending = verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })
-          .finally(() => { settled = true; });
-        await vi.advanceTimersByTimeAsync(RPC_HEDGE_MS);
-        expect(settled).toBe(true);
+        // The configured node has the new wallet but is slow; the public ones haven't seen it yet.
+        vi.stubGlobal('fetch', byUrl({ 'https://rpc.test': { after: 3_000, result: MAGIC } }, { result: '0x' }));
+        const pending = prove({ BASE_RPC_URL: 'https://rpc.test' });
+        await vi.advanceTimersByTimeAsync(3_000);
         expect(await pending).toMatchObject({ ok: true, signerKind: 'erc1271' });
-        // eth_getCode: the configured node hangs, the hedge reaches mainnet.base.org; eth_call goes straight there.
-        expect(f.mock.calls.map((c) => c[0])).toEqual(['https://rpc.test', 'https://mainnet.base.org', 'https://mainnet.base.org']);
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it('when every endpoint hangs, every one is still tried and the call gives up within its budget', async () => {
+    it('a wallet that reverts (e.g. a Safe) is a no (400), not an outage (503); a yes elsewhere still wins', async () => {
+      vi.stubGlobal('fetch', byUrl({}, { error: { code: 3, message: 'execution reverted: GS026' } }));
+      expect(await prove()).toMatchObject({ ok: false, reason: 'bad_signature' });
+      vi.stubGlobal('fetch', byUrl({}, { error: { code: -32000, message: 'execution reverted' } }));
+      expect(await prove()).toMatchObject({ ok: false, reason: 'bad_signature' });
+      vi.stubGlobal('fetch', byUrl({ 'https://mainnet.base.org': { error: { code: 3, message: 'execution reverted' } } }, { result: MAGIC }));
+      expect(await prove()).toMatchObject({ ok: true, signerKind: 'erc1271' });
+      // A node that is rate limiting us is an outage, not a verdict.
+      vi.stubGlobal('fetch', byUrl({}, { error: { code: -32005, message: 'limit exceeded' } }));
+      expect(await prove()).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
+    });
+
+    it('moves on at once from a rate-limited or failing endpoint, configured ones first', async () => {
+      const f = byUrl({ 'https://rpc.test': { status: 429 }, 'https://mainnet.base.org': { fail: true } }, { result: MAGIC });
+      vi.stubGlobal('fetch', f);
+      expect(await prove({ BASE_RPC_URL: 'https://rpc.test' })).toMatchObject({ ok: true, signerKind: 'erc1271' });
+      expect(f.mock.calls.map((c) => c[0])).toEqual(['https://rpc.test', 'https://mainnet.base.org', 'https://base-rpc.publicnode.com']);
+    });
+
+    it('a hanging endpoint never keeps a healthy one from being asked (hedged after RPC_HEDGE_MS)', async () => {
       vi.useFakeTimers();
       try {
-        const f = hangingFetch();
+        const f = byUrl({ 'https://rpc.test': { hang: true } }, { result: MAGIC });
         vi.stubGlobal('fetch', f);
         let settled = false;
-        const pending = verifyBindProof({ BASE_RPC_URL: 'https://rpc.test' }, { ...base, address: SMART, message: msg, signature: '0x' + 'cd'.repeat(65) })
-          .finally(() => { settled = true; });
+        const pending = prove({ BASE_RPC_URL: 'https://rpc.test' }).finally(() => { settled = true; });
+        await vi.advanceTimersByTimeAsync(RPC_HEDGE_MS);
+        expect(settled).toBe(true);
+        expect(await pending).toMatchObject({ ok: true, signerKind: 'erc1271' });
+        expect(f.mock.calls.map((c) => c[0])).toEqual(['https://rpc.test', 'https://mainnet.base.org']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('when every endpoint hangs, every one is still asked and the proof gives up within its budget', async () => {
+      vi.useFakeTimers();
+      try {
+        const f = byUrl({}, { hang: true });
+        vi.stubGlobal('fetch', f);
+        let settled = false;
+        const pending = prove({ BASE_RPC_URL: 'https://rpc.test' }).finally(() => { settled = true; });
         await vi.advanceTimersByTimeAsync(RPC_CALL_BUDGET_MS);
         expect(settled).toBe(true);
         expect(await pending).toMatchObject({ ok: false, reason: 'rpc_unavailable' });
         expect(f).toHaveBeenCalledTimes(4); // the configured node and all three public ones
-        // A proof makes at most two calls; both budgets together stay inside the SDK's 30 s.
-        expect(2 * RPC_CALL_BUDGET_MS).toBeLessThan(30_000);
+        expect(RPC_CALL_BUDGET_MS).toBeLessThan(30_000); // the SDK's request timeout
       } finally {
         vi.useRealTimers();
       }

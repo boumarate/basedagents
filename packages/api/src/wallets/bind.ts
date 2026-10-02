@@ -21,7 +21,8 @@
  *
  * Verification: an EOA signature is recovered with secp256k1 (no network).
  * Otherwise, on Base (eip155:8453 / 84532), over JSON-RPC (BASE_RPC_URL /
- * BASE_SEPOLIA_RPC_URL first, then public endpoints; a 429 or outage moves on to the next):
+ * BASE_SEPOLIA_RPC_URL first, then public endpoints; a yes from any node wins, a no needs
+ * every node that answers to agree, since a lagging node can miss a just-deployed wallet):
  *  - a deployed smart-contract wallet is asked through ERC-1271 isValidSignature;
  *  - a signature wrapped per ERC-6492 (a smart wallet not deployed yet, such as
  *    a fresh Coinbase Smart Wallet) is checked counterfactually by the ERC-6492
@@ -165,8 +166,8 @@ export function rpcEndpoints(env: unknown, network: string): string[] {
 class RpcRejected extends Error {}
 
 /**
- * Each RPC call (one proof makes at most two) settles within this, so the worst case,
- * 18 s, stays well inside the SDK's 30 s request timeout.
+ * The one RPC call a smart-wallet proof makes settles within this, well inside the SDK's
+ * 30 s request timeout.
  */
 export const RPC_CALL_BUDGET_MS = 9_000;
 /** A call that hasn't answered by then also goes to the next endpoint (a hedged request). */
@@ -196,20 +197,22 @@ async function rpcOnce(url: string, method: string, params: unknown[], timeoutMs
 }
 
 /**
- * An RPC caller for one proof. A call starts on the first endpoint; a failure (429, 5xx, a
- * node that lacks the method) starts the next one at once, and so does silence for
- * RPC_HEDGE_MS, so one hanging node never keeps a healthy one from being tried. The first
- * answer wins and the rest are cancelled; a revert is the contract's answer and wins too.
- * Each call has its own RPC_CALL_BUDGET_MS. The endpoint that answered goes first next time.
+ * Ask the endpoints whether the wallet accepts the signature. Nodes can lag (a wallet
+ * deployed seconds ago may have no code yet on one of them), and lag only ever hides a
+ * "yes", so a yes from any node wins at once, while a no counts only when every endpoint
+ * has answered (or the budget ran out) and none said yes. A failure (429, 5xx, a node that
+ * lacks the method) starts the next endpoint at once, and so does RPC_HEDGE_MS of silence,
+ * so a hanging node never keeps a healthy one from being asked. Rejects only when no node
+ * answered at all.
  */
-function rpcCaller(urls: string[]): (method: string, params: unknown[]) => Promise<string> {
-  let order = urls;
-  return (method, params) => new Promise<string>((resolve, reject) => {
+function askEndpoints(urls: string[], method: string, params: unknown[], isYes: (result: string) => boolean): Promise<'yes' | 'no'> {
+  return new Promise((resolve, reject) => {
     const deadline = Date.now() + RPC_CALL_BUDGET_MS;
-    const queue = [...order];
+    const queue = [...urls];
     const cancel = new AbortController();
     let inFlight = 0;
     let done = false;
+    let answeredNo = false;
     let hedge: ReturnType<typeof setTimeout> | undefined;
     let last: unknown = new Error(`RPC ${method}: no endpoint answered within ${RPC_CALL_BUDGET_MS / 1000} s`);
     const finish = (settle: () => void) => {
@@ -222,19 +225,24 @@ function rpcCaller(urls: string[]): (method: string, params: unknown[]) => Promi
     const launch = (): void => {
       clearTimeout(hedge);
       if (done) return;
-      const url = queue.shift();
       const left = deadline - Date.now();
-      if (!url || left <= 0) {
-        if (inFlight === 0) finish(() => reject(last));
+      const url = left > 0 ? queue.shift() : undefined;
+      if (!url) {
+        if (inFlight === 0) finish(() => (answeredNo ? resolve('no') : reject(last)));
         return;
       }
       inFlight++;
       rpcOnce(url, method, params, left, cancel.signal).then(
-        (result) => finish(() => { order = [url, ...order.filter((u) => u !== url)]; resolve(result); }),
+        (result) => {
+          inFlight--;
+          if (isYes(result)) { finish(() => resolve('yes')); return; }
+          answeredNo = true;
+          launch();
+        },
         (err: unknown) => {
           inFlight--;
-          if (err instanceof RpcRejected) { finish(() => reject(err)); return; }
-          last = err;
+          if (err instanceof RpcRejected) answeredNo = true; // the wallet reverted: a no
+          else last = err;
           launch();
         },
       );
@@ -291,27 +299,25 @@ export async function verifyBindProof(
   if (sig.length % 2 !== 0 || !/^[0-9a-f]+$/.test(sig)) return { ok: false, reason: 'bad_signature', detail: 'The signature is not whole bytes of hex.' };
   const urls = rpcEndpoints(env, args.network);
   if (urls.length === 0) return { ok: false, reason: 'bad_signature', detail: 'The signature was not made by this wallet.' };
-  const rpc = rpcCaller(urls);
+  const unavailable = (err: unknown): ProofResult => ({ ok: false, reason: 'rpc_unavailable', detail: `Could not reach ${args.network} to check the smart-wallet signature: ${err instanceof Error ? err.message : String(err)}` });
   if (sig.endsWith(ERC6492_SUFFIX)) {
     // A smart wallet's signature wrapped per ERC-6492 (deployed or not yet): the
     // reference validator answers 0x01 for a valid one, in a deployless call.
     try {
-      const result = await rpc('eth_call', [{ data: erc6492ValidatorCall(args.address, digest, args.signature) }, 'latest']);
-      if (/^0x0*1$/i.test(result)) return { ok: true, signerKind: 'erc1271', fields };
+      const verdict = await askEndpoints(urls, 'eth_call', [{ data: erc6492ValidatorCall(args.address, digest, args.signature) }, 'latest'], (r) => /^0x0*1$/i.test(r));
+      if (verdict === 'yes') return { ok: true, signerKind: 'erc1271', fields };
       return { ok: false, reason: 'bad_signature', detail: 'The smart wallet did not accept this signature (checked per ERC-6492).' };
     } catch (err) {
-      if (err instanceof RpcRejected) return { ok: false, reason: 'bad_signature', detail: 'The smart wallet did not accept this signature (checked per ERC-6492).' };
-      return { ok: false, reason: 'rpc_unavailable', detail: `Could not reach ${args.network} to check the smart-wallet signature: ${err instanceof Error ? err.message : String(err)}` };
+      return unavailable(err);
     }
   }
+  // ERC-1271: ask the wallet. An address with no code answers empty, which is a no too.
   try {
-    const code = await rpc('eth_getCode', [args.address, 'latest']);
-    if (!code || code === '0x') return { ok: false, reason: 'bad_signature', detail: 'The signature was not made by this wallet.' };
-    const result = await rpc('eth_call', [{ to: args.address, data: isValidSignatureCall(digest, args.signature) }, 'latest']);
-    if (result.replace(/^0x/, '').slice(0, 8).toLowerCase() === ERC1271_MAGIC) return { ok: true, signerKind: 'erc1271', fields };
-    return { ok: false, reason: 'bad_signature', detail: 'The smart wallet did not accept this signature (ERC-1271).' };
+    const verdict = await askEndpoints(urls, 'eth_call', [{ to: args.address, data: isValidSignatureCall(digest, args.signature) }, 'latest'],
+      (r) => r.replace(/^0x/, '').slice(0, 8).toLowerCase() === ERC1271_MAGIC);
+    if (verdict === 'yes') return { ok: true, signerKind: 'erc1271', fields };
+    return { ok: false, reason: 'bad_signature', detail: 'The signature was not made by this wallet (an EOA key did not sign it, and no smart wallet at this address accepted it per ERC-1271).' };
   } catch (err) {
-    if (err instanceof RpcRejected) return { ok: false, reason: 'bad_signature', detail: 'The smart wallet did not accept this signature (ERC-1271).' };
-    return { ok: false, reason: 'rpc_unavailable', detail: `Could not reach ${args.network} to check the smart-wallet signature: ${err instanceof Error ? err.message : String(err)}` };
+    return unavailable(err);
   }
 }
