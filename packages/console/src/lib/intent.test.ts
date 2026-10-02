@@ -24,7 +24,7 @@ describe('sign-in intent preservation', () => {
   });
 
   it('never stores an auth page (would bounce-loop)', () => {
-    for (const p of ['/login', '/start#t=x', '/recover', '/claim', '/link']) {
+    for (const p of ['/login', '/start#t=x', '/recover', '/recover?x=1']) {
       installStorage();
       rememberIntent(p);
       expect(takeIntent()).toBeNull();

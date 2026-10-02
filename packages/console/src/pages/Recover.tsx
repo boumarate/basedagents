@@ -17,7 +17,7 @@ function errText(err: unknown): string {
  *   - no token in the URL → ask for the email, mail the magic link;
  *   - arrived via the emailed link (#t=<token>) → ask for the recovery code,
  *     then enroll a NEW passkey. Success revokes every other passkey and all
- *     sessions; the daemon is re-anchored with `based link`.
+ *     sessions; the agents connected to the account stay connected.
  *
  * The token rides the URL FRAGMENT so it never appears in server logs.
  */
@@ -87,7 +87,7 @@ export default function Recover() {
           <>
             <p className="auth-lede">
               Enter your recovery code to enroll a <strong>new</strong> passkey. Every other passkey
-              and session will be revoked. Your vault and its secrets are not touched.
+              and session will be revoked. Your tasks and connected agents are not touched.
             </p>
             {!supported && (
               <div className="banner banner-warn">This browser has no passkey support.</div>
@@ -104,7 +104,7 @@ export default function Recover() {
                   autoComplete="off"
                   required
                 />
-                <span className="field-hint">The one-time code you saved from the Vault page.</span>
+                <span className="field-hint">The one-time code you saved from your Home page.</span>
               </label>
               <button className="btn btn-primary" type="submit" disabled={busy || !supported}>
                 {busy ? 'Waiting for passkey…' : 'Enroll new passkey'}

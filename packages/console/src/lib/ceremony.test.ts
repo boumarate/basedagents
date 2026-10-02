@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { verifyArmedAction } from './ceremony.js';
 import { actionChallenge } from './action.js';
-import { vaultKeyFromOwnerId } from './owner.js';
+import { accountKeyFromOwnerId } from './owner.js';
 
 const OWNER = 'ow_TestOwnerKeyB58';
 
@@ -66,12 +66,12 @@ describe('verifyArmedAction — client-side WYSIWYS', () => {
   });
 });
 
-describe('vaultKeyFromOwnerId', () => {
-  it('strips the ow_ prefix (owner id IS the vault key)', () => {
-    expect(vaultKeyFromOwnerId('ow_ABCxyz123')).toBe('ABCxyz123');
+describe('accountKeyFromOwnerId', () => {
+  it('strips the ow_ prefix (owner id carries the account key)', () => {
+    expect(accountKeyFromOwnerId('ow_ABCxyz123')).toBe('ABCxyz123');
   });
   it('rejects non-owner ids', () => {
-    expect(() => vaultKeyFromOwnerId('ag_ABCxyz123')).toThrow(/not an owner id/);
-    expect(() => vaultKeyFromOwnerId('ow_')).toThrow(/not an owner id/);
+    expect(() => accountKeyFromOwnerId('ag_ABCxyz123')).toThrow(/not an owner id/);
+    expect(() => accountKeyFromOwnerId('ow_')).toThrow(/not an owner id/);
   });
 });

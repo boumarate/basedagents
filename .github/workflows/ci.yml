@@ -139,10 +139,10 @@ jobs:
       - name: Install
         run: npm ci
 
-      # The spec imports @basedagents/keyring (workspace link → packages/
-      # keyring/dist), which does not exist on a fresh checkout until built.
-      - name: Build keyring dist
-        run: npm run build:dist --workspace=packages/keyring
+      # The specs import `basedagents` (workspace link → packages/sdk/dist) for
+      # the agent keypair they seed; dist does not exist on a fresh checkout.
+      - name: Build sdk
+        run: npm run build --workspace=packages/sdk
 
       # Playwright downloads its own Chromium build from its CDN; `--with-deps`
       # only needs Ubuntu's own shared libs. The runner image ships a Google
