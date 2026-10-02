@@ -30,6 +30,9 @@ export interface OwnerRow {
   email_verified: number;
   display_name: string | null;
   status: string;
+  /** Stripe customer for one-time purchases (Agent Testing). Keyring Pro's
+   * subscription columns were dropped in 0048; the customer id survives. */
+  stripe_customer_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -169,6 +172,7 @@ function mapOwnerRow(r: RawRow): OwnerRow {
     email_verified: Number(r.email_verified),
     display_name: asNullableStr(r.display_name),
     status: asStr(r.status),
+    stripe_customer_id: asNullableStr(r.stripe_customer_id),
     created_at: asStr(r.created_at),
     updated_at: asStr(r.updated_at),
   };
@@ -392,6 +396,43 @@ export class ControlStore {
     const row = await this.getCredentialByRowId(id);
     if (!row) throw new Error(`addCredential: credential ${id} not found after insert`);
     return row;
+  }
+
+  /**
+   * Enroll the account's FIRST passkey — refuses (returns null) when an
+   * ACTIVE credential already exists. The self-serve /register endpoints are
+   * unauthenticated and the vault public key is derivable from the PUBLIC
+   * owner id, so without this gate anyone could add their own passkey to a
+   * known account; replacing a live passkey goes through recovery instead.
+   * Guarded INSERT…SELECT: the existence check and the insert are one
+   * statement, so two racing registrations cannot both win.
+   */
+  async addFirstCredential(input: AddCredentialInput): Promise<CredentialRow | null> {
+    const id = randomId('cred_');
+    const now = nowIsoString();
+    const res = await this.db.run(
+      `INSERT INTO owner_webauthn_credentials
+         (id, owner_id, credential_id, public_key, signature_counter,
+          transports, aaguid, backed_up, nickname, created_at, last_used_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+       WHERE NOT EXISTS (
+         SELECT 1 FROM owner_webauthn_credentials
+          WHERE owner_id = ? AND status = 'active'
+       )`,
+      id,
+      input.ownerId,
+      input.credentialId,
+      Buffer.from(input.publicKey),
+      input.counter,
+      input.transports ? JSON.stringify(input.transports) : null,
+      input.aaguid ?? null,
+      input.backedUp ? 1 : 0,
+      input.nickname ?? null,
+      now,
+      input.ownerId
+    );
+    if (res.changes !== 1) return null;
+    return this.getCredentialByRowId(id);
   }
 
   private async getCredentialByRowId(id: string): Promise<CredentialRow | null> {
@@ -702,6 +743,16 @@ export class ControlStore {
       nowIso
     );
     return res.changes === 1;
+  }
+
+  /** Remember the owner's Stripe customer so Agent Testing checkouts reuse it. */
+  async setStripeCustomerId(ownerId: string, customerId: string): Promise<void> {
+    await this.db.run(
+      `UPDATE owners SET stripe_customer_id = ?, updated_at = ? WHERE id = ?`,
+      customerId,
+      nowIsoString(),
+      ownerId
+    );
   }
 
   // ── Authority ladder (migration 0027): magic links ──

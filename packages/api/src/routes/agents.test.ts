@@ -1,10 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import {
-  setupTestDb,
-  createTestApp,
-  createTestAgent,
-  signRequest,
-} from '../test-helpers.js';
+import { setupTestDb, createTestApp, createTestAgent, signRequest, walletBindBody, personalSign, TEST_WALLET_KEYS } from '../test-helpers.js';
 import type { SQLiteAdapter } from '../db/sqlite-adapter.js';
 import type { TestKeypair } from '../test-helpers.js';
 
@@ -347,6 +342,8 @@ describe('Wallet Endpoints', () => {
   let app: ReturnType<typeof createTestApp>;
   let agent: TestKeypair & { name: string };
   let otherAgent: TestKeypair & { name: string };
+  const A_ADDR = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'; // TEST_WALLET_KEYS.a
+  const B_ADDR = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'; // TEST_WALLET_KEYS.b
 
   beforeEach(async () => {
     db = setupTestDb();
@@ -360,55 +357,121 @@ describe('Wallet Endpoints', () => {
     vi.unstubAllGlobals();
   });
 
+  const patchWallet = async (who: TestKeypair, body: Record<string, unknown>, target = agent.agentId) => {
+    const text = JSON.stringify(body);
+    const headers = await signRequest(who, 'PATCH', `/v1/agents/${target}/wallet`, text);
+    return app.request(`/v1/agents/${target}/wallet`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...headers }, body: text });
+  };
+  const getWallet = async (id = agent.agentId) => (await app.request(`/v1/agents/${id}/wallet`)).json() as Promise<Record<string, unknown>>;
+
   it('GET /v1/agents/:id/wallet returns wallet info', async () => {
     const res = await app.request(`/v1/agents/${agent.agentId}/wallet`);
     expect(res.status).toBe(200);
     const data = await res.json() as Record<string, unknown>;
-    expect(data.agent_id).toBe(agent.agentId);
-    expect(data.wallet_address).toBeNull();
-    expect(data.wallet_network).toBe('eip155:8453');
+    expect(data).toMatchObject({ agent_id: agent.agentId, wallet_address: null, wallet_network: 'eip155:8453', wallet_verified: false, wallet_proof: null });
   });
 
-  it('PATCH /v1/agents/:id/wallet updates wallet', async () => {
-    const body = JSON.stringify({
-      wallet_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-    });
-    const headers = await signRequest(agent, 'PATCH', `/v1/agents/${agent.agentId}/wallet`, body);
-    const res = await app.request(`/v1/agents/${agent.agentId}/wallet`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body,
-    });
+  it('PATCH binds a wallet with a signature from it (D8), and anyone can re-check the proof', async () => {
+    const body = walletBindBody(agent.agentId, TEST_WALLET_KEYS.a);
+    const res = await patchWallet(agent, body);
     expect(res.status).toBe(200);
-    const data = await res.json() as Record<string, unknown>;
-    expect(data.wallet_address).toBe('0xabcdefabcdefabcdefabcdefabcdefabcdefabcd');
-    expect(data.wallet_network).toBe('eip155:8453');
+    expect(await res.json()).toMatchObject({ wallet_address: A_ADDR, wallet_network: 'eip155:8453', wallet_verified: true, signer_kind: 'eoa' });
+    const view = await getWallet();
+    expect(view).toMatchObject({ wallet_address: A_ADDR, wallet_verified: true });
+    expect((view.wallet_proof as { message: string }).message).toBe(body.wallet_proof.message);
+    const profile = await (await app.request(`/v1/agents/${agent.agentId}`)).json() as Record<string, unknown>;
+    expect(profile).toMatchObject({ wallet_address: A_ADDR, wallet_verified: true });
+  });
+
+  it('PATCH without a proof → 400 wallet_proof_required with a message to sign; nothing changes', async () => {
+    const res = await patchWallet(agent, { wallet_address: A_ADDR });
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string; sign_this: string };
+    expect(data.error).toBe('wallet_proof_required');
+    expect(data.sign_this).toContain(`Agent: ${agent.agentId}`);
+    expect(data.sign_this).toContain(`Wallet: ${A_ADDR.toLowerCase()}`);
+    // Signing exactly that text and resending works.
+    const retry = await patchWallet(agent, { wallet_address: A_ADDR, wallet_proof: { message: data.sign_this, signature: personalSign(data.sign_this, TEST_WALLET_KEYS.a) } });
+    expect(retry.status).toBe(200);
+  });
+
+  it('refuses a proof signed by another key, for another agent, or reused', async () => {
+    const wrongKey = walletBindBody(agent.agentId, TEST_WALLET_KEYS.b);
+    const r1 = await patchWallet(agent, { ...wrongKey, wallet_address: A_ADDR });
+    expect(r1.status).toBe(400);
+    expect(await r1.json()).toMatchObject({ error: 'wallet_proof_invalid', reason: 'address_mismatch' });
+
+    const forOther = walletBindBody(otherAgent.agentId, TEST_WALLET_KEYS.a);
+    const r2 = await patchWallet(agent, forOther);
+    expect(await r2.json()).toMatchObject({ error: 'wallet_proof_invalid', reason: 'agent_mismatch' });
+
+    const good = walletBindBody(agent.agentId, TEST_WALLET_KEYS.a);
+    expect((await patchWallet(agent, good)).status).toBe(200);
+    expect((await patchWallet(agent, { ...walletBindBody(agent.agentId, TEST_WALLET_KEYS.b) })).status).toBe(200);
+    const replay = await patchWallet(agent, good);
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toMatchObject({ error: 'wallet_proof_reused' });
+    expect(await getWallet()).toMatchObject({ wallet_address: B_ADDR });
+  });
+
+  it('refuses a CRLF copy of the message and a signature that is not whole bytes; the wallet is unchanged', async () => {
+    const good = walletBindBody(agent.agentId, TEST_WALLET_KEYS.a);
+    const crlf = good.wallet_proof.message.replace(/\n/g, '\r\n');
+    const r1 = await patchWallet(agent, { ...good, wallet_proof: { message: crlf, signature: personalSign(crlf, TEST_WALLET_KEYS.a) } });
+    expect(r1.status).toBe(400);
+    expect(await r1.json()).toMatchObject({ error: 'wallet_proof_invalid', reason: 'malformed_message' });
+
+    const r2 = await patchWallet(agent, { ...good, wallet_proof: { message: good.wallet_proof.message, signature: good.wallet_proof.signature + '0' } });
+    expect(r2.status).toBe(400);
+    expect(await r2.json()).toMatchObject({ error: 'bad_request' });
+    expect(await getWallet()).toMatchObject({ wallet_address: null, wallet_verified: false });
+  });
+
+  it('publishes the proof of the current wallet only (the bind is one atomic write)', async () => {
+    expect((await patchWallet(agent, walletBindBody(agent.agentId, TEST_WALLET_KEYS.a))).status).toBe(200);
+    // A stray live row for another address (as a lost race could leave) is never shown as this wallet's proof.
+    await db.run(
+      `INSERT INTO agent_wallet_bindings (id, agent_id, wallet_address, wallet_network, signer_kind, message, signature, nonce, bound_at)
+       VALUES ('wbind_stray', ?, ?, 'eip155:8453', 'eoa', 'm', '0x00', 'straynonce', '2999-01-01T00:00:00.000Z')`,
+      agent.agentId, B_ADDR,
+    );
+    const view = await getWallet() as { wallet_address: string; wallet_proof: { message: string } | null };
+    expect(view.wallet_address).toBe(A_ADDR);
+    expect(view.wallet_proof?.message).toContain(`Wallet: ${A_ADDR.toLowerCase()}`);
+  });
+
+  it('keeps a history: a new bind unbinds the old one; clearing needs no proof', async () => {
+    expect((await patchWallet(agent, walletBindBody(agent.agentId, TEST_WALLET_KEYS.a))).status).toBe(200);
+    expect((await patchWallet(agent, walletBindBody(agent.agentId, TEST_WALLET_KEYS.b))).status).toBe(200);
+    const rows = await db.all<{ wallet_address: string; unbound_at: string | null }>('SELECT wallet_address, unbound_at FROM agent_wallet_bindings WHERE agent_id = ? ORDER BY bound_at', agent.agentId);
+    expect(rows.map((r) => [r.wallet_address, r.unbound_at === null])).toEqual([[A_ADDR, false], [B_ADDR, true]]);
+
+    const cleared = await patchWallet(agent, { wallet_address: null });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toMatchObject({ wallet_address: null, wallet_verified: false, wallet_proof: null });
+    expect((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM agent_wallet_bindings WHERE agent_id = ? AND unbound_at IS NULL', agent.agentId))!.n).toBe(0);
+  });
+
+  it('re-sending the current verified wallet is a no-op; changing its network needs a new proof', async () => {
+    expect((await patchWallet(agent, walletBindBody(agent.agentId, TEST_WALLET_KEYS.a))).status).toBe(200);
+    expect((await patchWallet(agent, { wallet_address: A_ADDR })).status).toBe(200);
+    const netOnly = await patchWallet(agent, { wallet_network: 'eip155:84532' });
+    expect(netOnly.status).toBe(400);
+    expect(((await netOnly.json()) as { error: string }).error).toBe('wallet_proof_required');
+    expect((await patchWallet(agent, walletBindBody(agent.agentId, TEST_WALLET_KEYS.a, 'eip155:84532'))).status).toBe(200);
+    expect(await getWallet()).toMatchObject({ wallet_network: 'eip155:84532', wallet_verified: true });
+  });
+
+  it('an address set before proofs existed reads as unverified until it is bound again', async () => {
+    await db.run('UPDATE agents SET wallet_address = ? WHERE id = ?', '0x1111111111111111111111111111111111111111', agent.agentId);
+    expect(await getWallet()).toMatchObject({ wallet_address: '0x1111111111111111111111111111111111111111', wallet_verified: false });
+    const profile = await (await app.request(`/v1/agents/${agent.agentId}`)).json() as Record<string, unknown>;
+    expect(profile).toMatchObject({ wallet_address: '0x1111111111111111111111111111111111111111', wallet_network: 'eip155:8453', wallet_verified: false });
   });
 
   it('PATCH /v1/agents/:id/wallet rejects other agent → 403', async () => {
-    const body = JSON.stringify({
-      wallet_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-    });
-    const headers = await signRequest(otherAgent, 'PATCH', `/v1/agents/${agent.agentId}/wallet`, body);
-    const res = await app.request(`/v1/agents/${agent.agentId}/wallet`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body,
-    });
+    const res = await patchWallet(otherAgent, walletBindBody(agent.agentId, TEST_WALLET_KEYS.a));
     expect(res.status).toBe(403);
-  });
-
-  it('agent profile response includes wallet_address and wallet_network', async () => {
-    await db.run(
-      'UPDATE agents SET wallet_address = ? WHERE id = ?',
-      '0x1111111111111111111111111111111111111111', agent.agentId
-    );
-
-    const res = await app.request(`/v1/agents/${agent.agentId}`);
-    expect(res.status).toBe(200);
-    const data = await res.json() as Record<string, unknown>;
-    expect(data.wallet_address).toBe('0x1111111111111111111111111111111111111111');
-    expect(data.wallet_network).toBe('eip155:8453');
   });
 
   it('GET /v1/agents/:id/wallet returns 404 for unknown agent', async () => {
@@ -416,72 +479,29 @@ describe('Wallet Endpoints', () => {
     expect(res.status).toBe(404);
   });
 
-  it('PATCH /v1/agents/:id/wallet rejects invalid network → 400', async () => {
-    const body = JSON.stringify({
-      wallet_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-      wallet_network: 'not-a-valid-network',
-    });
-    const headers = await signRequest(agent, 'PATCH', `/v1/agents/${agent.agentId}/wallet`, body);
-    const res = await app.request(`/v1/agents/${agent.agentId}/wallet`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body,
-    });
-    expect(res.status).toBe(400);
-    const data = await res.json() as { error: string };
-    expect(data.error).toBe('bad_request');
-  });
-
-  it('PATCH /v1/agents/:id/wallet rejects invalid address → 400', async () => {
-    const body = JSON.stringify({
-      wallet_address: 'not-an-evm-address',
-    });
-    const headers = await signRequest(agent, 'PATCH', `/v1/agents/${agent.agentId}/wallet`, body);
-    const res = await app.request(`/v1/agents/${agent.agentId}/wallet`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body,
-    });
-    expect(res.status).toBe(400);
-    const data = await res.json() as { error: string };
-    expect(data.error).toBe('bad_request');
-  });
-
-  it('PATCH /v1/agents/:id/wallet accepts all ALLOWED_WALLET_NETWORKS', async () => {
-    const ALLOWED = [
-      'eip155:8453',
-      'eip155:84532',
-      'eip155:1',
-      'eip155:137',
-      'eip155:42161',
-      'eip155:10',
-    ];
-
-    for (const network of ALLOWED) {
-      const body = JSON.stringify({
-        wallet_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-        wallet_network: network,
-      });
-      const headers = await signRequest(agent, 'PATCH', `/v1/agents/${agent.agentId}/wallet`, body);
-      const res = await app.request(`/v1/agents/${agent.agentId}/wallet`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...headers },
-        body,
-      });
-      expect(res.status).toBe(200);
-      const data = await res.json() as Record<string, unknown>;
-      expect(data.wallet_network).toBe(network);
+  it('PATCH /v1/agents/:id/wallet rejects invalid network or address → 400 bad_request', async () => {
+    for (const body of [{ wallet_address: A_ADDR, wallet_network: 'not-a-valid-network' }, { wallet_address: 'not-an-evm-address' }]) {
+      const res = await patchWallet(agent, body);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe('bad_request');
     }
   });
 
+  it('binds on every EVM network in ALLOWED_WALLET_NETWORKS; Solana has no EVM proof', async () => {
+    for (const network of ['eip155:8453', 'eip155:84532', 'eip155:1', 'eip155:137', 'eip155:42161', 'eip155:10']) {
+      const res = await patchWallet(agent, walletBindBody(agent.agentId, TEST_WALLET_KEYS.a, network));
+      expect(res.status, network).toBe(200);
+      expect(((await res.json()) as Record<string, unknown>).wallet_network).toBe(network);
+    }
+    const sol = await patchWallet(agent, { wallet_address: A_ADDR, wallet_network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' });
+    expect(await sol.json()).toMatchObject({ error: 'wallet_proof_invalid', reason: 'unsupported_network' });
+  });
+
   it('PATCH /v1/agents/:id/wallet without auth → 401', async () => {
-    const body = JSON.stringify({
-      wallet_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-    });
     const res = await app.request(`/v1/agents/${agent.agentId}/wallet`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body,
+      body: JSON.stringify(walletBindBody(agent.agentId)),
     });
     expect(res.status).toBe(401);
   });

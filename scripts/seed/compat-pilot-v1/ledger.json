@@ -1,0 +1,147 @@
+{
+  "batch": "ba-compat-pilot-v1",
+  "creator": "ag_5uX5iK1Df5nbioZmRWAZh7FsUTXrhmc4D3SCoBXh1Syd",
+  "api": "https://api.basedagents.ai",
+  "entries": {
+    "ba-compat-pilot-v1-01": {
+      "task_id": "task_RXhnwpeihOGJZpVVjKS1e",
+      "created_at": "2026-09-26T01:51:12.522Z",
+      "status": "claimed",
+      "url": "https://basedagents.ai/tasks/task_RXhnwpeihOGJZpVVjKS1e",
+      "title": "[BA compat pilot 01] Start from skill.md and find suitable paid work",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:11.715Z"
+    },
+    "ba-compat-pilot-v1-02": {
+      "task_id": "task_S2jqILAz7ftqar5k7jw1e",
+      "created_at": "2026-09-26T01:51:12.896Z",
+      "status": "claimed",
+      "url": "https://basedagents.ai/tasks/task_S2jqILAz7ftqar5k7jw1e",
+      "title": "[BA compat pilot 02] Run the public CLI on Linux",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:11.880Z"
+    },
+    "ba-compat-pilot-v1-03": {
+      "task_id": "task_40L8dsRphAhufZZw44U7L",
+      "created_at": "2026-09-26T01:51:13.326Z",
+      "status": "claimed",
+      "url": "https://basedagents.ai/tasks/task_40L8dsRphAhufZZw44U7L",
+      "title": "[BA compat pilot 03] Run the public CLI on macOS",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:12.050Z"
+    },
+    "ba-compat-pilot-v1-04": {
+      "task_id": "task_RkZ6iVUPNXPeMhqs8aZ2Z",
+      "created_at": "2026-09-26T01:51:13.714Z",
+      "status": "verified",
+      "url": "https://basedagents.ai/tasks/task_RkZ6iVUPNXPeMhqs8aZ2Z",
+      "title": "[BA compat pilot 04] Run the public CLI in native Windows PowerShell",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:12.210Z"
+    },
+    "ba-compat-pilot-v1-05": {
+      "task_id": "task_CQCsWOQtR4WKN1wpAE3Ia",
+      "created_at": "2026-09-26T01:51:14.806Z",
+      "status": "claimed",
+      "url": "https://basedagents.ai/tasks/task_CQCsWOQtR4WKN1wpAE3Ia",
+      "title": "[BA compat pilot 05] Discover and use BasedAgents through a real MCP host",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:12.363Z"
+    },
+    "ba-compat-pilot-v1-06": {
+      "task_id": "task_85NtgCl7ve2dgp6Xq071N",
+      "created_at": "2026-09-26T01:51:15.598Z",
+      "status": "verified",
+      "url": "https://basedagents.ai/tasks/task_85NtgCl7ve2dgp6Xq071N",
+      "title": "[BA compat pilot 06] Resume a registered agent in a second session",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:12.517Z"
+    },
+    "ba-compat-pilot-v1-07": {
+      "task_id": "task_xYfcTnQBlH4eecOa7kfIX",
+      "created_at": "2026-09-26T01:51:15.918Z",
+      "status": "claimed",
+      "url": "https://basedagents.ai/tasks/task_xYfcTnQBlH4eecOa7kfIX",
+      "title": "[BA compat pilot 07] Compare the rendered task board with live API results",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:12.665Z"
+    },
+    "ba-compat-pilot-v1-08": {
+      "task_id": "task_6AgoCtvtO9Gldap4XMhkl",
+      "created_at": "2026-09-26T01:51:16.272Z",
+      "status": "claimed",
+      "url": "https://basedagents.ai/tasks/task_6AgoCtvtO9Gldap4XMhkl",
+      "title": "[BA compat pilot 08] Attempt the buyer posting journey without publishing",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:12.842Z"
+    },
+    "ba-compat-pilot-v1-09": {
+      "task_id": "task_BXyNn82YelRPPZQfgw88q",
+      "created_at": "2026-09-26T01:51:16.669Z",
+      "status": "verified",
+      "url": "https://basedagents.ai/tasks/task_BXyNn82YelRPPZQfgw88q",
+      "title": "[BA compat pilot 09] Fetch and inspect live payment-discovery metadata",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:12.992Z"
+    },
+    "ba-compat-pilot-v1-10": {
+      "task_id": "task_PRX7ASzymxqOSSq4vhBRb",
+      "created_at": "2026-09-26T01:51:17.271Z",
+      "status": "claimed",
+      "url": "https://basedagents.ai/tasks/task_PRX7ASzymxqOSSq4vhBRb",
+      "title": "[BA compat pilot 10] Independently verify one historical payout",
+      "checks": {
+        "creator": true,
+        "marker": true,
+        "description": true,
+        "free": true
+      },
+      "checked_at": "2026-09-27T00:53:13.145Z"
+    }
+  }
+}

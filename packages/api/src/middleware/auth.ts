@@ -134,6 +134,8 @@ function makeAgentAuth() {
   c.set('agentId', agentId);
   c.set('publicKey', publicKey);
   c.set('agentStatus', status);
+  // Analytics identity — the stable agent id, only after the signature verified.
+  c.set('posthogDistinctId', agentId);
 
   await next();
   });
@@ -201,6 +203,9 @@ export const optionalAuth = createMiddleware<AppEnv>(async (c, next) => {
           c.set('agentId', agentId);
           c.set('publicKey', publicKey);
           c.set('agentStatus', agent.status);
+          // Analytics identity — verified-signature path only, like the rest
+          // of the context above (an unverified header never identifies).
+          c.set('posthogDistinctId', agentId);
         }
       }
     } catch {

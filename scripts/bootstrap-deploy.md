@@ -61,10 +61,25 @@ npx wrangler d1 execute agent-registry --remote \
   --command "INSERT INTO d1_migrations (name, applied_at) VALUES ('0001_init.sql', CURRENT_TIMESTAMP);"  # repeat per already-applied file
 ```
 
-## 4. Runtime secrets (scripted)
+## 4. Stripe (Agent Testing payments)
+
+Keyring Pro and its subscription prices are retired; Stripe now serves only
+Agent Testing's one-time checkout.
+
+1. Stripe dashboard (test mode first) → Products: create the audit package's
+   one-time price and put its id in `packages/api/wrangler.toml`
+   (`STRIPE_PRICE_TESTING_AUDIT`) — config, not a secret.
+2. Developers → Webhooks → Add endpoint:
+   - URL: `https://api.basedagents.ai/v1/stripe/webhook`
+   - Events: `checkout.session.completed`, `checkout.session.expired`
+   - Copy the **signing secret** (`whsec_…`).
+
+## 5. Runtime secrets (scripted)
 
 ```bash
 RESEND_API_KEY=re_... \           # optional — without it, magic-link and recovery emails go to the log-only sender
+STRIPE_SECRET_KEY=sk_...  \       # optional — without it, Testing checkout/webhook answer 503
+STRIPE_WEBHOOK_SECRET=whsec_... \
   ./scripts/put-secrets.sh
 ```
 
@@ -77,7 +92,7 @@ Notes:
 - Staging: repeat with `--env staging` (`./scripts/put-secrets.sh --env staging`);
   staging uses its own D1 database per `wrangler.toml`.
 
-## 5. Task payments (x402) — optional, off by default
+## 6. Task payments (x402) — optional, off by default
 
 Task bounties fail closed: without this section the API answers
 `503 payments_unavailable` to any bounty and `GET /v1/status` reports
@@ -131,7 +146,7 @@ printf '%s' "$PAYMENT_ENCRYPTION_KEY" | npx wrangler secret put PAYMENT_ENCRYPTI
 Turning payments off again is safe at any time: accepted tasks keep their
 status and their `payment_status` simply stops advancing.
 
-## 6. Done — verify
+## 7. Done — verify
 
 Open a trivial PR: CI must go green (typecheck/lint/unit + passkey E2E) and
 comment a console preview URL. Merge it: the `deploy-production` job applies

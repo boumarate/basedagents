@@ -444,6 +444,34 @@ describe('RegistryClient', () => {
     });
   });
 
+  // ── getSettledTasks ──
+
+  describe('getSettledTasks()', () => {
+    it('sends GET to /v1/tasks/settled', async () => {
+      const payload = { ok: true, stats: { n: 0 }, tasks: [], next_cursor: null };
+      mockFetch.mockResolvedValueOnce(makeMockResponse(payload));
+
+      const client = new RegistryClient('https://api.test.local');
+      const result = await client.getSettledTasks();
+
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).toBe('https://api.test.local/v1/tasks/settled');
+      expect(result.next_cursor).toBeNull();
+    });
+
+    it('passes limit, cursor and window_days', async () => {
+      mockFetch.mockResolvedValueOnce(makeMockResponse({ ok: true, stats: {}, tasks: [], next_cursor: null }));
+
+      const client = new RegistryClient('https://api.test.local');
+      await client.getSettledTasks({ limit: 25, cursor: '2026-09-23T14:36:22.188Z', window_days: 90 });
+
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).toContain('limit=25');
+      expect(url).toContain('cursor=2026-09-23T14%3A36%3A22.188Z');
+      expect(url).toContain('window_days=90');
+    });
+  });
+
   // ── getTask ──
 
   describe('getTask()', () => {
@@ -804,6 +832,26 @@ describe('RegistryClient', () => {
       await expect(client.disputeTask(kp, 'task_abc', '')).rejects.toThrow('reason');
       expect(mockFetch).not.toHaveBeenCalled();
     });
+
+    it('sends an optional rating; refuses one outside 1-5 or a comment without one (no request made)', async () => {
+      const kp = await generateKeypair();
+      mockFetch.mockResolvedValueOnce(makeMockResponse({ ok: true, task_id: 'task_abc', status: 'submitted', review_state: 'disputed', disputed_at: 'x', payment_status: 'none', rating: 1 }));
+      const client = new RegistryClient('https://api.test.local');
+      await client.disputeTask(kp, 'task_abc', 'Wrong file', { rating: 1, ratingComment: 'Not what was asked' });
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ reason: 'Wrong file', rating: 1, rating_comment: 'Not what was asked' });
+
+      mockFetch.mockClear();
+      await expect(client.disputeTask(kp, 'task_abc', 'x', { rating: 6 })).rejects.toThrow('1 to 5');
+      await expect(client.acceptTask(kp, 'task_abc', { rating: 2.5 })).rejects.toThrow('1 to 5');
+      await expect(client.acceptTask(kp, 'task_abc', { ratingComment: 'nice' })).rejects.toThrow('needs a rating');
+      await expect(client.acceptTask(kp, 'task_abc', { rating: 4, ratingComment: 'x'.repeat(501) })).rejects.toThrow('500 characters');
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      // The API trims before counting, so a padded 500-character comment is fine.
+      mockFetch.mockResolvedValueOnce(makeMockResponse({ ok: true, task_id: 'task_abc', status: 'verified', accepted_by: 'creator', payment_status: 'none', rating: 4 }));
+      await client.acceptTask(kp, 'task_abc', { rating: 4, ratingComment: `  ${'x'.repeat(500)}  ` });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ── getTaskPayment ──
@@ -911,8 +959,8 @@ describe('usdcToAtomic() / atomicToDisplay()', () => {
 });
 
 describe('shared task constants', () => {
-  it('TASK_STATUSES lists every API status including closed', () => {
-    expect(TASK_STATUSES).toEqual(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled']);
+  it('TASK_STATUSES lists every API status including closed and expired', () => {
+    expect(TASK_STATUSES).toEqual(['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired']);
   });
 
   it('PAYMENT_HEADER is the canonical x402 header name', () => {

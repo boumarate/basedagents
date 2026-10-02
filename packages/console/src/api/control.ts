@@ -25,8 +25,15 @@ import type {
   PaymentRequirementsV2,
   TaskPaymentResponse,
   PublicTaskList,
+  FeedbackList,
+  FeedbackItem,
+  FeedbackStatus,
 } from './types.js';
 import type { RegistrationResult } from '../lib/webauthn.js';
+import { atomicToDisplay } from '../lib/money.js';
+
+/** An optional 1-5 rating sent with an accept or a dispute (public on the task). */
+export interface TaskRating { rating: number; rating_comment?: string }
 
 // VITE_API_URL='' (empty, set — dev/E2E) means same-origin relative requests,
 // served through the vite proxy; unset means the production API.
@@ -217,6 +224,16 @@ export const control = {
   // body alone and the session cookie authorizes it. Creation is never signed
   // from the console: its action folds a canonical of every task field, which
   // the server derives itself.
+  // ── Operator: agent feedback triage (404 unless ADMIN_OWNER_IDS lists you) ──
+  adminFeedback(status: FeedbackStatus | 'all' = 'open', before?: string): Promise<FeedbackList> {
+    const q = new URLSearchParams({ status });
+    if (before) q.set('before', before);
+    return request('GET', `/admin/feedback?${q}`);
+  },
+  setFeedbackStatus(feedbackId: string, status: FeedbackStatus, note?: string): Promise<{ feedback: FeedbackItem }> {
+    return request('POST', `/admin/feedback/${encodeURIComponent(feedbackId)}`, note ? { status, note } : { status });
+  },
+
   tasks(status: TaskStatus | 'all' = 'all'): Promise<{ ok: true; tasks: OwnerTask[] }> {
     return request('GET', `/tasks?status=${encodeURIComponent(status)}`);
   },
@@ -255,14 +272,17 @@ export const control = {
     note?: string,
     signed?: SignedAction,
     paymentHeader?: string,
+    rating?: TaskRating,
   ): Promise<{
     ok: true; task_id: string; status: 'verified'; accepted_by: 'creator';
-    payment_status?: string; payment_tx_hash?: string;
+    payment_status?: string; payment_tx_hash?: string; rating?: number;
+    /** false when the accept went through but its rating change wasn't saved. */
+    rating_saved?: false; rating_error?: string;
   }> {
     return request(
       'POST',
       `/tasks/${encodeURIComponent(taskId)}/accept`,
-      { ...(note !== undefined ? { note } : {}), ...(signed ?? {}) },
+      { ...(note !== undefined ? { note } : {}), ...(rating ?? {}), ...(signed ?? {}) },
       paymentHeader ? { 'PAYMENT-SIGNATURE': paymentHeader } : undefined,
     );
   },
@@ -277,8 +297,9 @@ export const control = {
     taskId: string,
     reason: string,
     signed?: SignedAction,
-  ): Promise<{ ok: true; task_id: string; status: 'submitted'; review_state: 'disputed'; disputed_at: string }> {
-    return request('POST', `/tasks/${encodeURIComponent(taskId)}/dispute`, { reason, ...(signed ?? {}) });
+    rating?: TaskRating,
+  ): Promise<{ ok: true; task_id: string; status: 'submitted'; review_state: 'disputed'; disputed_at: string; rating?: number }> {
+    return request('POST', `/tasks/${encodeURIComponent(taskId)}/dispute`, { reason, ...(rating ?? {}), ...(signed ?? {}) });
   },
   cancelTask(
     taskId: string,
@@ -353,6 +374,16 @@ export const payments = {
       return r.payments_enabled === true;
     } catch {
       return false;
+    }
+  },
+  /** The smallest bounty a task posted from here may carry, in USDC ("0.10"); null when the registry doesn't say. */
+  async minBountyUsdc(): Promise<string | null> {
+    try {
+      const r = await publicRequest<{ min_bounty_atomic?: { human?: string } }>('/.well-known/x402');
+      const atomic = r.min_bounty_atomic?.human;
+      return atomic && /^[0-9]{1,15}$/.test(atomic) ? atomicToDisplay(atomic) : null;
+    } catch {
+      return null;
     }
   },
   /** Whether the registry holds bounties in escrow (a house wallet is configured) — on by default when it does. */

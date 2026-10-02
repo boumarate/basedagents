@@ -5,6 +5,8 @@ import type { Verification } from '../data/mockData';
 interface TrustSafetyCardProps {
   rep: ReputationBreakdown;
   verifications: Verification[];
+  /** Ratings posters gave this agent's deliveries (1-5, optional); the row is hidden when absent. */
+  ratings?: { count: number; average: number | null };
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -49,7 +51,7 @@ function PassRateVerdict(rate: number): { label: string; color: string } {
   return { label: 'Poor', color: 'var(--status-suspended)' };
 }
 
-export default function TrustSafetyCard({ rep, verifications }: TrustSafetyCardProps): React.ReactElement {
+export default function TrustSafetyCard({ rep, verifications, ratings }: TrustSafetyCardProps): React.ReactElement {
   const safetyOk = rep.safety_flags === 0;
   const penaltyOk = (rep.penalty ?? 0) === 0;
   const coherenceOk = (rep.breakdown.coherence ?? 0) >= 0.65;
@@ -158,6 +160,19 @@ export default function TrustSafetyCard({ rep, verifications }: TrustSafetyCardP
             </span>
           ) : <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>—</span>}
         </Row>
+
+        {ratings && (
+          <Row label="Ratings">
+            {ratings.count > 0 && ratings.average !== null ? (
+              <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+                <StatusPill ok={ratings.average >= 3} label={`★ ${ratings.average.toFixed(1)} · ${ratings.count} rating${ratings.count === 1 ? '' : 's'}`} />
+                <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                  Optional 1–5 ratings from buyers when they accept or dispute a delivery
+                </span>
+              </span>
+            ) : <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>—</span>}
+          </Row>
+        )}
 
         {hasVerifications && recent.length > 0 && (
           <Row label="Recent outcomes">

@@ -34,23 +34,28 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../types/index.js';
-import { CreateTaskSchema } from '../types/index.js';
+import { CreateTaskSchema, allowedBountyNetworks, RatingFields, withRatingRule, ratingInputOf, isRatingIssue, RATING_RULE_MESSAGE } from '../types/index.js';
 import type { DBAdapter } from '../db/adapter.js';
 import { ownerSession, verifyAndRecordAction, AssertionSchema } from './routes.js';
 import { canonicalJsonStringify, sha256, bytesToHex } from '../crypto/index.js';
 import { checkRateLimit } from '../lib/rate-limiter.js';
 import { generatePublicId } from '../lib/ids.js';
+import { captureServerEvent } from '../lib/posthog.js';
 import { sanitizeDisplayName } from '../lib/display-name.js';
 import {
   type Actor, type TaskRow, loadTask, creatorMatches, logPaymentEvent, recordFunnel, publicTaskShape, paymentView,
   creatorSqlParts, recomputeReputation, notifyMatchingAgents, bountyView,
   acceptUnpaidGate, revisionGate, disputeGate, cancelGate, cancelRefusal, afterAccept, MAX_REVISIONS,
+  settleRatingAfterAccept,
 } from '../tasks/service.js';
 import { paymentProviderFor } from '../payments/index.js';
 import { acceptBountyTask } from '../payments/accept.js';
 import { fundEscrowTask, acceptEscrowTask, startEscrowLeg } from '../payments/escrow.js';
 import { escrowAvailable } from '../payments/house-wallet.js';
 import { escrowView } from '../tasks/service.js';
+import { slashBondForDisputedClaim } from '../tasks/governance.js';
+import { resolveOpenExpiry } from '../tasks/expiry.js';
+import { bountyMinimumRefusal } from '../tasks/bounty-minimum.js';
 import { recordEvent } from '../events/service.js';
 
 const textEncoder = new TextEncoder();
@@ -85,9 +90,11 @@ async function readJson(c: Ctx): Promise<{ ok: true; body: Record<string, unknow
 
 const Ceremony = { nonce: z.string().min(1).optional(), assertion: AssertionSchema.optional() };
 const OwnerCreateSchema = CreateTaskSchema.extend(Ceremony).strict();
-const AcceptSchema = z.object({ note: z.string().max(2000).optional(), ...Ceremony }).strict();
+// D11: accept and dispute take an optional rating. The passkey ceremony signs the note / reason as before;
+// the rating is not money and not part of the signed action.
+const AcceptSchema = withRatingRule(z.object({ note: z.string().max(2000).optional(), ...RatingFields, ...Ceremony }).strict());
 const RevisionSchema = z.object({ note: z.string().min(1).max(2000), ...Ceremony }).strict();
-const DisputeSchema = z.object({ reason: z.string().min(1).max(2000), ...Ceremony }).strict();
+const DisputeSchema = withRatingRule(z.object({ reason: z.string().min(1).max(2000), ...RatingFields, ...Ceremony }).strict());
 const CancelSchema = z.object({ reason: z.string().max(2000).optional(), ...Ceremony }).strict();
 const PublishSchema = z.object({ publish: z.boolean(), ...Ceremony }).strict();
 
@@ -182,11 +189,23 @@ app.post('/tasks', ownerSession, async (c) => {
   const parsed = OwnerCreateSchema.safeParse(json.body);
   if (!parsed.success) return c.json({ error: 'bad_request', message: 'validation failed', details: parsed.error.flatten() }, 400);
 
+  // D13: open window — default 7 days; only house accounts may exceed the cap
+  // or post a never-expiring task (tasks/expiry.ts). Checked before the 402
+  // challenge so nobody signs a deposit for a post that would be refused.
+  const expiry = resolveOpenExpiry(c.env, ownerId, parsed.data.expires_in_days, new Date().toISOString());
+  if (!expiry.ok) {
+    return err(c, 400, 'expiry_window_not_allowed', `expires_in_days must be between 1 and ${expiry.max} for this poster; omit it for the default window.`, { max_days: expiry.max });
+  }
+
   const wantsEscrow = !!parsed.data.bounty && (parsed.data.escrow ?? escrowAvailable(c.env));
   const rawHeader = paymentHeader(c);
   if (rawHeader && !wantsEscrow) {
     return err(c, 400, 'payment_not_expected', 'This task does not use escrow: the bounty is paid when you accept the delivery. Omit the payment header.');
   }
+  // D3: a bounty has a floor. Checked before the escrow challenge below, so the
+  // browser wallet is never asked to sign a deposit the post would then refuse.
+  const belowMinimum = parsed.data.bounty ? bountyMinimumRefusal(c.env, 'human', parsed.data.bounty.amount) : null;
+  if (belowMinimum) return c.json(belowMinimum, 400);
   if (wantsEscrow && parsed.data.bounty && !rawHeader) {
     // The stateless challenge: nothing is consumed (no rate-limit slot, no passkey challenge).
     const b = parsed.data.bounty;
@@ -197,6 +216,8 @@ app.post('/tasks', ownerSession, async (c) => {
         proposer_signature: null, title: parsed.data.title, description: parsed.data.description, category: parsed.data.category ?? null,
         required_capabilities: parsed.data.required_capabilities ?? null, expected_output: parsed.data.expected_output ?? null,
         output_format: parsed.data.output_format, bounty: { amount: b.amount, token: b.token, network: b.network },
+        max_active_claims_per_agent: parsed.data.max_active_claims_per_agent ?? null,
+        expires_at: expiry.expiresAt,
       },
     }, { rawHeader: null, nowIso: new Date().toISOString(), actor: { kind: 'owner', ownerId } });
     for (const [k, v] of Object.entries(challenge.headers ?? {})) c.header(k, v);
@@ -223,6 +244,11 @@ app.post('/tasks', ownerSession, async (c) => {
   if (bounty && !paymentProviderFor(c.env)) {
     return err(c, 503, 'payments_unavailable', 'Bounties are not enabled on this registry yet. Post the task without a bounty.');
   }
+  // Production settles real money: reject a bounty on a network this environment
+  // won't pay (testnet USDC is staging/dev only) — before any escrow deposit.
+  if (bounty && !allowedBountyNetworks(c.env).includes(bounty.network)) {
+    return err(c, 400, 'bounty_network_not_allowed', `Bounties on ${bounty.network} are not accepted here; use eip155:8453 (Base mainnet USDC).`, { network: bounty.network });
+  }
   // The signed action folds a hash of exactly the RAW fields the client posted
   // (not the zod-parsed output) — matching the board-post precedent and keeping
   // client/server byte-parity regardless of schema defaults (output_format,
@@ -245,31 +271,47 @@ app.post('/tasks', ownerSession, async (c) => {
         proposer_signature: null, title: fields.title, description: fields.description, category: fields.category ?? null,
         required_capabilities: reqCaps, expected_output: fields.expected_output ?? null, output_format: fields.output_format,
         bounty: { amount: bounty.amount, token: bounty.token, network: bounty.network },
+        max_active_claims_per_agent: fields.max_active_claims_per_agent ?? null,
+        expires_at: expiry.expiresAt,
       },
     }, { rawHeader, nowIso: now, actor: { kind: 'owner', ownerId } });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
+    // 200 = the task exists with its deposit taken (the stateless challenge
+    // above and every refusal create nothing) — same rule as the agent route.
+    if (outcome.status === 200) {
+      await captureServerEvent(c, 'task_created', {
+        has_bounty: true, escrow: true, category: fields.category ?? null,
+        output_format: fields.output_format, bounty_network: bounty.network,
+      });
+    }
     return c.json(outcome.body, outcome.status);
   }
 
   const paymentStatus = bounty ? 'pending' : 'none';
   await db.run(
     `INSERT INTO tasks (task_id, creator_agent_id, creator_owner_id, creator_kind, creator_assertion_id, title, description, category,
-       required_capabilities, expected_output, output_format, status, created_at, bounty_amount, bounty_token, bounty_network, payment_status)
-     VALUES (?, NULL, ?, 'owner', ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
+       required_capabilities, expected_output, output_format, status, created_at, bounty_amount, bounty_token, bounty_network, payment_status,
+       max_active_claims_per_agent, expires_at)
+     VALUES (?, NULL, ?, 'owner', ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
     taskId, ownerId, cer.assertionId, fields.title, fields.description, fields.category ?? null,
     reqCaps ? JSON.stringify(reqCaps) : null, fields.expected_output ?? null, fields.output_format, now,
     bounty?.amount ?? null, bounty?.token ?? null, bounty?.network ?? null, paymentStatus,
+    fields.max_active_claims_per_agent ?? null, expiry.expiresAt,
   );
   if (bounty) {
     await logPaymentEvent(db, taskId, 'bounty_declared', { amount_atomic: bounty.amount, token: bounty.token, network: bounty.network }, now);
   }
   await recordFunnel(db, 'task_posted', taskId, 'human');
+  await captureServerEvent(c, 'task_created', {
+    has_bounty: !!bounty, escrow: false, category: fields.category ?? null,
+    output_format: fields.output_format, bounty_network: bounty?.network ?? null,
+  });
   const bountyOut = bountyView({ bounty_amount: bounty?.amount ?? null, bounty_token: bounty?.token ?? null, bounty_network: bounty?.network ?? null });
   await notifyMatchingAgents(db, {
     task_id: taskId, title: fields.title, description: fields.description, category: fields.category ?? null,
     required_capabilities: reqCaps, output_format: fields.output_format, bounty: bountyOut,
   }, null);
-  const response: Record<string, unknown> = { ok: true, task_id: taskId, status: 'open', payment_status: paymentStatus, escrow: null };
+  const response: Record<string, unknown> = { ok: true, task_id: taskId, status: 'open', payment_status: paymentStatus, escrow: null, expires_at: expiry.expiresAt };
   if (bountyOut) response.bounty = bountyOut;
   return c.json(response);
 });
@@ -287,7 +329,7 @@ app.post('/tasks/:id/fund', ownerSession, async (c) => {
   return c.json(outcome.body, outcome.status);
 });
 
-const StatusQuery = z.enum(['open', 'claimed', 'submitted', 'verified', 'cancelled', 'all']).optional();
+const StatusQuery = z.enum(['open', 'claimed', 'submitted', 'verified', 'cancelled', 'expired', 'all']).optional();
 
 /** GET /v1/owner/tasks?status= — my tasks, newest first, with the latest receipt and claimer name. */
 app.get('/tasks', ownerSession, async (c) => {
@@ -354,11 +396,20 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
   const json = await readJson(c);
   if (!json.ok) return err(c, 400, 'bad_request', 'invalid JSON body');
   const parsed = AcceptSchema.safeParse(json.body);
-  if (!parsed.success) return err(c, 400, 'bad_request', 'validation failed');
+  if (!parsed.success) return err(c, 400, 'bad_request', isRatingIssue(parsed.error) ? RATING_RULE_MESSAGE : 'validation failed');
   const mine = await loadMine(c, db, ownerId, taskId);
   if ('res' in mine) return mine.res;
   const task = mine.task;
   const note = parsed.data.note ?? null;
+  const rating = ratingInputOf(parsed.data);
+
+  // Analytics: a fresh acceptance always starts from `submitted` — a task
+  // already `verified` here is an idempotent re-accept (or a payment retry)
+  // and must not count twice. Same rule as the agent route.
+  const wasSubmitted = task.status === 'submitted';
+  const acceptedProps = {
+    has_bounty: !!task.bounty_amount, escrow: !!task.escrow, revision_count: task.revision_count,
+  };
 
   // ─── Escrow task: the deposit is held; accepting releases it to the deliverer.
   // No wallet signature is needed (nothing leaves the buyer's wallet now), so
@@ -368,13 +419,18 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
     if (paymentHeader(c)) return err(c, 400, 'payment_not_expected', 'This task is in escrow: the deposit is released to the deliverer when you accept. Omit the payment header.');
     const cer = await ceremony(c, ownerId, `task.accept:${taskId}:${sha256hex(note ?? '')}`, parsed.data);
     if (!cer.ok) return cer.res;
-    const outcome = await acceptEscrowTask(db, c.env, task, { note, actor, nowIso: new Date().toISOString(), assertionId: cer.assertionId });
+    const nowIso = new Date().toISOString();
+    const outcome = await acceptEscrowTask(db, c.env, task, { note, actor, nowIso, assertionId: cer.assertionId });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
-    return c.json(outcome.body, outcome.status);
+    if (outcome.status !== 200) return c.json(outcome.body, outcome.status);
+    const rated = await settleRatingAfterAccept(db, taskId, rating, nowIso);
+    if (wasSubmitted) await captureServerEvent(c, 'task_accepted', acceptedProps);
+    return c.json({ ...(outcome.body as Record<string, unknown>), ...rated }, 200);
   }
 
   if (task.status === 'verified') {
-    return c.json({ ok: true, task_id: taskId, status: 'verified', accepted_by: task.accepted_by });
+    const rated = await settleRatingAfterAccept(db, taskId, rating, new Date().toISOString());
+    return c.json({ ok: true, task_id: taskId, status: 'verified', accepted_by: task.accepted_by, ...rated });
   }
   if (task.status !== 'submitted') return err(c, 409, 'invalid_state', `Task is ${task.status}; only delivered work can be accepted`, { status: task.status });
 
@@ -400,7 +456,10 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
     }
     const outcome = await acceptBountyTask(db, c.env, task, { note, rawHeader, actor, nowIso, assertionId });
     for (const [k, v] of Object.entries(outcome.headers ?? {})) c.header(k, v);
-    return c.json(outcome.body, outcome.status);
+    if (outcome.status !== 200) return c.json(outcome.body, outcome.status);
+    const rated = await settleRatingAfterAccept(db, taskId, rating, nowIso);
+    if (wasSubmitted) await captureServerEvent(c, 'task_accepted', acceptedProps);
+    return c.json({ ...(outcome.body as Record<string, unknown>), ...rated }, 200);
   }
 
   const cer = await ceremony(c, ownerId, `task.accept:${taskId}:${sha256hex(note ?? '')}`, parsed.data);
@@ -412,9 +471,11 @@ app.post('/tasks/:id/accept', ownerSession, async (c) => {
   }
   const fresh = (await loadTask(db, taskId)) as TaskRow;
   const side = await afterAccept(db, fresh, { acceptedBy: 'creator', by: actor, nowIso: now, paymentStatus: fresh.payment_status });
+  const rated = await settleRatingAfterAccept(db, taskId, rating, now);
+  await captureServerEvent(c, 'task_accepted', acceptedProps);
   return c.json({
     ok: true, task_id: taskId, status: 'verified', accepted_by: 'creator',
-    chain_sequence: side.chain?.sequence ?? null, chain_entry_hash: side.chain?.entry_hash ?? null,
+    chain_sequence: side.chain?.sequence ?? null, chain_entry_hash: side.chain?.entry_hash ?? null, ...rated,
   });
 });
 
@@ -442,6 +503,9 @@ app.post('/tasks/:id/revision', ownerSession, async (c) => {
   const revisionCount = task.revision_count + 1;
   if (task.claimed_by_agent_id) await recordEvent(db, task.claimed_by_agent_id, { type: 'task.revision_requested', agent_id: task.claimed_by_agent_id, task_id: taskId, note: parsed.data.note, revision_count: revisionCount }, now);
   await recordFunnel(db, 'task_revision_requested', taskId, null);
+  await captureServerEvent(c, 'task_revision_requested', {
+    revision_count: revisionCount, has_bounty: !!task.bounty_amount,
+  });
   return c.json({ ok: true, task_id: taskId, status: 'claimed', review_state: 'revision_requested', revision_count: revisionCount });
 });
 
@@ -453,7 +517,7 @@ app.post('/tasks/:id/dispute', ownerSession, async (c) => {
   const json = await readJson(c);
   if (!json.ok) return err(c, 400, 'bad_request', 'invalid JSON body');
   const parsed = DisputeSchema.safeParse(json.body);
-  if (!parsed.success) return err(c, 400, 'bad_request', 'A reason is required to dispute delivered work');
+  if (!parsed.success) return err(c, 400, 'bad_request', isRatingIssue(parsed.error) ? RATING_RULE_MESSAGE : 'A reason is required to dispute delivered work');
   const mine = await loadMine(c, db, ownerId, taskId);
   if ('res' in mine) return mine.res;
   const task = mine.task;
@@ -464,12 +528,23 @@ app.post('/tasks/:id/dispute', ownerSession, async (c) => {
   if (!cer.ok) return cer.res;
 
   const now = new Date().toISOString();
-  if (!(await disputeGate(db, taskId, parsed.data.reason, now))) return err(c, 409, 'conflict', 'Task changed while you were reviewing it');
+  const rating = ratingInputOf(parsed.data);
+  if (!(await disputeGate(db, taskId, parsed.data.reason, now, undefined, rating))) return err(c, 409, 'conflict', 'Task changed while you were reviewing it');
   if (cer.assertionId) await db.run('UPDATE tasks SET review_assertion_id = ? WHERE task_id = ?', cer.assertionId, taskId);
   await logPaymentEvent(db, taskId, 'disputed', { reason: parsed.data.reason, disputed_by: 'owner', payment_status: task.payment_status }, now);
   if (task.claimed_by_agent_id) await recordEvent(db, task.claimed_by_agent_id, { type: 'task.disputed', agent_id: task.claimed_by_agent_id, task_id: taskId, reason: parsed.data.reason }, now);
   await recordFunnel(db, 'task_disputed', taskId, null);
-  return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now });
+  // Same accountability as the agent-route dispute: a disputed BOUNTY
+  // deliverable slashes the worker's claim bond, once per task.
+  let bondSlashed = '0';
+  if (task.claimed_by_agent_id && task.bounty_amount && Number(task.bounty_amount) > 0) {
+    bondSlashed = await slashBondForDisputedClaim(db, c.env, task.claimed_by_agent_id, taskId, now);
+  }
+  await captureServerEvent(c, 'task_disputed', {
+    has_bounty: !!task.bounty_amount, escrow: !!task.escrow,
+    revision_count: task.revision_count, bond_slashed: bondSlashed !== '0',
+  });
+  return c.json({ ok: true, task_id: taskId, status: 'submitted', review_state: 'disputed', disputed_at: now, bond_slashed_atomic: bondSlashed, ...(rating ? { rating: rating.rating } : {}) });
 });
 
 /** POST /v1/owner/tasks/:id/cancel — cancel (T8; delivered work only after a dispute). */
@@ -508,6 +583,10 @@ app.post('/tasks/:id/cancel', ownerSession, async (c) => {
   }
   if (task.disputed_at && task.claimed_by_agent_id) await recomputeReputation(db, task.claimed_by_agent_id);
   await recordFunnel(db, 'task_cancelled', taskId, null);
+  await captureServerEvent(c, 'task_cancelled', {
+    status_before: task.status, has_bounty: !!task.bounty_amount,
+    escrow: !!task.escrow, was_disputed: !!task.disputed_at,
+  });
   const after = await loadTask(db, taskId);
   const body: Record<string, unknown> = { ok: true, task_id: taskId, status: 'cancelled', payment_status: after?.payment_status ?? task.payment_status };
   if (after?.escrow) {
@@ -548,6 +627,7 @@ app.post('/tasks/:id/publish', ownerSession, async (c) => {
   const publishedAt = parsed.data.publish ? new Date().toISOString() : null;
   await db.run('UPDATE submissions SET published_at = ? WHERE submission_id = ?', publishedAt, submission.submission_id);
   await recordFunnel(db, parsed.data.publish ? 'task_delivery_published' : 'task_delivery_unpublished', taskId, null);
+  await captureServerEvent(c, parsed.data.publish ? 'task_submission_published' : 'task_submission_unpublished');
   return c.json({ ok: true, task_id: taskId, submission_public: parsed.data.publish, published_at: publishedAt });
 });
 

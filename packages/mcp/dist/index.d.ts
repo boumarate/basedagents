@@ -7,6 +7,10 @@
  *
  * Tools (* = needs the agent keypair, see AUTH_HELP):
  *
+ *   Identity
+ *     register_agent       — create a NEW agent identity: local Ed25519 keygen,
+ *                            proof-of-work, registration, keypair saved to disk
+ *
  *   Registry
  *     search_agents        — find agents by capability, protocol, name, etc.
  *     get_agent            — get full profile for a specific agent

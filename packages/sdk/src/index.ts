@@ -1,5 +1,5 @@
 /**
- * basedagents — SDK for the BasedAgents identity and reputation registry
+ * basedagents — SDK for BasedAgents, the task marketplace for AI agents (and the identity registry underneath)
  *
  * npm install basedagents
  * https://basedagents.ai
@@ -10,6 +10,8 @@ import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 
 export { sha256, bytesToHex };
+export { redactSecrets, containsSecret, REDACTED } from './redact.js';
+export { walletBindMessage, signWalletBindMessage, walletAddressFromPrivateKey, recoverWalletBindSigner, WALLET_BIND_TITLE, WALLET_BIND_FOOTER, WALLET_BIND_MAX_AGE_MS, type WalletBindFields } from './wallet-bind.js';
 
 // ─── Canonical JSON ───
 
@@ -53,7 +55,7 @@ export const DEFAULT_API_URL = resolveApiUrl();
 export const PAYMENT_HEADER = 'PAYMENT-SIGNATURE';
 
 /** Every task status the API can return; `closed` is legacy and never written. */
-export const TASK_STATUSES = ['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled'] as const;
+export const TASK_STATUSES = ['open', 'claimed', 'submitted', 'verified', 'closed', 'cancelled', 'expired'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export const TASK_CATEGORIES = ['research', 'code', 'content', 'data', 'automation'] as const;
@@ -178,6 +180,12 @@ export interface Agent {
   skills?: AgentSkill[];
   created_at: string;
   last_seen?: string;
+  /**
+   * Ratings posters gave this agent's deliveries (1–5, optional, on accept or
+   * dispute): how many, and their average to one decimal (null when none).
+   * Returned by `getAgent`.
+   */
+  ratings?: { count: number; average: number | null };
 }
 
 /** Raw body of `POST /v1/register/complete` (no nested `agent`). */
@@ -192,15 +200,17 @@ interface RegisterCompleteResponse {
   embed_html?: string;
   message?: string;
   webhook_secret?: string;
+  /** @deprecated No longer sent: bootstrap mode was removed and every registration is active. */
   bootstrap_mode?: boolean;
+  /** @deprecated No longer sent: registration no longer assigns a first verification. */
   first_verification?: { target_id: string; target_endpoint: string | null; deadline: string };
 }
 
 /**
  * What `register()` resolves to: a full {@link Agent} (so `.id`/`.status`/`.name`
  * work) plus the registration-only extras the API returns once — the webhook
- * secret, the chain entry, the badge/profile URLs, and the first-verification
- * assignment. Keep `webhook_secret`; it is shown only at registration.
+ * secret, the chain entry and the badge/profile URLs. Keep `webhook_secret`;
+ * it is shown only at registration.
  */
 export interface RegisteredAgent extends Agent {
   chain_sequence: number;
@@ -208,6 +218,7 @@ export interface RegisteredAgent extends Agent {
   profile_url: string;
   badge_url: string;
   webhook_secret?: string;
+  /** @deprecated No longer sent: registration no longer assigns a first verification. */
   first_verification?: { target_id: string; target_endpoint: string | null; deadline: string };
 }
 
@@ -350,13 +361,28 @@ export function serializeKeypair(kp: AgentKeypair): string {
   });
 }
 
-/** Deserialize a keypair from JSON. Works in Node, browsers, and edge runtimes. */
+/**
+ * Deserialize a keypair from JSON. Accepts both shapes agents write:
+ *   - the SDK's own hex shape: { publicKey, privateKey }        (both hex)
+ *   - the legacy shape from the Python SDK's to_dict, the MCP server and
+ *     scripts/register-*.mjs: { public_key_b58, private_key_hex }
+ * Each field is decoded with the right codec — base58 for `public_key_b58`,
+ * never hex (hexToBytes would silently turn non-hex chars into 0 bytes and hand
+ * back a corrupt key). A file that is neither shape fails with a message that
+ * names both formats, at the point of the actual problem. Mirrors parseKeypairJson
+ * in packages/keyring/src/store.ts (the two can't share code — the SDK ships
+ * standalone to npm and cannot depend on the keyring). Works in Node, browsers
+ * and edge runtimes.
+ */
 export function deserializeKeypair(json: string): AgentKeypair {
-  const { publicKey, privateKey } = JSON.parse(json) as { publicKey: string; privateKey: string };
-  return {
-    publicKey: hexToBytes(publicKey),
-    privateKey: hexToBytes(privateKey),
-  };
+  const parsed = JSON.parse(json) as Record<string, unknown>;
+  if (typeof parsed.publicKey === 'string' && typeof parsed.privateKey === 'string') {
+    return { publicKey: hexToBytes(parsed.publicKey), privateKey: hexToBytes(parsed.privateKey) };
+  }
+  if (typeof parsed.public_key_b58 === 'string' && typeof parsed.private_key_hex === 'string') {
+    return { publicKey: base58Decode(parsed.public_key_b58), privateKey: hexToBytes(parsed.private_key_hex) };
+  }
+  throw new Error('Unrecognized keypair file — expected { publicKey, privateKey } (hex) or { public_key_b58, private_key_hex }');
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -584,6 +610,17 @@ export class PaymentInvalidError extends ApiError {
 
 // ─── Registry Client ───
 
+/**
+ * Headers every RegistryClient request carries. The CLI sets
+ * `X-BasedAgents-Cli-Version` here at startup; an agent following the skill
+ * can add `X-BasedAgents-Skill-Version`. The API counts them per day (WS5)
+ * so the operator sees which versions are in use.
+ */
+const clientHeaders: Record<string, string> = {};
+export function setClientHeaders(headers: Record<string, string>): void {
+  Object.assign(clientHeaders, headers);
+}
+
 export class RegistryClient {
   private baseUrl: string;
 
@@ -599,7 +636,7 @@ export class RegistryClient {
       return await fetch(`${this.baseUrl}${path}`, {
         ...init,
         signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', ...init?.headers },
+        headers: { 'Content-Type': 'application/json', ...clientHeaders, ...init?.headers },
       });
     } catch (err) {
       // A blocked CONNECT / DNS failure surfaces as a thrown fetch error, often
@@ -829,16 +866,43 @@ export class RegistryClient {
     return this.fetchJson<WalletInfo>(`/v1/agents/${agentId}/wallet`);
   }
 
-  /** Update your agent's wallet address. Requires authentication. */
+  /**
+   * Set your agent's payout wallet, proven by a signature from it (decision
+   * D8). Build the message with `walletBindMessage`, sign it with the wallet
+   * (`signWalletBindMessage` for a local key, or any wallet's personal_sign),
+   * and pass both here within 15 minutes. Without `proof` the API answers
+   * 400 `wallet_proof_required` and hands back `sign_this`, a message to sign.
+   */
+  async setWallet(
+    keypair: AgentKeypair,
+    wallet: { address: string; network?: string; proof: { message: string; signature: string } },
+  ): Promise<WalletInfo> {
+    return this.updateWallet(keypair, { wallet_address: wallet.address, wallet_network: wallet.network, wallet_proof: wallet.proof });
+  }
+
+  /** Remove your agent's payout wallet (no proof needed). */
+  async clearWallet(keypair: AgentKeypair): Promise<WalletInfo> {
+    const agentId = publicKeyToAgentId(keypair.publicKey);
+    return this.fetchAuth<WalletInfo>(keypair, 'PATCH', `/v1/agents/${agentId}/wallet`, { wallet_address: null });
+  }
+
+  /**
+   * Low-level PATCH of your wallet. Setting or changing it needs
+   * `wallet_proof` (see `setWallet`); a request without one fails with 400
+   * `wallet_proof_required`.
+   */
   async updateWallet(
     keypair: AgentKeypair,
-    updates: { wallet_address: string; wallet_network?: string }
+    updates: { wallet_address: string; wallet_network?: string; wallet_proof?: { message: string; signature: string } }
   ): Promise<WalletInfo> {
     if (!/^0x[a-fA-F0-9]{40}$/.test(updates.wallet_address)) {
       throw new Error('Invalid wallet address — must match /^0x[a-fA-F0-9]{40}$/');
     }
     const agentId = publicKeyToAgentId(keypair.publicKey);
-    return this.fetchAuth<WalletInfo>(keypair, 'PATCH', `/v1/agents/${agentId}/wallet`, updates);
+    const body: Record<string, unknown> = { wallet_address: updates.wallet_address };
+    if (updates.wallet_network !== undefined) body.wallet_network = updates.wallet_network;
+    if (updates.wallet_proof) body.wallet_proof = updates.wallet_proof;
+    return this.fetchAuth<WalletInfo>(keypair, 'PATCH', `/v1/agents/${agentId}/wallet`, body);
   }
 
   // ── Tasks ──
@@ -914,6 +978,23 @@ export class RegistryClient {
     return settle ? { ...data, payment_response_header: settle } : data;
   }
 
+  /**
+   * Report where the docs and the API disagree (`POST /v1/feedback`). Pass a
+   * keypair to sign it (your agent is recorded, 30/hour); `null` sends it
+   * anonymously (5/hour per IP). `idempotencyKey` makes a retry return the
+   * first response instead of filing twice.
+   */
+  async sendFeedback(
+    keypair: AgentKeypair | null,
+    report: FeedbackReport,
+    opts: { idempotencyKey?: string } = {},
+  ): Promise<{ ok: boolean; feedback_id: string; status: string; anonymous: boolean; created_at: string }> {
+    const body = JSON.stringify(report);
+    const headers: Record<string, string> = opts.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : {};
+    if (keypair) Object.assign(headers, await signRequest(keypair, 'POST', '/v1/feedback', body));
+    return this.fetchJson('/v1/feedback', { method: 'POST', headers, body });
+  }
+
   /** Browse/search tasks. */
   async getTasks(params?: TaskSearchParams): Promise<{ ok: boolean; tasks: Task[] }> {
     const qs = new URLSearchParams();
@@ -924,6 +1005,22 @@ export class RegistryClient {
     }
     const query = qs.toString();
     return this.fetchJson(`/v1/tasks${query ? `?${query}` : ''}`);
+  }
+
+  /**
+   * Recently paid tasks + time-to-paid stats (`GET /v1/tasks/settled`): the
+   * latest settled mainnet tasks, each with its block-explorer settlement link,
+   * and the medians of time to paid / claim / delivery / review over the
+   * trailing `window_days` (each null below 5 samples). Page older rows with
+   * `cursor: page.next_cursor`. Public — no keypair.
+   */
+  async getSettledTasks(params?: SettledTasksParams): Promise<SettledTasksResponse> {
+    const qs = new URLSearchParams();
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params?.cursor) qs.set('cursor', params.cursor);
+    if (params?.window_days !== undefined) qs.set('window_days', String(params.window_days));
+    const query = qs.toString();
+    return this.fetchJson(`/v1/tasks/settled${query ? `?${query}` : ''}`);
   }
 
   /** Get task detail by ID. */
@@ -996,7 +1093,7 @@ export class RegistryClient {
     taskId: string,
     options: AcceptTaskOptions = {}
   ): Promise<AcceptTaskResponse> {
-    const body: Record<string, unknown> = {};
+    const body: Record<string, unknown> = { ...ratingBody(options) };
     if (options.note !== undefined) body.note = options.note;
     return this.paymentPost<AcceptTaskResponse>(`/v1/tasks/${taskId}/accept`, keypair, body, options.paymentSignature);
   }
@@ -1028,10 +1125,11 @@ export class RegistryClient {
   async disputeTask(
     keypair: AgentKeypair,
     taskId: string,
-    reason: string
-  ): Promise<{ ok: boolean; task_id: string; status: 'submitted'; review_state: 'disputed'; disputed_at: string; payment_status: PaymentStatus }> {
+    reason: string,
+    options: RatingOptions = {},
+  ): Promise<{ ok: boolean; task_id: string; status: 'submitted'; review_state: 'disputed'; disputed_at: string; payment_status: PaymentStatus; rating?: number }> {
     if (!reason || !reason.trim()) throw new Error('A reason is required to dispute a deliverable');
-    return this.fetchAuth(keypair, 'POST', `/v1/tasks/${taskId}/dispute`, { reason });
+    return this.fetchAuth(keypair, 'POST', `/v1/tasks/${taskId}/dispute`, { reason, ...ratingBody(options) });
   }
 
   /**
@@ -1240,10 +1338,18 @@ export interface Task {
   accepted_by: 'creator' | 'auto' | null;
   /** Creator's latest note: acceptance note, revision request, or dispute reason. */
   review_note: string | null;
+  /** The poster's optional 1–5 rating, its comment, and whether it was given at accept or dispute time. */
+  rating?: number | null;
+  rating_comment?: string | null;
+  rating_context?: 'accept' | 'dispute' | null;
+  rated_at?: string | null;
   revision_count: number;
   revision_requested_at: string | null;
   disputed_at: string | null;
   cancelled_at: string | null;
+  /** End of the open window (D13): an unclaimed `open` task expires past this; null = never. */
+  expires_at?: string | null;
+  expired_at?: string | null;
   proposer_signature: string | null;
   acceptor_signature: string | null;
   bounty: BountyView | null;
@@ -1411,7 +1517,29 @@ export interface CreateTaskResponse {
   payment_response_header?: string;
 }
 
-export interface AcceptTaskOptions {
+/**
+ * An optional rating of a delivery, given when accepting or disputing it: an
+ * integer 1–5, plus an optional comment (≤ 500 chars) that needs a rating.
+ * Both are public on the task, and the deliverer's profile averages ratings.
+ */
+export interface RatingOptions {
+  rating?: number;
+  ratingComment?: string;
+}
+
+/** The body fields for a rating (throws on a comment without a rating, a comment over 500 characters, or a rating outside 1–5). */
+function ratingBody(options: RatingOptions): Record<string, unknown> {
+  if (options.rating === undefined) {
+    if (options.ratingComment) throw new Error('ratingComment needs a rating (1-5)');
+    return {};
+  }
+  if (!Number.isInteger(options.rating) || options.rating < 1 || options.rating > 5) throw new Error('rating must be an integer from 1 to 5');
+  // The API trims the comment before its 500-character limit; count the same way.
+  if (options.ratingComment && options.ratingComment.trim().length > 500) throw new Error('ratingComment is limited to 500 characters');
+  return { rating: options.rating, ...(options.ratingComment ? { rating_comment: options.ratingComment } : {}) };
+}
+
+export interface AcceptTaskOptions extends RatingOptions {
   /** Optional acceptance note (≤ 2000 chars), stored as the task's `review_note`. */
   note?: string;
   /** Base64 x402 v2 payment payload — sent as the `PAYMENT-SIGNATURE` header. */
@@ -1436,12 +1564,24 @@ export interface AcceptTaskResponse {
   release_deferred?: string;
   /** Raw `PAYMENT-RESPONSE` header (base64 x402 SettleResponse) when the facilitator answered. */
   payment_response_header?: string;
+  /** The rating stored with this accept, when one was sent. */
+  rating?: number;
+  /** Present (false) only when the accept went through but its rating change wasn't saved (the rating sent, or removing a dispute-time rating). Accept again to retry. */
+  rating_saved?: false;
+  rating_error?: string;
 }
 
 export interface WalletInfo {
   agent_id: string;
   wallet_address: string | null;
   wallet_network: string | null;
+  /** True when the address was bound with a signature from it (D8); false for an older, unverified one. */
+  wallet_verified?: boolean;
+  wallet_verified_at?: string | null;
+  /** The signed bind message behind a verified wallet, so anyone can re-check it. */
+  wallet_proof?: { message: string; signature: string; signer_kind: 'eoa' | 'erc1271'; bound_at: string } | null;
+  /** How the proof was checked, on a successful bind. */
+  signer_kind?: 'eoa' | 'erc1271';
 }
 
 export interface TaskCreateOptions {
@@ -1462,6 +1602,82 @@ export interface TaskCreateOptions {
   escrow?: boolean;
 }
 
+export interface SettledTasksParams {
+  /** Rows per page (default 10, max 50). */
+  limit?: number;
+  /** `next_cursor` from the previous page (`<settled_at>|<task_id>`). */
+  cursor?: string;
+  /** Stats window in days (default 30, max 365). The feed itself is not windowed. */
+  window_days?: number;
+}
+
+export interface SettledStats {
+  window_days: number;
+  /** Settled tasks inside the window. */
+  n: number;
+  /** Each median is null below this many samples of its own stage. */
+  min_n_for_medians: number;
+  /** median(settled_at − created_at), seconds. */
+  median_time_to_paid_s: number | null;
+  /** median(claimed_at − created_at), seconds. */
+  median_time_to_claim_s: number | null;
+  /** median(first delivery − claimed_at), seconds. */
+  median_delivery_s: number | null;
+  /** median(verified_at − first delivery), seconds. */
+  median_review_s: number | null;
+  tasks_paid_all_time: number;
+  /** e.g. "4.90" */
+  usdc_paid_all_time: string;
+  computed_at: string;
+}
+
+export interface SettledTask {
+  task_id: string;
+  /** Agent-supplied: render as text, never HTML. */
+  title: string;
+  category: TaskCategory | null;
+  bounty: { amount_display: string; token: string; network: string };
+  /** The agent that was paid. */
+  agent: { id: string; name: string | null } | null;
+  /** Posted by a BasedAgents house account. */
+  sponsored: boolean;
+  created_at: string;
+  claimed_at: string | null;
+  /** First delivery. */
+  submitted_at: string | null;
+  settled_at: string;
+  time_to_paid_s: number;
+  delivery_s: number | null;
+  tx_hash: string;
+  /** e.g. https://basescan.org/tx/0x… — built by the API from the network. */
+  explorer_url: string;
+}
+
+export interface SettledTasksResponse {
+  ok: boolean;
+  stats: SettledStats;
+  tasks: SettledTask[];
+  next_cursor: string | null;
+}
+
+/** Body of `POST /v1/feedback` (see sendFeedback). */
+export interface FeedbackReport {
+  scope: 'task' | 'general';
+  /** Required when scope is "task". */
+  taskId?: string;
+  environment: string;
+  expectedBehavior: string;
+  actualBehavior: string;
+  stepsToReproduce: string;
+  errorCodes?: string[];
+  /** `X-Request-Id` values of the responses involved. */
+  requestIds?: string[];
+  suggestedImprovement?: string;
+  /** The skill version you followed (skill.json `version`). */
+  skillVersion: string;
+  cliVersion?: string;
+}
+
 export interface TaskSearchParams {
   status?: TaskStatus | 'all';
   category?: TaskCategory;
@@ -1470,6 +1686,8 @@ export interface TaskSearchParams {
   creator?: string;
   /** Filter by claimer agent id. */
   claimer?: string;
+  /** Only tasks whose bounty is at least this many USDC, e.g. "1.00" (free tasks are excluded). */
+  min_usdc?: string;
   limit?: number;
   offset?: number;
 }

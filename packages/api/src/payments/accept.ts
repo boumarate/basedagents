@@ -11,6 +11,7 @@
  */
 import type { DBAdapter } from '../db/adapter.js';
 import type { Bindings } from '../types/index.js';
+import { allowedBountyNetworks } from '../types/index.js';
 import type { Actor, TaskRow } from '../tasks/service.js';
 import { afterAccept, loadTask, logPaymentEvent, bountyView } from '../tasks/service.js';
 import { paymentProviderFor } from './index.js';
@@ -67,6 +68,11 @@ export async function acceptBountyTask(
   if (!isNetwork(task.bounty_network)) {
     // A pre-0035 row declared on a network the facilitator does not support.
     return { status: 409, body: { error: 'bounty_unsupported_network', message: `This bounty is on ${task.bounty_network}, which cannot be settled; cancel the task or contact support.`, network: task.bounty_network } };
+  }
+  // Defense-in-depth: never move money on a network this environment disallows
+  // (prod pays mainnet USDC only). Blocks paying a legacy/testnet bounty in prod.
+  if (!allowedBountyNetworks(env).includes(task.bounty_network)) {
+    return { status: 409, body: { error: 'bounty_network_not_allowed', message: `This bounty is on ${task.bounty_network}, which is not settled in this environment.`, network: task.bounty_network } };
   }
   const provider = paymentProviderFor(env);
   const wallet = await delivererWallet(db, task.claimed_by_agent_id);

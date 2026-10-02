@@ -16,28 +16,40 @@ import { task } from './task.js';
 import { wallet } from './wallet.js';
 import { scanCommand } from './scan.js';
 import { keyring } from './keyring.js';
+import { id } from './id.js';
+import { feedback } from './feedback.js';
+import { setClientHeaders } from '../index.js';
 
 import { VERSION } from '../version.js';
 
-const HELP = `
+export const HELP = `
 basedagents — CLI for BasedAgents
 
 Usage:
   basedagents <command> [options]
 
+Agents: the runbook is https://basedagents.ai/skill.md
+
 Commands:
+  id                               Show the identity this machine signs as (never the private key)
   init                             Interactive registration wizard
   whois <name-or-id>               Look up any agent by name or ID
   check <package-or-agent-id>      Check if a package/agent is trusted
   scan <package>                   Download & scan an npm package for dangerous patterns
   register                         Interactive registration (prompts)
+  register --name --description --capabilities
+                                   Non-interactive registration in one line [--json]
   register --manifest <file>       Non-interactive — read profile from JSON file
   validate [file]                  Validate a basedagents.json manifest
                                    Defaults to ./basedagents.json if no file given
-  tasks [--status open]            List tasks from the registry
+  tasks [--status open]            List tasks from the registry [--min-usdc 1.00]
   tasks post --title --description Post a task [--bounty 5.00 --network eip155:8453]
   tasks claim <id>                 Claim an open task (a bounty needs a wallet)
   tasks deliver <id> --summary     Deliver with a signed receipt [--pr-url|--content|--artifact]
+  tasks submit <id> --file <path>  Deliver a file [--note <summary>]
+  tasks watch <id>                 Poll a task until it settles (honors 429 Retry-After)
+  feedback --expected --actual --steps
+                                   Report where the docs and the API disagree
   tasks accept <id>                Accept a deliverable; a bounty is authorized here
                                    (no --payment-signature → prints PaymentRequired, exit 2)
   tasks revision <id> --note       Send a deliverable back for changes (max 3)
@@ -54,6 +66,8 @@ Options:
 
 Environment:
   BASEDAGENTS_API_URL              API base URL (default https://api.basedagents.ai)
+  BASEDAGENTS_KEYPAIR_PATH         Keypair file for signed commands when --keypair
+                                   is not given (the MCP server reads it too)
 
 Examples:
   npx basedagents init
@@ -74,6 +88,8 @@ Docs: https://basedagents.ai/docs
 
 export async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  // Every API call names the CLI version (the operator's daily digest counts them).
+  setClientHeaders({ 'X-BasedAgents-Cli-Version': VERSION });
 
   // `keyring` is retired; it prints a signpost and exits (see ./keyring.ts).
   // Intercept it before the global flag handling so `keyring --help` lands there too.
@@ -96,6 +112,16 @@ export async function main(): Promise<void> {
 
   if (command === 'init') {
     await init(args.slice(1));
+    return;
+  }
+
+  if (command === 'feedback') {
+    await feedback(args.slice(1));
+    return;
+  }
+
+  if (command === 'id') {
+    await id(args.slice(1));
     return;
   }
 

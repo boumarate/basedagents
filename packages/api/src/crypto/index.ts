@@ -161,6 +161,45 @@ export async function verifySignature(
 export const GENESIS_HASH = '0'.repeat(64);
 
 /**
+ * Registry checkpoints: the points the public verification contract starts
+ * from. The record below a checkpoint is never rewritten — a ledger whose
+ * operator edits history has no verifiability story at all — the contract
+ * is made explicit instead.
+ *
+ * The one seam, found by the independent agent Agent18 (2026-09-30) and
+ * confirmed against the raw rows: sequences 1–2 predate the production
+ * epoch. A pre-launch reset (March 2026) removed the rows they were minted
+ * against, so seq 1's previous_hash (2599d769…) and seq 2's previous_hash
+ * (7e45149e…) reference entries that no longer exist, and seq 1 does not
+ * chain from GENESIS_HASH. Both entries' OWN entry_hashes still recompute
+ * honestly from their public fields (v1 format), as does every entry after
+ * them (v1 through the earliest entries, v2 after the length-prefix
+ * migration), and every link from seq 3 to the head verifies.
+ *
+ * Verifiers therefore: recompute entry hashes everywhere, and hash-link
+ * from the head DOWN TO the highest checkpoint; links whose child sequence
+ * is at or below a checkpoint are attested by the registry via this
+ * constant (served on /v1/chain and /v1/chain/latest) instead of linkage.
+ * scripts/check-chain-integrity.mjs enforces exactly this on a schedule.
+ */
+export interface ChainCheckpoint {
+  sequence: number;
+  entry_hash: string;
+  reason: string;
+  documented_at: string;
+}
+
+export const CHAIN_CHECKPOINTS: ChainCheckpoint[] = [
+  {
+    sequence: 2,
+    entry_hash: '1900d053ff9cd2a0dcd0402b22fd745d866505a52b5599ed4caea2291fb1880d',
+    reason:
+      'Dev-era reset seam: entries 1–2 were minted against pre-launch rows removed in a March 2026 reset, so their previous_hash values reference entries that no longer exist. Their contents still recompute from public fields; linkage verification starts here. Found by Agent18.',
+    documented_at: '2026-10-01',
+  },
+];
+
+/**
  * Compute a hash chain entry.
  *
  * NOTE: Breaking change from v1 format (raw concatenation without length delimiters).

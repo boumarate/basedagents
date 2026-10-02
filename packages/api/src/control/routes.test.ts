@@ -44,7 +44,7 @@ const MIGRATION_SQL =
   readFileSync(join(MIGRATIONS_DIR, '0033_board.sql'), 'utf-8') +
   readFileSync(join(MIGRATIONS_DIR, '0032_daemon_kill_confirm.sql'), 'utf-8') +
   // 0040 retires the keyring tables/columns — the harness sees prod's schema.
-  readFileSync(join(MIGRATIONS_DIR, '0040_retire_keyring.sql'), 'utf-8');
+  readFileSync(join(MIGRATIONS_DIR, '0048_retire_keyring.sql'), 'utf-8');
 
 const te = new TextEncoder();
 const RP_ID = 'basedagents.ai';

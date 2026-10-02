@@ -46,7 +46,7 @@ function TaskCard({ task }: { task: OwnerTask }) {
           <code className="muted" title={task.task_id}>{task.task_id}</code>
         </div>
         {task.latest_receipt && (
-          <p className="card-note">
+          <p className="card-note card-clamp">
             Delivered {fmtDate(task.latest_receipt.completed_at)}: {task.latest_receipt.summary}
           </p>
         )}

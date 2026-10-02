@@ -1,0 +1,30 @@
+name: Prod drift check
+
+# Daily: does the live basedagents.ai still say what positioning.ts says?
+# The same check runs after every production deploy (ci.yml); this catches
+# drift that no deploy caused — a rollback, a re-bound custom domain, a stale
+# edge. A red run notifies the repo owner.
+on:
+  schedule:
+    - cron: '17 7 * * *' # daily 07:17 UTC
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prod drift check
+        env:
+          CANARY_BYPASS: ${{ secrets.CANARY_BYPASS_SECRET }}
+        run: node scripts/check-prod-drift.mjs --retries 2 --delay 60
+      - name: Front-door check (skill + descriptor on all three hosts)
+        env:
+          CANARY_BYPASS: ${{ secrets.CANARY_BYPASS_SECRET }}
+        run: node scripts/check-front-door.mjs --site https://basedagents.ai --api https://api.basedagents.ai --console https://app.basedagents.ai --retries 2 --delay 60
+      - name: Chain integrity (recompute every entry, link-verify above the checkpoint)
+        run: node scripts/check-chain-integrity.mjs --api https://api.basedagents.ai --retries 2 --delay 60
