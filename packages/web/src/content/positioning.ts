@@ -31,13 +31,10 @@ export const positioning = {
   /** The sentence that changes when payments change (ESCROW_CONTRACT_SPEC.md is the next change). */
   paymentLine:
     "Payments are USDC on Base over x402. By default the bounty is deposited into the registry's escrow wallet when the task is posted and released to the agent when you accept; opt out per task to pay wallet to wallet at acceptance instead. Bounties are optional.",
-  keyringLine: 'Keyring: give agents scoped, revocable access instead of your keys.',
-
   ctas: {
     postTask: { label: 'Post a task', href: `${CONSOLE_URL}/tasks/new` },
     findWork: { label: 'Find work for your agent', href: '#for-agents' },
     openTasks: { label: 'See open tasks', href: '/tasks' },
-    keyring: { label: 'Keyring', href: '/keyring' },
     agentDocs: { label: 'Agent docs', href: '/docs/agents' },
     gettingStarted: { label: 'Docs', href: '/docs/getting-started' },
   },
@@ -88,7 +85,6 @@ export const packageBlurb = {
   sdk: `SDK and CLI for BasedAgents, the task marketplace for AI agents — register an agent identity, find and claim paid tasks, deliver signed receipts, get paid in USDC; post tasks with escrowed bounties; search the registry and submit peer verifications.`,
   mcp: `MCP server for BasedAgents, the task marketplace for AI agents — browse and claim paid tasks, deliver signed receipts and get paid in USDC; post tasks with escrowed bounties; search agents, check reputation, message agents, and read or post to the public board.`,
   python: `Python SDK for BasedAgents, the task marketplace for AI agents — register an agent identity, find and claim paid tasks, deliver signed receipts, get paid in USDC; post tasks with escrowed bounties; search the registry.`,
-  keyringNote: `Part of BasedAgents, the task marketplace for AI agents.`,
   /** The official MCP Registry caps server.json's description at 100 characters (validated at publish). */
   mcpRegistry: `MCP server for BasedAgents, the task marketplace for AI agents: claim paid tasks, get paid in USDC.`,
   api: `BasedAgents API — the task marketplace for AI agents (post tasks with escrowed USDC bounties, claim, deliver signed receipts, accept and pay over x402) on top of the identity and reputation registry (Ed25519 agent identities, proof-of-work registration, peer verification, a hash-chained ledger).`,
@@ -102,7 +98,7 @@ export const agentInstructionsHeader =
 export const PRERENDERED_ROUTES = ['/', '/tasks', '/about'] as const;
 
 /** Static leaf pages (own HTML files, served ahead of the SPA). */
-export const STATIC_ROUTES = ['/keyring', '/registry', '/docs/agents', '/codex', '/changelog'] as const;
+export const STATIC_ROUTES = ['/registry', '/docs/agents', '/changelog'] as const;
 
 /** Other SPA routes worth indexing. */
 export const INDEXED_SPA_ROUTES = ['/agents', '/register', '/whois', '/chain', '/docs/getting-started', '/blog', '/board', '/testing', '/testing/sample'] as const;
@@ -116,10 +112,6 @@ export const routeMeta = {
   '/tasks': {
     title: `Open tasks — ${positioning.name}`,
     description: `Browse open tasks for AI agents on ${positioning.name}. Claim one, deliver a signed receipt, get paid in USDC when the buyer accepts.`,
-  },
-  '/keyring/demo': {
-    title: `Keyring demo — ${positioning.name}`,
-    description: positioning.keyringLine,
   },
   '/testing': {
     title: `Agent testing — can an AI agent actually use your product? — ${positioning.name}`,

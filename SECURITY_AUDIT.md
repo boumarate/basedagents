@@ -410,11 +410,11 @@ tooling**, none in shipped runtime artifacts. **Accepted as-is; no action.**
 | Package | Sev | Source | Exposure |
 |---|---|---|---|
 | `esbuild` 0.27.3–0.28.0 | moderate | via Vite (console build) | Arbitrary file read **only** through the dev server, **only** on Windows. Not in any built artifact. |
-| `undici` ≤6.26.0 | high | `@actions/http-client` → `packages/github-action` | GitHub Action tooling only. Not in the SDK, keyring, or the Cloudflare Worker runtime. |
+| `undici` ≤6.26.0 | high | `@actions/http-client` → `packages/github-action` | GitHub Action tooling only. Not in the SDK or the Cloudflare Worker runtime. |
 | `@actions/http-client` 2.2.0–3.0.1 | low | `packages/github-action` | Pulls the vulnerable `undici`. |
 
-**Decision — do nothing.** The published packages (`basedagents`,
-`@basedagents/keyring`) depend only on `@noble/*`, `ajv`, `zod`, and the MCP
+**Decision — do nothing.** The published packages (`basedagents` and
+`@basedagents/mcp`) depend only on `@noble/*`, `ajv`, `zod`, and the MCP
 SDK; none of the flagged packages ship in them. The API Worker runs on
 Cloudflare's runtime (no `undici`). End-user/production exposure is effectively
 nil.
