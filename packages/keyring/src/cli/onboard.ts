@@ -102,7 +102,7 @@ function surfaceSweep(): void {
 
 export async function cmdInit(args: string[], dir: string | undefined): Promise<void> {
   const flags = parseFlags(args, {
-    value: ['owner-keypair', 'name', 'api', 'start'],
+    value: ['owner-keypair', 'name', 'api', 'start', 'source', 'campaign', 'acquisition-id'],
     switch: ['bare', 'no-link', 'no-browser', 'no-watch', 'yes'],
   });
   const api = flags.values['api'] ?? DEFAULT_KEYRING_API;
@@ -182,11 +182,29 @@ export async function cmdInit(args: string[], dir: string | undefined): Promise<
   // every way their agent can already act as them, outside Keyring.
   surfaceSweep();
 
+  // Optional acquisition tags (--source pulsemcp --campaign …): carried into
+  // the MCP config below as BASEDAGENTS_ACQUISITION_* env, so where this
+  // onboarding came from survives into the installed configuration. Analytics
+  // only — invalid values are dropped, and the same opt-outs as funnelPing
+  // (BASEDAGENTS_NO_TELEMETRY=1 / BASEDAGENTS_TELEMETRY=off) silence it.
+  const tagOk = telemetryOk && (process.env.BASEDAGENTS_TELEMETRY ?? '').toLowerCase() !== 'off';
+  const acquisitionEnv: string[] = [];
+  if (tagOk) {
+    const label = /^[a-z0-9_-]{1,64}$/;
+    const source = flags.values['source'] ?? '';
+    const campaign = flags.values['campaign'] ?? '';
+    const acqId = flags.values['acquisition-id'] ?? '';
+    if (label.test(source)) acquisitionEnv.push('--env', `BASEDAGENTS_ACQUISITION_SOURCE=${source}`);
+    if (label.test(campaign)) acquisitionEnv.push('--env', `BASEDAGENTS_ACQUISITION_CAMPAIGN=${campaign}`);
+    if (/^acq_[A-Za-z0-9_-]{1,96}$/.test(acqId)) acquisitionEnv.push('--env', `BASEDAGENTS_ACQUISITION_ID=${acqId}`);
+  }
+
   // 3. MCP config for Claude Code (with permission — we never edit config silently).
   const mcpArgs = [
     'mcp', 'add', 'basedagents-keyring',
     '--env', `BASEDAGENTS_KEYPAIR_PATH=${keypairPath}`,
     ...(dir ? ['--env', `BASEDAGENTS_KEYRING_DIR=${kr.store.dir}`] : []),
+    ...acquisitionEnv,
     '--', 'npx', '-y', '@basedagents/keyring', 'mcp',
   ];
   const mcpCommand = `claude ${mcpArgs.map((a) => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')}`;

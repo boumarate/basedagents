@@ -34,6 +34,8 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import type { DBAdapter } from '../db/adapter.js';
 import { OAuthStore, type AccessTokenRow } from './oauth-store.js';
 import { insertOwnerBoardPost } from './board-post.js';
+import { recordAttribution, type AttributionContext } from '../acquisition/capture.js';
+import { ACQUISITION_ID_RE, cleanClientString, cleanLabel, cleanSource } from '../acquisition/constants.js';
 
 // ─── Env shape the MCP Worker (unit 7 / wrangler.mcp.toml §9) supplies ──────────
 // Bindings carry the three literal spec vars; an upstream middleware sets `db`
@@ -44,6 +46,8 @@ export type McpEnv = {
     MCP_RESOURCE_URL?: string;
     MCP_ISSUER?: string;
     API_BASE_URL?: string;
+    /** '0' disables acquisition analytics capture (same dial as the API Worker). */
+    ACQUISITION_ANALYTICS?: string;
   };
   Variables: {
     db: DBAdapter;
@@ -52,8 +56,11 @@ export type McpEnv = {
 };
 
 // serverInfo.version — mirrors the stdio server (packages/mcp) so a client sees
-// one BasedAgents server identity across both transports.
-const SERVER_VERSION = '0.5.0';
+// one BasedAgents server identity across both transports. A hand-kept copy on
+// purpose: this file runs on Workers, where the createRequire(package.json)
+// pattern the Node packages use has no filesystem to read from. Bump it with
+// packages/mcp/package.json (it had silently drifted to 0.5.0 once already).
+const SERVER_VERSION = '0.7.2';
 
 // The protocol revisions we can speak; `initialize` echoes the client's if it is
 // one of these, else pins the latest (SPEC §5).
@@ -712,6 +719,48 @@ const app = new Hono<McpEnv>();
 // stream. Answered without bearer — method-not-allowed is audience-independent.
 app.get('/mcp', (c) => c.json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' }));
 
+/**
+ * Hosted-MCP acquisition attribution. The "installation" of a hosted
+ * connection is the OAuth client registration (`hosted:<client_id>`) — the
+ * endpoint's real session/account mechanism, not the network connection — and
+ * it stays ANONYMOUS metadata: the token's owner identity is deliberately
+ * never written into attribution rows. Source tags ride the connection URL
+ * (…/mcp?source=pulsemcp&campaign=…), which a directory listing can carry.
+ * Best-effort and request-scoped (no mutable shared state between users);
+ * failures are swallowed.
+ */
+function recordHostedAttribution(
+  c: Context<McpEnv>,
+  opts: { clientInfo?: { name?: string; version?: string }; meaningful: boolean },
+): void {
+  try {
+    if (c.env?.ACQUISITION_ANALYTICS === '0') return;
+    const db = c.get('db');
+    const token = c.get('mcpToken');
+    if (!db || !token?.client_id) return;
+    const q = new URL(c.req.url).searchParams;
+    const rawAcq = (q.get('acquisition_id') ?? '').trim();
+    const ctx: AttributionContext = {
+      installationId: `hosted:${token.client_id}`,
+      source: cleanSource(q.get('source')),
+      campaign: cleanLabel(q.get('campaign')),
+      acquisitionId: ACQUISITION_ID_RE.test(rawAcq) ? rawAcq : null,
+      iface: 'mcp_http',
+      clientName: cleanClientString(opts.clientInfo?.name),
+      clientVersion: cleanClientString(opts.clientInfo?.version),
+      mcpVersion: SERVER_VERSION,
+    };
+    const work = recordAttribution(db, ctx, {
+      agentId: '', // owner-scoped token: identity stays out of installation rows
+      method: opts.meaningful ? 'POST' : 'GET',
+      path: '/mcp',
+    }).catch((err) => console.error('[mcp] attribution capture failed:', err));
+    try { c.executionCtx.waitUntil(work); } catch { /* node harness: fire and forget */ }
+  } catch (err) {
+    console.error('[mcp] attribution capture failed:', err);
+  }
+}
+
 app.post('/mcp', bearerMiddleware, async (c) => {
   const { apiBase } = cfg(c);
 
@@ -748,6 +797,10 @@ app.post('/mcp', bearerMiddleware, async (c) => {
       const params = (rec.params as Record<string, unknown> | undefined) ?? {};
       const requested = asString(params.protocolVersion);
       const protocolVersion = requested && SUPPORTED_PROTOCOLS.has(requested) ? requested : DEFAULT_PROTOCOL;
+      // The client's self-reported name/version: bounded analytics metadata
+      // (an application label, never an acquisition source).
+      const clientInfo = (params.clientInfo as { name?: string; version?: string } | undefined) ?? undefined;
+      recordHostedAttribution(c, { clientInfo, meaningful: false });
       return rpcResult(c, id, {
         protocolVersion,
         capabilities: { tools: {} },
@@ -768,6 +821,10 @@ app.post('/mcp', bearerMiddleware, async (c) => {
       const rawArgs = (params.arguments as Record<string, unknown> | undefined) ?? {};
       const validated = tool.validate(rawArgs);
       if (validated === null) return rpcError(c, id, RPC.INVALID_PARAMS, `Invalid arguments for ${name}`);
+
+      // post_to_board is the one hosted tool that commits a write; everything
+      // else is read/discovery traffic for the activity rollup.
+      recordHostedAttribution(c, { meaningful: name === 'post_to_board' });
 
       const ctx: ToolContext = { apiBase, db: c.get('db'), token: c.get('mcpToken') };
       try {

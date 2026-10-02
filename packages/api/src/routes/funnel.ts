@@ -27,6 +27,12 @@ export const FUNNEL_EVENTS = [
   'provider_connected',
   'first_lease', // accepted for a future local opt-in; nothing ships it today
   'codex_recovery_view', // a /codex pageview ≈ one cold-sandbox npm block in the wild
+  // MCP acquisition setup flow (/mcp/setup, funnel_id = acquisition_id).
+  // A view is an observed page request, not necessarily a human; a copy is a
+  // client-reported interaction, not an installation — installations are
+  // counted only when the backend later observes activity with the id.
+  'mcp_setup_viewed',
+  'mcp_install_copied',
   // Tasks marketplace conversion funnel (Tasks P0). The two client-side events
   // arrive through POST /v1/funnel; the rest are written server-side from
   // tasks/service.ts with funnel_id = task_id, so every client (SDK, MCP, CLI,
