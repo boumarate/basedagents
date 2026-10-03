@@ -27,7 +27,7 @@ import type { Context } from 'hono';
 import { setCookie, getCookie } from 'hono/cookie';
 import { z } from 'zod';
 import type { DBAdapter } from '../db/adapter.js';
-import { sha256, bytesToHex } from '../crypto/index.js';
+import { sha256 } from '../crypto/index.js';
 import { ControlStore } from '../control/store.js';
 import { checkRateLimit } from '../lib/rate-limiter.js';
 import { emailSenderFromEnv } from '../control/email.js';
@@ -40,6 +40,8 @@ import {
   signCookie,
   verifyCookie,
   timingSafeEqual,
+  clientIpFrom,
+  ipHash,
 } from './websec.js';
 
 // ─── env / context types (shared by handler.ts + worker.ts wiring) ───
@@ -52,6 +54,14 @@ export type McpBindings = {
   MCP_SIGNING_SECRET?: string;
   /** '1' allows http/localhost redirect_uris in DCR (dev only, §2). */
   MCP_DEV?: string;
+  /**
+   * Optional overrides for the DCR per-IP limits (decimal strings, wrangler
+   * [vars]). ChatGPT's connector traffic arrives from OpenAI's SHARED egress
+   * IPs, so one "IP" there is many users — production raises these above the
+   * single-tenant defaults without a redeploy of code.
+   */
+  MCP_DCR_HOURLY?: string;
+  MCP_DCR_DAILY_CLIENTS?: string;
   /** E2E outbox switch (parity with the control plane's ladder flow). */
   E2E?: string;
   RESEND_API_KEY?: string;
@@ -72,9 +82,17 @@ export type McpEnv = { Bindings: McpBindings; Variables: McpVariables };
 export const ALLOWED_SCOPES = ['registry:read', 'board:post'] as const;
 const AUTHREQ_COOKIE = 'mcp_authreq';
 const COOKIE_TTL_S = 10 * 60; // matches the authorization-request TTL
-const DCR_PER_IP_HOURLY = 20; // §2 DCR abuse control (burst rate)
-const DCR_CLIENTS_PER_IP_DAILY = 100; // §8 standing-client cap (unbounded-growth guard)
+const DCR_PER_IP_HOURLY = 20; // §2 DCR abuse control (burst rate) — env-overridable, see MCP_DCR_HOURLY
+const DCR_CLIENTS_PER_IP_DAILY = 100; // §8 standing-client cap (unbounded-growth guard) — env-overridable
+/** Where a ChatGPT/connector user with no owner account yet goes to create one. */
+const CONSOLE_START_URL = 'https://app.basedagents.ai/start';
 const enc = new TextEncoder();
+
+/** Positive-integer env override, else the compiled default. */
+function intEnv(raw: string | undefined, fallback: number): number {
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
 
 interface McpConfig {
   resourceUrl: string;
@@ -201,15 +219,7 @@ function validateRedirectUris(uris: unknown, isDev: boolean): string[] | null {
 }
 
 function clientIp(c: Context<McpEnv>): string {
-  return (
-    c.req.header('cf-connecting-ip') ||
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
-    'unknown'
-  );
-}
-
-function ipHash(ip: string): string {
-  return bytesToHex(sha256(enc.encode(ip)));
+  return clientIpFrom((name) => c.req.header(name));
 }
 
 /**
@@ -284,9 +294,12 @@ app.post('/oauth/register', async (c) => {
   const db = getDb(c);
 
   // Per-IP throttle FIRST (before any write) — the board:* limiter bucket keyed
-  // dcr:<ipHash>, 20/hr, so a script can't farm client_ids to exhaust storage.
+  // dcr:<ipHash>, so a script can't farm client_ids to exhaust storage. Both
+  // limits are env-overridable because ChatGPT and claude.ai register from
+  // shared egress IPs where one "IP" is many legitimate users.
+  const e = (c.env ?? {}) as McpBindings;
   const iph = ipHash(clientIp(c));
-  const limit = await checkRateLimit(db, `dcr:${iph}`, DCR_PER_IP_HOURLY, 3_600_000);
+  const limit = await checkRateLimit(db, `dcr:${iph}`, intEnv(e.MCP_DCR_HOURLY, DCR_PER_IP_HOURLY), 3_600_000);
   if (!limit.allowed) {
     return oauthError(c, 429, 'too_many_requests', 'registration rate limit exceeded');
   }
@@ -295,7 +308,7 @@ app.post('/oauth/register', async (c) => {
   // accrete permanent oauth_clients rows. Cap the standing count per IP over a
   // rolling day so registration can't grow the shared table without bound.
   const dayAgo = new Date(Date.now() - 24 * 3_600_000).toISOString();
-  if (await new OAuthStore(db).countClientsByIpSince(iph, dayAgo) >= DCR_CLIENTS_PER_IP_DAILY) {
+  if (await new OAuthStore(db).countClientsByIpSince(iph, dayAgo) >= intEnv(e.MCP_DCR_DAILY_CLIENTS, DCR_CLIENTS_PER_IP_DAILY)) {
     return oauthError(c, 429, 'too_many_requests', 'registration limit reached');
   }
 
@@ -406,7 +419,8 @@ app.get('/oauth/authorize', async (c) => {
          <input type="email" name="email" placeholder="you@example.com" autocomplete="email" required>
          <input type="hidden" name="csrf" value="${esc(csrf)}">
          <button type="submit">Send sign-in link</button>
-       </form>`,
+       </form>
+       <p>No BasedAgents account yet? <a href="${esc(CONSOLE_START_URL)}" target="_blank" rel="noopener">Create one</a> (one email field), then come back here and enter that email.</p>`,
     ),
   );
 });
@@ -469,7 +483,9 @@ app.post('/oauth/email', async (c) => {
     pageShell(
       'Check your email',
       `<h1>Check your email</h1>
-       <p>If an account exists for that address, we've sent a one-time sign-in link. It expires in 15 minutes.</p>`,
+       <p>If an account exists for that address, we've sent a one-time sign-in link. It expires in 15 minutes.
+       Open it in this same browser.</p>
+       <p>No link? If you don't have a BasedAgents account yet, <a href="${esc(CONSOLE_START_URL)}" target="_blank" rel="noopener">create one</a> with that email, then restart the connection from your app.</p>`,
     ),
   );
 });

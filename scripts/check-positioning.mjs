@@ -24,7 +24,6 @@ const failures = [];
 // ── 1. retired taglines ──
 const SURFACES = [
   'packages/web/public/.well-known/agent.json',
-  'packages/web/public/.well-known/ai-plugin.json',
   'packages/web/public/llms.txt',
   'packages/web/public/llms-full.txt',
   'skills/basedagents/SKILL.md',
@@ -37,6 +36,11 @@ const SURFACES = [
   'packages/mcp/package.json', 'packages/mcp/server.json', 'packages/mcp/README.md',
   'packages/python/pyproject.toml', 'packages/python/README.md', 'packages/python/basedagents/__init__.py',
   'packages/api/src/openapi.json', 'packages/api/src/index.ts', 'packages/api/README.md',
+  // ChatGPT plugin surfaces: the portal metadata, the hosted MCP server's
+  // initialize payload, and the tool descriptions in the handler itself.
+  'docs/chatgpt-plugin/metadata.json',
+  'packages/api/src/mcp/chatgpt.json',
+  'packages/api/src/mcp/handler.ts',
 ];
 function walk(dir, out = []) {
   for (const f of readdirSync(dir)) {

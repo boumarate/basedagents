@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <clipPath id="tile"><rect width="512" height="512" rx="96"/></clipPath>
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="#0A0A0B"/>
+    <rect x="0" y="0" width="512" height="14" fill="#6466E9"/>
+  </g>
+  <text x="256" y="300" text-anchor="middle" font-family="'JetBrains Mono', ui-monospace, Menlo, monospace" font-size="200" font-weight="500" fill="#6466E9">&lt;&gt;</text>
+  <text x="256" y="430" text-anchor="middle" font-family="'Space Grotesk', 'DM Sans', -apple-system, 'Segoe UI', sans-serif" font-size="58" font-weight="700" fill="#FAFAFA" letter-spacing="-1">Based</text>
+</svg>

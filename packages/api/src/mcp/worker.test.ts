@@ -8,15 +8,18 @@
  * once oauth.ts + handler.ts are mounted together behind the cookieless CORS:
  *   1. PRM is served (oauth sub-app is mounted) and its `resource` is the exact
  *      MCP_RESOURCE_URL binding.
- *   2. An unauthenticated POST /mcp is 401 with the exact WWW-Authenticate the
- *      handler's bearer middleware emits (handler sub-app is mounted).
+ *   2. An unauthenticated POST /mcp ANSWERS (anonymous reads are the ChatGPT-
+ *      plugin shape), while an auth-marked tool still 401s with the exact
+ *      WWW-Authenticate the handler emits (handler sub-app is mounted).
  *   3. The CORS preflight is COOKIELESS — it must NOT carry Access-Control-Allow-
  *      Credentials (the api Worker's credentialed allow-list is a different app).
+ *   4. /.well-known/openai-apps-challenge serves the env token as plain text,
+ *      404s when unset (plugin-directory domain verification).
  *
- * None of these three paths touch the DB (PRM is pure config; the no-bearer 401
- * short-circuits before any token lookup; a preflight never reaches a handler),
- * so the harness passes an env with the vars but no DB binding — exactly the
- * Node/test shape the worker's guarded db middleware tolerates.
+ * None of these paths touch the DB (PRM is pure config; tools/list and the
+ * per-tool 401 run before any token/limiter lookup; a preflight never reaches a
+ * handler), so the harness passes an env with the vars but no DB binding —
+ * exactly the Node/test shape the worker's guarded db middleware tolerates.
  */
 import { describe, it, expect } from 'vitest';
 import { app } from './worker.js';
@@ -46,7 +49,7 @@ describe('MCP Worker (assembled app)', () => {
     expect(body.resource).toBe(RESOURCE);
   });
 
-  it('rejects an unauthenticated POST /mcp with 401 + exact WWW-Authenticate', async () => {
+  it('answers an unauthenticated tools/list (anonymous reads; the ChatGPT-plugin shape)', async () => {
     const res = await app.request(
       '/mcp',
       {
@@ -56,11 +59,39 @@ describe('MCP Worker (assembled app)', () => {
       },
       ENV,
     );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { result: { tools: { name: string; annotations?: Record<string, unknown> }[] } };
+    expect(body.result.tools.length).toBeGreaterThan(0);
+    for (const t of body.result.tools) expect(typeof t.annotations?.readOnlyHint).toBe('boolean');
+  });
+
+  it('still 401s an unauthenticated call to the auth-marked tool, with exact WWW-Authenticate', async () => {
+    const res = await app.request(
+      '/mcp',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'post_to_board', arguments: { body: 'hi' } } }),
+      },
+      ENV,
+    );
     expect(res.status).toBe(401);
     const www = res.headers.get('WWW-Authenticate') ?? res.headers.get('www-authenticate');
     expect(www).toBe(
       `Bearer resource_metadata="${ISSUER}/.well-known/oauth-protected-resource", error="invalid_token"`,
     );
+  });
+
+  it('serves the OpenAI domain-verification challenge from the env var, 404 when unset', async () => {
+    const withToken = await app.request(
+      '/.well-known/openai-apps-challenge', {}, { ...ENV, OPENAI_APPS_CHALLENGE: 'challenge-token-123' },
+    );
+    expect(withToken.status).toBe(200);
+    expect(withToken.headers.get('content-type')).toContain('text/plain');
+    expect(await withToken.text()).toBe('challenge-token-123');
+
+    const without = await app.request('/.well-known/openai-apps-challenge', {}, ENV);
+    expect(without.status).toBe(404);
   });
 
   it('CORS preflight is cookieless — no Access-Control-Allow-Credentials', async () => {

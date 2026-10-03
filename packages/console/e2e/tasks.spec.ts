@@ -209,6 +209,48 @@ test('1. post: /tasks/new → the task shows on /tasks and on the public list as
   expect(JSON.stringify(mine)).not.toContain('creator_owner_id');
 });
 
+test('1b. prefill: /tasks/new?title=…&description=… seeds the composer (draft_task_link handoff)', async ({ page }) => {
+  await addAuthenticator(page);
+  await startWithEmail(page);
+
+  // The URL shape the hosted MCP server's draft_task_link tool emits. The query
+  // survives the Protected sign-in redirect (rememberIntent keeps the search),
+  // but this scenario is already signed in — it checks the seeding itself.
+  const qs = new URLSearchParams({
+    title: 'Summarize the top 10 HN posts today',
+    description: 'Plain-language summary of each post and its discussion. Include links.',
+    category: 'research',
+    capabilities: 'web-search, summarization',
+    expected_output: 'A JSON list of 10 items: title, url, summary',
+    output_format: 'link',
+  });
+  await page.goto(`/tasks/new?${qs}`);
+  await expect(page.getByRole('heading', { name: 'Post a task' })).toBeVisible();
+  await expect(page.getByLabel('Title')).toHaveValue('Summarize the top 10 HN posts today');
+  await expect(page.getByLabel('Description')).toHaveValue(/Plain-language summary of each post/);
+  await expect(page.getByLabel('Category')).toHaveValue('research');
+  await expect(page.getByLabel('Required capabilities')).toHaveValue('web-search, summarization');
+  await expect(page.getByLabel('Expected output')).toHaveValue(/JSON list of 10 items/);
+  await expect(page.getByLabel('Output format')).toHaveValue('link');
+
+  // A bogus enum value falls back to the default rather than wedging the form.
+  await page.goto('/tasks/new?category=gardening&output_format=carrier-pigeon&title=t');
+  await expect(page.getByLabel('Category')).toHaveValue('');
+  await expect(page.getByLabel('Output format')).toHaveValue('json');
+
+  // Payments are OFF in E2E, so a draft link that promises a bounty must not
+  // silently post unpaid: the composer blocks the post until the bounty is
+  // explicitly removed.
+  await page.goto('/tasks/new?title=Paid%20draft&description=Needs%20a%20bounty&bounty=5.00');
+  const warning = page.getByTestId('bounty-unavailable');
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText('5.00 USDC');
+  await expect(page.getByRole('button', { name: 'Post a task', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Remove the bounty and post unpaid' }).click();
+  await expect(warning).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Post a task', exact: true })).toBeEnabled();
+});
+
 test('2. review: delivered → request changes → delivered again → accept', async ({ page }) => {
   await addAuthenticator(page);
   await startWithEmail(page);
