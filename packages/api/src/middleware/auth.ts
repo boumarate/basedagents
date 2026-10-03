@@ -16,10 +16,8 @@ import type { AppEnv } from '../types/index.js';
  * Sets c.set('agentId', ...) and c.set('publicKey', ...) on success.
  *
  * `allowUnregistered` controls what happens when the signature verifies but no
- * agents row exists: reject (default) or register-on-first-use (agent-first
- * entry — see the note at the registration check).
  */
-function makeAgentAuth(allowUnregistered: boolean) {
+function makeAgentAuth() {
   return createMiddleware<AppEnv>(async (c, next) => {
   const authHeader = c.req.header('Authorization');
 
@@ -128,21 +126,6 @@ function makeAgentAuth(allowUnregistered: boolean) {
   let status: string;
   if (agent) {
     status = agent.status;
-  } else if (allowUnregistered) {
-    // Register-on-first-use for agent-first entry (invite_owner). The caller
-    // already proved key possession via the verified AgentSig above; the only
-    // action this unlocks creates nothing storable/leasable and is heavily
-    // rate-limited, so no proof-of-work is required. Idempotent (ignore the
-    // unique race).
-    try {
-      await db.run(
-        `INSERT INTO agents (id, public_key, name, description, capabilities, protocols, status)
-         VALUES (?, ?, 'Keyring agent', 'Registered via Keyring invite', '[]', '["mcp"]', 'active')`,
-        agentId,
-        publicKey,
-      );
-    } catch { /* concurrent register — fine */ }
-    status = 'active';
   } else {
     return c.json({ error: 'unauthorized', message: 'Agent not registered' }, 401);
   }
@@ -161,13 +144,8 @@ function makeAgentAuth(allowUnregistered: boolean) {
 /**
  * Standard agent auth — the agent MUST already exist in the registry.
  */
-export const agentAuth = makeAgentAuth(false);
+export const agentAuth = makeAgentAuth();
 
-/**
- * Agent auth that REGISTERS an unknown-but-cryptographically-valid agent on
- * first use. Only for agent-first entry (invite_owner) — see the inline note.
- */
-export const agentAuthAllowUnregistered = makeAgentAuth(true);
 
 /**
  * Optional auth — sets agent context ONLY if signature fully verifies.

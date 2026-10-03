@@ -1,32 +1,29 @@
 /**
- * Tasks P0 E2E (PR3) — a human posts a task from the console and reviews what
+ * Tasks P0 E2E — a human posts a task from the console and reviews what
  * comes back, against the real control plane and the real console (same
  * servers and virtual-authenticator plumbing as passkey.spec.ts).
  *
- *   1. post      — claim an account (email rung), /tasks/new → post → the task
- *                  shows on /tasks, and the PUBLIC marketplace list carries it
- *                  with creator.kind === 'owner'
+ *   1. post      — /start creates the account (email rung), /tasks/new → post
+ *                  → the task shows on /tasks, and the PUBLIC marketplace list
+ *                  carries it with creator.kind === 'owner'
  *   2. review    — post → the E2E seed helper claims + delivers as an agent →
  *                  "Request changes" with a note → the seed delivers again →
  *                  "Accept" → the page shows the accepted state and pill, and
  *                  the detail endpoint reports verified/creator with two receipts
  *
- * Reviews here ride on the session alone (no passkey was minted), which is the
- * passkey-optional path the review endpoints accept; the signed path is
- * covered by the API's control/tasks tests.
+ * Posting is a signed act, so the first post mints the account's passkey (the
+ * virtual authenticator answers the prompt); the review actions then ride the
+ * session plus that passkey's signature.
  */
 import { test, expect } from '@playwright/test';
 import type { Page, CDPSession } from '@playwright/test';
-import * as ed from '@noble/ed25519';
-import { generateKeypair, base58Encode, publicKeyToAgentId } from '@basedagents/keyring';
-import type { AgentKeypair } from '@basedagents/keyring';
 
 const API_PORT = 3000;
 const API = `http://localhost:${API_PORT}`;
 
-// ─── virtual authenticator (passkey.spec.ts:54-76) ───
-// No ceremony runs in these scenarios; the authenticator is attached so a
-// passkey prompt, should one ever appear, resolves instead of hanging.
+// ─── virtual authenticator (passkey.spec.ts) ───
+// The first post mints the passkey; the authenticator is attached so that
+// creation prompt (and every later assertion) resolves instead of hanging.
 
 async function addAuthenticator(page: Page): Promise<{ cdp: CDPSession; id: string }> {
   const cdp = await page.context().newCDPSession(page);
@@ -44,7 +41,7 @@ async function addAuthenticator(page: Page): Promise<{ cdp: CDPSession; id: stri
   return { cdp, id: authenticatorId };
 }
 
-// ─── API helpers (passkey.spec.ts:80-124) ───
+// ─── API helpers (passkey.spec.ts) ───
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, init);
@@ -60,7 +57,7 @@ async function sessionCookie(page: Page): Promise<string> {
 }
 
 /** Read the newest magic-link token for `email` whose URL path matches. */
-async function magicToken(email: string, pathname: '/claim' | '/login'): Promise<string> {
+async function magicToken(email: string, pathname: '/start' | '/login'): Promise<string> {
   const { messages } = await apiJson<{ messages: Array<{ body: string }> }>(
     `/v1/owner/test/outbox?recipient=${encodeURIComponent(email)}`,
   );
@@ -71,54 +68,23 @@ async function magicToken(email: string, pathname: '/claim' | '/login'): Promise
   throw new Error(`no ${pathname} magic link in the outbox for ${email}`);
 }
 
-// ─── the ladder's terminal side, simulated: what `keyring init` POSTs (passkey.spec.ts:141-170) ───
+// ─── the door: /start with a new email → account + email-rung session (passkey.spec.ts) ───
 
 let counter = 0;
 
-interface InitResult {
-  vault: AgentKeypair;
-  agentId: string;
-  agentName: string;
-  code: string;
-  email: string;
-}
-
-async function initLink(): Promise<InitResult> {
-  const vault = await generateKeypair();
-  const agent = await generateKeypair();
-  const agentId = publicKeyToAgentId(agent.publicKey);
-  const agentName = `Claude Code @ tasks-e2e-${Date.now()}-${++counter}`;
-  const vaultB58 = base58Encode(vault.publicKey);
-  const agentB58 = base58Encode(agent.publicKey);
-  const canonical = `keyring-link:v1:${vaultB58}:${agentId}:${agentB58}`;
-  const sig = await ed.signAsync(new TextEncoder().encode(canonical), vault.privateKey);
-  let bin = '';
-  for (const b of sig) bin += String.fromCharCode(b);
-  const { code } = await apiJson<{ code: string }>('/v1/owner/link', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      vault_public_key: vaultB58,
-      agent_id: agentId,
-      agent_public_key: agentB58,
-      agent_name: agentName,
-      vault_signature: btoa(bin),
-    }),
-  });
-  return { vault, agentId, agentName, code, email: `tasks-e2e-${Date.now()}-${counter}@example.com` };
-}
-
-/** /link?code= → email → magic link from the outbox → /welcome (a signed-in email-rung session). */
-async function claim(page: Page, init: InitResult): Promise<void> {
-  await page.goto(`/link?code=${init.code}`);
-  await expect(page.getByRole('heading', { name: 'Take control of this agent' })).toBeVisible();
-  await page.getByLabel('Email').fill(init.email);
-  await page.getByRole('button', { name: 'Send me the link' }).click();
+async function startWithEmail(page: Page): Promise<string> {
+  const email = `tasks-e2e-${Date.now()}-${++counter}@example.com`;
+  await page.goto('/start');
+  await expect(page.getByRole('heading', { name: 'Get started' })).toBeVisible();
+  await page.getByLabel('Email').fill(email);
+  await page.getByRole('button', { name: 'Email me a link' }).click();
   await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
 
-  const token = await magicToken(init.email, '/claim');
-  await page.goto(`/claim#t=${token}`);
-  await expect(page).toHaveURL(/\/welcome/, { timeout: 20_000 });
+  const token = await magicToken(email, '/start');
+  await page.goto('/login'); // leave /start so #t= is a real load, not a fragment change
+  await page.goto(`/start#t=${token}`);
+  await expect(page).toHaveURL(/\/home/, { timeout: 20_000 });
+  return email;
 }
 
 // ─── task flows ───
@@ -199,9 +165,8 @@ async function ownerDetail(page: Page, taskId: string): Promise<OwnerDetail> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('1. post: /tasks/new → the task shows on /tasks and on the public list as posted by a human', async ({ page }) => {
-  const init = await initLink();
   await addAuthenticator(page);
-  await claim(page, init);
+  await startWithEmail(page);
 
   const title = `Summarize the changelog (e2e ${Date.now()})`;
   const taskId = await postTask(page, {
@@ -229,6 +194,10 @@ test('1. post: /tasks/new → the task shows on /tasks and on the public list as
   await expect(card.locator('.status', { hasText: 'Open' })).toBeVisible();
   await expect(page.getByText('Needs your review')).toHaveCount(0);
 
+  // The overview lists it too, under "Your tasks".
+  await page.goto('/home');
+  await expect(page.locator(`.card[data-task-id="${taskId}"]`).getByRole('link', { name: title })).toBeVisible();
+
   // The public marketplace sees it too — posted by a human, unpaid.
   const { tasks } = await apiJson<{ ok: true; tasks: PublicTask[] }>('/v1/tasks?status=open&limit=100');
   const mine = tasks.find((t) => t.task_id === taskId);
@@ -241,9 +210,8 @@ test('1. post: /tasks/new → the task shows on /tasks and on the public list as
 });
 
 test('2. review: delivered → request changes → delivered again → accept', async ({ page }) => {
-  const init = await initLink();
   await addAuthenticator(page);
-  await claim(page, init);
+  await startWithEmail(page);
 
   const title = `Scrape pricing pages (e2e ${Date.now()})`;
   const taskId = await postTask(page, {

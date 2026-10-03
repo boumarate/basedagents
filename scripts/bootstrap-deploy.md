@@ -61,25 +61,24 @@ npx wrangler d1 execute agent-registry --remote \
   --command "INSERT INTO d1_migrations (name, applied_at) VALUES ('0001_init.sql', CURRENT_TIMESTAMP);"  # repeat per already-applied file
 ```
 
-## 4. Stripe (billing)
+## 4. Stripe (Agent Testing payments)
 
-1. Stripe dashboard (test mode first) → Products: create **Keyring Pro** with
-   two prices — $10/month (`keyring_pro_monthly`) and $96/year
-   (`keyring_pro_yearly`). Copy both price ids.
-2. Put the price ids in `packages/api/wrangler.toml` vars
-   (`STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_YEARLY`) — they are config,
-   not secrets.
-3. Developers → Webhooks → Add endpoint:
+Keyring Pro and its subscription prices are retired; Stripe now serves only
+Agent Testing's one-time checkout.
+
+1. Stripe dashboard (test mode first) → Products: create the audit package's
+   one-time price and put its id in `packages/api/wrangler.toml`
+   (`STRIPE_PRICE_TESTING_AUDIT`) — config, not a secret.
+2. Developers → Webhooks → Add endpoint:
    - URL: `https://api.basedagents.ai/v1/stripe/webhook`
-   - Events: `checkout.session.completed`,
-     `customer.subscription.updated`, `customer.subscription.deleted`
+   - Events: `checkout.session.completed`, `checkout.session.expired`
    - Copy the **signing secret** (`whsec_…`).
 
 ## 5. Runtime secrets (scripted)
 
 ```bash
-RESEND_API_KEY=re_...            # optional — without it, recovery emails go to the log-only sender
-STRIPE_SECRET_KEY=sk_live_...    # optional — without it, billing endpoints answer 503
+RESEND_API_KEY=re_... \           # optional — without it, magic-link and recovery emails go to the log-only sender
+STRIPE_SECRET_KEY=sk_...  \       # optional — without it, Testing checkout/webhook answer 503
 STRIPE_WEBHOOK_SECRET=whsec_... \
   ./scripts/put-secrets.sh
 ```
@@ -90,9 +89,8 @@ Notes:
   signing key exists to configure.
 - Resend requires `basedagents.ai` verified as a sending domain (or set
   `EMAIL_FROM` to a verified one).
-- Staging: repeat with test-mode Stripe keys and `--env staging`
-  (`./scripts/put-secrets.sh --env staging`); staging uses its own D1
-  database per `wrangler.toml`.
+- Staging: repeat with `--env staging` (`./scripts/put-secrets.sh --env staging`);
+  staging uses its own D1 database per `wrangler.toml`.
 
 ## 6. Task payments (x402) — optional, off by default
 

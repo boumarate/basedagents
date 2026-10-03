@@ -20,11 +20,9 @@ import { control, payments, paymentChallengeOf } from '../api/control.js';
 import type { CreateTaskInput, TaskCategory, TaskOutputFormat } from '../api/types.js';
 import { usdcToAtomic } from '../lib/money.js';
 import { signBountyPayment, walletAvailable } from '../lib/wallet.js';
-import { funnelPing } from '../lib/funnel.js';
 import { useOwner } from '../state/session.js';
 import { taskErrText } from '../components/TaskBits.js';
-import { ensurePasskey } from '../lib/firstApproval.js';
-import { runAction } from '../lib/ceremony.js';
+import { ensurePasskey, runAction } from '../lib/ceremony.js';
 import { sha256hex, canonicalJsonStringify } from '../lib/action.js';
 
 const MAX_TITLE = 200;
@@ -71,7 +69,6 @@ export default function TaskNew() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    funnelPing('task_composer_view');
     void payments.enabled().then(setPaymentsOn);
     void payments.escrowEnabled().then(setEscrowOn);
     void payments.minBountyUsdc().then(setMinBounty);

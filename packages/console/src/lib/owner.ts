@@ -1,11 +1,12 @@
 /**
- * The owner identity IS the vault key: owner_id = "ow_" + base58(vault Ed25519
- * pubkey) (packages/api/src/control/identity.ts). So the console can always
- * re-derive the vault public key it needs for the bind_vault_key ceremony from
- * the id of the signed-in owner — no extra input, no chance of binding a key
- * that doesn't match the account.
+ * The account id carries its own registration key: owner_id = "ow_" +
+ * base58(32-byte account key) (packages/api/src/control/identity.ts). The
+ * console never holds a private half — the key is an opaque account
+ * identifier that the passkey registration endpoints take back as-is, so the
+ * console can always re-derive it from the signed-in account with nothing to
+ * type and no chance of registering a passkey against the wrong account.
  */
-export function vaultKeyFromOwnerId(ownerId: string): string {
+export function accountKeyFromOwnerId(ownerId: string): string {
   if (!ownerId.startsWith('ow_') || ownerId.length <= 3) {
     throw new Error(`not an owner id: ${ownerId}`);
   }

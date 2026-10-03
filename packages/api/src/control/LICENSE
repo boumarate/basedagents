@@ -1,17 +1,16 @@
-BasedAgents Keyring Control Plane — Proprietary
+BasedAgents Owner Control Plane — Proprietary
 
 Copyright (c) 2026 BasedAgents. All rights reserved.
 
 This directory (packages/api/src/control/) and the control-plane database
 migrations it depends on (owner accounts, WebAuthn/passkey authority, sessions,
-delegations, approvals, billing — the hosted control plane described in
-KEYRING_SPEC.md §5) are PROPRIETARY and are NOT licensed under the Apache
+delegations, owner task and board routes — the hosted control plane described
+in CONTROL_PLANE.md) are PROPRIETARY and are NOT licensed under the Apache
 License 2.0 that covers the rest of this repository.
 
 No license is granted to use, copy, modify, or distribute this code. It is
 published for transparency and auditability only.
 
-The open-source components — everything that touches secrets or runs on a
-user's machine (the vault daemon, `based` CLI, crypto core, MCP servers, SDKs,
-and the recipe library) — remain Apache-2.0. See LICENSING.md at the repository
+The open-source components — the registry API outside this directory, the
+SDKs, CLI and MCP servers — remain Apache-2.0. See LICENSING.md at the repository
 root for the full boundary and rationale.

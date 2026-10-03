@@ -26,7 +26,7 @@ describe('buyer entry and intake (spec §2.1, §4.3)', () => {
     // No delegation, vault key, or Keyring plan change.
     const me = (await (await h.get('/v1/owner/me', buyer.cookie)).json()) as { delegations: unknown[]; vault_key: unknown };
     expect(me.delegations).toEqual([]);
-    expect(me.vault_key).toBeNull();
+    expect(me.vault_key).toBeUndefined(); // field retired with Keyring (0048)
 
     const created = await h.post('/v1/owner/testing/requests', sampleIntake(), buyer.cookie);
     expect(created.status).toBe(200);
@@ -175,7 +175,7 @@ describe('checkout + webhook processing (spec §8, §20.2)', () => {
     expect(planOps).toHaveLength(1);
   });
 
-  it('an invalid webhook signature is rejected; a testing payment never touches Keyring plan state', async () => {
+  it('an invalid webhook signature is rejected; the paying owner is untouched', async () => {
     const op = await setupOperator(h);
     const { buyer, sessionId } = await paidOrder(h, op);
     const session = await h.stripe.retrieveCheckoutSession(sessionId);
@@ -184,8 +184,10 @@ describe('checkout + webhook processing (spec §8, §20.2)', () => {
       { badSignature: true },
     );
     expect(bad.status).toBe(400);
+    // Keyring plan state is gone (0048) — a one-time payment has nothing to
+    // upgrade; the owner row still exists and keeps its Stripe customer.
     const owner = await new ControlStore(h.db).getOwner(buyer.ownerId);
-    expect(owner!.plan).toBe('free'); // the successful one-time payment upgraded nothing
+    expect(owner).not.toBeNull();
   });
 
   it('declined/expired checkouts create no entitlement; a later success wins over an earlier failure', async () => {

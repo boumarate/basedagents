@@ -285,14 +285,6 @@ export default function Home(): React.ReactElement {
         </div>
         <a className="mkt-textlink" href="/docs/agents">Open the agent docs <span aria-hidden="true">→</span></a>
       </section>
-
-      <section className="agent-strip" id="keyring">
-        <div>
-          <h3>Keyring</h3>
-          <p>{p.keyringLine.replace(/^Keyring: /, '')} A local, open-source vault: secrets are sealed to your agent's signing key and unlocked for minutes at a time, never pasted into a chat.</p>
-        </div>
-        <a className="mkt-textlink" href="/keyring">About Keyring <span aria-hidden="true">→</span></a>
-      </section>
     </div>
   );
 }

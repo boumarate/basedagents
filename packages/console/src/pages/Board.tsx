@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { control, board, ControlApiError } from '../api/control.js';
 import type { BoardPost } from '../api/types.js';
-import { ensurePasskey } from '../lib/firstApproval.js';
+import { ensurePasskey } from '../lib/ceremony.js';
 import { useOwner } from '../state/session.js';
 
 const MAX_BODY = 10_000;

@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# One-time (per environment) runtime-secret setup for the Keyring control plane.
+# One-time (per environment) runtime-secret setup for the owner control plane.
 # Usage:
-#   RESEND_API_KEY=re_...  STRIPE_SECRET_KEY=sk_live_...  STRIPE_WEBHOOK_SECRET=whsec_... \
-#     ./scripts/put-secrets.sh [--env staging]
+#   RESEND_API_KEY=re_... ./scripts/put-secrets.sh [--env staging]
 #
 # Reads secret VALUES from the environment (never from argv — argv leaks into
 # `ps` and shell history), pipes each into `wrangler secret put`, and prints
-# which were set or skipped. Skipping is fine: without STRIPE_SECRET_KEY the
-# billing endpoints answer 503; without RESEND_API_KEY recovery emails go to
-# the log-only sender.
+# which were set or skipped. Skipping is fine: without RESEND_API_KEY the
+# magic-link and recovery emails go to the log-only sender.
+#
+# Payments / escrow secrets (CDP_API_KEY_ID, CDP_API_KEY_SECRET,
+# PAYMENT_ENCRYPTION_KEY, ESCROW_WALLET_PRIVATE_KEY) are set interactively —
+# see scripts/bootstrap-deploy.md.
 set -euo pipefail
 
 cd "$(dirname "$0")/../packages/api"
@@ -42,5 +44,5 @@ put TESTING_OPERATOR_EMAIL
 
 echo
 echo "Reminder: Stripe PRICE IDS are plain vars, not secrets — set"
-echo "STRIPE_PRICE_PRO_MONTHLY / STRIPE_PRICE_PRO_YEARLY / STRIPE_PRICE_TESTING_AUDIT"
+echo "STRIPE_PRICE_TESTING_AUDIT"
 echo "in packages/api/wrangler.toml [vars] and deploy."
