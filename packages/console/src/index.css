@@ -483,3 +483,16 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .rating-star.on { color: var(--warn); border-color: var(--warn); }
 .rating-star:disabled { cursor: default; opacity: 0.6; }
 .rating-value { margin-left: 0.4rem; }
+
+/* /admin/acquisition — operator report tables */
+.acq-filters { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: center; margin: 1rem 0; }
+.acq-filters label { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85rem; }
+.acq-check { white-space: nowrap; }
+.acq-h2 { font-size: 1.05rem; margin: 1.6rem 0 0.3rem; }
+.acq-note { font-size: 0.82rem; margin: 0 0 0.6rem; max-width: 70ch; }
+.acq-kpis { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+.acq-kpi { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.acq-scroll { overflow-x: auto; }
+.acq-table { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.acq-table th, .acq-table td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border, rgba(127,127,127,0.25)); white-space: nowrap; }
+.acq-table th { font-weight: 600; }

@@ -16,6 +16,7 @@ import type { AppEnv } from '../types/index.js';
 import { ownerSession } from './routes.js';
 import type { FeedbackRow } from '../feedback/service.js';
 import { isAdminOwner } from './admin-ids.js';
+import { runAcquisitionReport } from '../acquisition/report.js';
 
 export { isAdminOwner };
 
@@ -82,6 +83,23 @@ admin.post('/admin/feedback/:id', ownerSession, requireAdmin, async (c) => {
   if (res.changes === 0) return c.json({ error: 'not_found', message: 'Feedback not found' }, 404);
   const row = await db.get<FeedbackRow>('SELECT * FROM feedback WHERE feedback_id = ?', id);
   return c.json({ feedback: shape(row!) });
+});
+
+/**
+ * GET /v1/owner/admin/acquisition — the acquisition report for the console's
+ * admin page (same query contract and query layer as the bearer endpoint
+ * GET /v1/admin/acquisition, behind the owner session + ADMIN_OWNER_IDS).
+ */
+admin.get('/admin/acquisition', ownerSession, requireAdmin, async (c) => {
+  const result = await runAcquisitionReport(c.get('db'), c.env, (n) => c.req.query(n));
+  if (result.kind === 'error') return c.json({ error: 'bad_request', message: result.message }, result.status);
+  if (result.kind === 'csv') {
+    return c.body(result.body, 200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${result.filename}"`,
+    });
+  }
+  return c.json({ ok: true, ...result.body });
 });
 
 export default admin;

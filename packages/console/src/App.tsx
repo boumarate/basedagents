@@ -24,6 +24,7 @@ import TaskNew from './pages/TaskNew.js';
 import TaskReview from './pages/TaskReview.js';
 import SignWallet from './pages/SignWallet.js';
 import AdminFeedback from './pages/AdminFeedback.js';
+import AdminAcquisition from './pages/AdminAcquisition.js';
 import TestingAudits from './pages/testing/Audits.js';
 import TestingIntake from './pages/testing/Intake.js';
 import TestingRequestDetail from './pages/testing/RequestDetail.js';
@@ -104,6 +105,7 @@ export default function App() {
             <Route path="/vault" element={<Vault />} />
             <Route path="/settings/billing" element={<Billing />} />
             <Route path="/admin/feedback" element={<AdminFeedback />} />
+            <Route path="/admin/acquisition" element={<AdminAcquisition />} />
             {/* Agent Testing (customer + operator) */}
             <Route path="/testing" element={<TestingAudits />} />
             <Route path="/testing/new" element={<TestingIntake />} />

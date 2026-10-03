@@ -47,7 +47,7 @@ import ladderRoutes from './control/ladder.js';
 import funnelRoutes, { VOTABLE_PROVIDERS } from './routes/funnel.js';
 import feedbackRoutes from './routes/feedback.js';
 import adminRoutes from './control/admin.js';
-import { acquisitionCapture } from './acquisition/capture.js';
+import { acquisitionCapture, runAcquisitionRetention } from './acquisition/capture.js';
 import telemetryRoutes from './routes/telemetry.js';
 import acquisitionRoutes from './routes/acquisition.js';
 import { runTaskCron } from './cron/tasks.js';
@@ -652,6 +652,18 @@ const scheduled = async (_event: unknown, env: any, _ctx: unknown) => {
     console.log(`[cron] Feedback cron done: retried=${retried} digest=${digest}`);
   } catch (err) {
     console.error('[cron] Feedback cron failed:', err);
+  }
+
+  // ─── Acquisition analytics retention: raw telemetry + expired setup ids,
+  // claimed once per day via job_runs. Registry tables (installations,
+  // touches, agent acquisition) are kept — they are the cohort evidence.
+  if (env.ACQUISITION_ANALYTICS !== '0') {
+    try {
+      const result = await runAcquisitionRetention(db, new Date());
+      console.log(`[cron] Acquisition retention: ${result}`);
+    } catch (err) {
+      console.error('[cron] Acquisition retention failed:', err);
+    }
   }
 
   // ─── Agent Testing: inbox drain, durable operations, task sync, alerts,

@@ -277,6 +277,69 @@ export async function recordAgentAcquisition(
   }
 }
 
+// ─── Retention ───────────────────────────────────────────────────────────────
+
+/** Raw analytics retention (documented default). */
+export const RAW_ANALYTICS_RETENTION_DAYS = 90;
+/** Grace past an acquisition id's own expiry before its row is deleted. */
+export const ACQUISITION_ID_GRACE_DAYS = 30;
+/** Nonidentifying daily rollups are kept longer for year-over-year reads. */
+export const USAGE_ROLLUP_RETENTION_DAYS = 400;
+
+/**
+ * Daily retention sweep (cron, claimed once per day via job_runs). Deletes
+ * raw analytics past retention: client-reported tool outcomes, expired setup
+ * ids, and old daily rollups. The attribution registry itself
+ * (mcp_installations, acquisition_touches, agent_acquisition, links) is the
+ * evidence the cohort reports stand on and is kept. Marketplace and payment
+ * records are never touched here.
+ */
+export async function acquisitionRetentionSweep(
+  db: DBAdapter,
+  nowIso: string,
+): Promise<{ outcomes: number; acquisitionIds: number; usageDays: number }> {
+  const now = Date.parse(nowIso);
+  const cutoff = (days: number) => new Date(now - days * 86_400_000).toISOString();
+  const outcomes = await db.run(
+    'DELETE FROM mcp_tool_outcomes WHERE received_at < ?', cutoff(RAW_ANALYTICS_RETENTION_DAYS),
+  );
+  const acquisitionIds = await db.run(
+    'DELETE FROM acquisition_ids WHERE expires_at < ?', cutoff(ACQUISITION_ID_GRACE_DAYS),
+  );
+  const usageDays = await db.run(
+    'DELETE FROM installation_usage_daily WHERE day < ?', cutoff(USAGE_ROLLUP_RETENTION_DAYS).slice(0, 10),
+  );
+  return { outcomes: outcomes.changes, acquisitionIds: acquisitionIds.changes, usageDays: usageDays.changes };
+}
+
+/**
+ * Cron entry: claim today once via job_runs (the daily-digest pattern), then
+ * sweep. Analytics-only — a failure is logged and retried by a later tick.
+ */
+export async function runAcquisitionRetention(db: DBAdapter, now: Date): Promise<string> {
+  const nowIso = now.toISOString();
+  const day = nowIso.slice(0, 10);
+  const claimed = await db.run(
+    `INSERT OR IGNORE INTO job_runs (job, run_key, status, attempts, ran_at) VALUES ('acquisition_retention', ?, 'running', 1, ?)`,
+    day, nowIso,
+  );
+  if (claimed.changes === 0) return 'already_ran';
+  try {
+    const swept = await acquisitionRetentionSweep(db, nowIso);
+    await db.run(
+      `UPDATE job_runs SET status = 'done', ran_at = ? WHERE job = 'acquisition_retention' AND run_key = ?`,
+      nowIso, day,
+    );
+    return `swept outcomes=${swept.outcomes} acquisition_ids=${swept.acquisitionIds} usage_days=${swept.usageDays}`;
+  } catch (err) {
+    await db.run(
+      `UPDATE job_runs SET status = 'failed', ran_at = ? WHERE job = 'acquisition_retention' AND run_key = ?`,
+      nowIso, day,
+    ).catch(() => undefined);
+    throw err;
+  }
+}
+
 /**
  * The capture middleware. Registered after the version-telemetry middleware
  * (same shape: read after `await next()`, write via waitUntil, swallow every

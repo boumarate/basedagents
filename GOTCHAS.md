@@ -241,6 +241,24 @@ queries depend on must be added to **every** harness
 (`routes.test.ts`, `store.test.ts`, `approvals.test.ts`, `recovery.test.ts`) —
 forgetting this is 28 mysterious `no such column` failures at once.
 
+### Acquisition analytics (0048) touch three harnesses, and must never shadow real tables
+
+Migration `0048_acquisition.sql` is mirrored as one-line statements in
+`test-helpers.ts` `EXTRA_ALTER_STATEMENTS` (it is split on newlines, so every
+statement there must fit on one line) and appended to
+`src/mcp/test-migrations.ts`; `node.ts` picks it up from the directory. Don't
+add a stand-in for a control-plane table (e.g. a minimal `owners`) to
+`setupTestDb()`: suites that later `exec` the real `0023` hit
+`CREATE TABLE IF NOT EXISTS`, keep the stand-in, and fail on missing columns.
+Load the real migration in the suite instead (`acquisition/report.test.ts`).
+
+The capture middleware, registration attribution and the retention cron are
+gated by `ACQUISITION_ANALYTICS` (`"0"` = off). Reports exclude
+`HOUSE_ACCOUNT_IDS` ∪ `INTERNAL_AGENT_IDS` by default; set the second list for
+monitoring and smoke-test identities. The bearer report
+(`GET /v1/admin/acquisition`) needs `ADMIN_SECRET`; the console page needs the
+owner in `ADMIN_OWNER_IDS`.
+
 ### `node.ts` replays the FULL migration chain, one transaction per file
 
 The local/E2E runner (`packages/api/src/node.ts`) applies every file in
@@ -307,6 +325,14 @@ a green `npm run lint` covered console changes.
 and the CLI/MCP `VERSION` constants import from there. Bump
 `packages/keyring/package.json` and you're done. (It used to live in three
 places and shipped lying about itself once — don't reintroduce a copy.)
+
+### The hosted MCP `SERVER_VERSION` is a hand-kept copy
+
+`packages/api/src/mcp/handler.ts` runs on Workers, where the
+`createRequire('../package.json')` pattern has no filesystem. Bump its
+`SERVER_VERSION` together with `packages/mcp/package.json` (and
+`packages/mcp/server.json`). It had drifted to 0.5.0 while the stdio server was
+0.7.2.
 
 ### Publish the sdk with EVERY keyring publish — its version is the npx cache key
 

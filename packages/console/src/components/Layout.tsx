@@ -67,6 +67,7 @@ export default function Layout() {
         <NavLink to="/vault" className={cls}>Vault</NavLink>
         <NavLink to="/settings/billing" className={cls}>Billing</NavLink>
         {owner?.is_admin && <NavLink to="/admin/feedback" className={cls}>Feedback</NavLink>}
+        {owner?.is_admin && <NavLink to="/admin/acquisition" className={cls}>Acquisition</NavLink>}
         {owner?.is_admin && <NavLink to="/testing/admin" className={cls}>Testing ops</NavLink>}
 
         <div className="side-bottom">

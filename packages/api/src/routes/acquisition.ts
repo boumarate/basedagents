@@ -15,7 +15,9 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../types/index.js';
 import { generatePublicId } from '../lib/ids.js';
+import { requireAdmin } from '../lib/admin-auth.js';
 import { ACQUISITION_SOURCES, LABEL_RE } from '../acquisition/constants.js';
+import { runAcquisitionReport } from '../acquisition/report.js';
 
 /** 90 days: the documented raw-analytics retention default. */
 export const ACQUISITION_ID_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -46,6 +48,27 @@ app.post('/acquisition', async (c) => {
     id, parsed.data.source, parsed.data.campaign ?? '', now.toISOString(), expiresAt,
   );
   return c.json({ acquisition_id: id, source: parsed.data.source, campaign: parsed.data.campaign ?? null, expires_at: expiresAt });
+});
+
+/**
+ * GET /v1/admin/acquisition — the acquisition report (ADMIN_SECRET bearer,
+ * like /v1/admin/funnel). ?view=cohort|activity, ?format=json|csv
+ * (+ ?table=installations|agents for cohort CSV), ?from/?to/?source/?campaign/
+ * ?interface filters, ?include_internal=1 to include house/monitoring traffic
+ * (excluded by default, from env lists — never a client header).
+ */
+app.get('/admin/acquisition', async (c) => {
+  const denied = requireAdmin(c);
+  if (denied) return denied;
+  const result = await runAcquisitionReport(c.get('db'), c.env, (n) => c.req.query(n));
+  if (result.kind === 'error') return c.json({ error: 'bad_request', message: result.message }, result.status);
+  if (result.kind === 'csv') {
+    return c.body(result.body, 200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${result.filename}"`,
+    });
+  }
+  return c.json({ ok: true, ...result.body });
 });
 
 export default app;
