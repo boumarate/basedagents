@@ -4,6 +4,7 @@
  * NEVER mints a `ba_owner_session` — it runs its OWN magic-link login against
  * its own `oauth_login_challenges` table and hands claude.ai a bearer bound to
  * `MCP_RESOURCE_URL`.
+ * SPEC = MCP_CONNECTOR_SPEC.md at the repo root.
  *
  * Endpoints:
  *   GET  /.well-known/oauth-protected-resource[/mcp]  — PRM (RFC 9728, dual path)

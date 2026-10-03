@@ -1,5 +1,6 @@
 /**
  * The `agent-registry-mcp` Worker entrypoint (SPEC §1/§5/§9, build-order 7).
+ * SPEC = MCP_CONNECTOR_SPEC.md at the repo root.
  *
  * PROPRIETARY control-plane surface — see ../control/LICENSE and LICENSING.md.
  *

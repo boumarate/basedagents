@@ -4,6 +4,8 @@ BasedAgents ships in ChatGPT as a plugin backed by the hosted MCP server at
 `https://mcp.basedagents.ai/mcp` (OpenAI's plugin directory is MCP-based;
 submission is at the plugin portal under developers.openai.com → "With MCP").
 
+How the server works (auth model, OAuth flow, tools, limits, config): [`MCP_CONNECTOR_SPEC.md`](../../MCP_CONNECTOR_SPEC.md).
+
 What lives where:
 
 - **Directory copy** (display name, short + long description, default prompts)

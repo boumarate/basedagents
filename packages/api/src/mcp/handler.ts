@@ -1,5 +1,6 @@
 /**
  * The `/mcp` Streamable-HTTP handler (SPEC §5/§6/§7).
+ * SPEC = MCP_CONNECTOR_SPEC.md at the repo root.
  *
  * PROPRIETARY control-plane surface — see ../control/LICENSE and LICENSING.md.
  *

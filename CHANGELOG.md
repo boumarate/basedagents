@@ -8,6 +8,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs — the hosted MCP connector is documented (repo, web)
+
+The hosted MCP server at `https://mcp.basedagents.ai/mcp` had no documentation outside the ChatGPT submission folder. The worker code cited a "SPEC §N" that didn't exist.
+
+- **`MCP_CONNECTOR_SPEC.md`** (new, repo root). Its sections match the code's existing §0–§10 citations:
+  - isolation from the API Worker; cookieless CORS;
+  - the OAuth 2.1 authorization server: RFC 9728/8414 metadata, public DCR and its redirect rules, PKCE S256, RFC 8707 pinning;
+  - magic-link sign-in with the same-browser binding; token lifetimes and refresh rotation;
+  - the `/mcp` transport and its optional-bearer, per-tool auth model; the 11 tools with their annotations;
+  - `draft_task_link` bounds; every rate limit; the full variable table; tests and local dev.
+
+  The three worker files now point to it.
+- **Hosted vs local everywhere MCP is described:**
+  - the README "MCP Server" section, plus the architecture table and discovery list;
+  - `packages/mcp/README.md`;
+  - a new "Hosted MCP Connector" section in `packages/api/README.md` (endpoints, vars, `wrangler dev`, deploy);
+  - `agent.json` → `for_agents.mcp_server.hosted` (URL, transport, auth, scopes, metadata URLs, tools);
+  - `llms.txt` (through the positioning sync);
+  - `/docs/agents`; GettingStarted ("Hosted: ChatGPT and claude.ai"); a "ChatGPT & claude.ai" card on `/integrations`.
+- **Stale facts fixed:** the stdio server has 26 tools, not 23 (README, GettingStarted chips, `agent.json`). The `packages/mcp` README now shows v0.7.2, not v0.6.1.
+
 ### Added — ChatGPT-plugin groundwork: anonymous reads on the hosted MCP server, a draft-and-handoff task flow, the plugin listing copy (api mcp worker, console, web, docs)
 
 OpenAI's plugin directory is MCP-based, so the hosted server at `mcp.basedagents.ai/mcp` is now submission-shaped:
