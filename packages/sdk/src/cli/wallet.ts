@@ -227,14 +227,15 @@ export function circleSignCommand(message: string, address: string, network: str
   return `circle wallet sign message 0x${Buffer.from(message, 'utf8').toString('hex')} --hex --address ${address} --chain ${chain}`;
 }
 /**
- * Circle's own fix when its CLI answers "Wallet not deployed": a zero-amount transfer
- * to itself deploys the wallet (Circle's paymaster covers the gas). The deployed
- * wallet then signs and is checked per ERC-1271.
+ * Deploys a Circle agent wallet: a zero-amount USDC transfer to itself (Circle's paymaster
+ * covers the gas). Circle's CLI won't sign until the wallet is deployed, so a wallet that
+ * has never made a transaction needs this once before circleSignCommand. --token is left
+ * out: it takes a token contract address and defaults to USDC.
  */
 export function circleDeployCommand(address: string, network: string): string | null {
   const chain = CIRCLE_CHAINS[network];
   if (!chain) return null;
-  return `circle wallet transfer ${address} --amount 0 --address ${address} --chain ${chain} --token usdc`;
+  return `circle wallet transfer ${address} --amount 0 --address ${address} --chain ${chain}`;
 }
 /** The browser page that asks a wallet to sign a bind message (the message rides in the URL fragment, never sent to a server). */
 export function signPageUrl(message: string): string {
@@ -413,10 +414,11 @@ ${bold('Options:')}
       console.log(message);
       console.error('');
       if (circle && circleDeploy) {
-        console.error(`  ${dim('With a Circle agent wallet, sign it with the Circle CLI:')}`);
-        console.error(`    ${cyan(circle)}`);
-        console.error(`  ${dim('If it answers "Wallet not deployed", deploy the wallet with a zero-amount transfer to itself, then sign again:')}`);
+        console.error(`  ${dim('With a Circle agent wallet: if it has never made a transaction, deploy it first')}`);
+        console.error(`  ${dim('(Circle signs only from a deployed wallet; this moves no USDC):')}`);
         console.error(`    ${cyan(circleDeploy)}`);
+        console.error(`  ${dim('Then sign it with the Circle CLI:')}`);
+        console.error(`    ${cyan(circle)}`);
       }
       console.error(`  Then run: ${cyan(`${next} 0x...`)}`);
       console.error(`  ${dim('An agent with the wallet key can instead set BASEDAGENTS_WALLET_PRIVATE_KEY and rerun.')}`);

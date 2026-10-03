@@ -5,9 +5,5 @@
     "rootDir": "src",
     "composite": true
   },
-  "include": ["src/**/*.ts", "src/**/*.json"],
-  // The 2b interop test imports @basedagents/keyring, whose types live in its
-  // BUILT dist/. The project reference makes `tsc --build` emit keyring first,
-  // so a clean checkout (CI) typechecks without a separate build step.
-  "references": [{ "path": "../keyring" }]
+  "include": ["src/**/*.ts", "src/**/*.json"]
 }

@@ -38,16 +38,6 @@ export interface Delegation {
   status: string;
   created_at: string;
   revoked_at?: string | null;
-  /** When the machine confirmed it executed the local kill (null = still owed). */
-  daemon_confirmed_at?: string | null;
-  /** Counts-only JSON from that kill: {revoked_grants, burned, burn_failures, residuals, note?}. */
-  daemon_kill_report?: string | null;
-}
-
-export interface VaultKeyBinding {
-  id: string;
-  vault_public_key: string;
-  bound_at: string;
 }
 
 export interface OwnerMe {
@@ -55,13 +45,11 @@ export interface OwnerMe {
   email: string | null;
   credentials: OwnerCredential[];
   delegations: Delegation[];
-  /** The active vault-key binding — null until bind_vault_key has run. */
-  vault_key: VaultKeyBinding | null;
   /** Metadata of the open recovery code (the code itself is never stored). */
   recovery_code: { created_at: string } | null;
   /** The ladder rung of this session: 'passkey' | 'email'. */
   session_method: string;
-  /** False until the first approval mints the passkey. */
+  /** False until the first action (post a task, connect an agent) mints the passkey. */
   has_passkey: boolean;
   /** Operator pages (feedback triage) are visible — ADMIN_OWNER_IDS on the API. */
   is_admin?: boolean;
@@ -170,76 +158,6 @@ export interface AcquisitionActivityReport {
   to: string;
   include_internal: boolean;
   rows: AcquisitionActivityRow[];
-}
-
-// ── Authority ladder / onboarding ──
-
-export interface LinkInfo {
-  status: 'pending' | 'email_sent' | 'claimed' | 'expired';
-  agent_id: string;
-  agent_name: string | null;
-  /** Masked attached address (`m•••@…`) — never the full email. */
-  email_hint?: string | null;
-  /** The vault behind this link already has a claimed account. */
-  re_claim?: boolean;
-}
-
-export interface ClaimResult {
-  owner_id: string;
-  agent_id: string;
-  agent_name: string | null;
-  delegation_blocked: { active: number; max: number } | null;
-}
-
-/**
- * A machine-reported fact about one of its keys (metadata only, never values).
- * Absence of a fact means "unknown" — an old daemon that never reports — and
- * the UI must stay optimistic for unknowns, not punish them.
- */
-export interface CredentialFact {
-  credential_id: string;
-  provider: string;
-  rotatable: boolean;
-  reported_at: string;
-}
-
-export interface ConnectionInfo {
-  id: string;
-  agent_id: string;
-  provider: string;
-  label: string | null;
-  /** 'sealed' = browser-sealed paste; 'provision' = minted by the user's machine; 'rotate' = replace a minted key in place; 'remove' = revoke + burn + drop one key. */
-  kind?: 'sealed' | 'provision' | 'rotate' | 'remove';
-  /** 'processing' = a daemon has claimed the row and is working on it.
-   *  'revoked' = retired by the kill switch — every reader skips it. */
-  status: 'pending' | 'processing' | 'stored' | 'failed' | 'revoked';
-  /** The machine-local credential this row stored (or, for 'rotate', targets). Opaque metadata, never a secret. */
-  daemon_credential_id?: string | null;
-  failure_reason: string | null;
-  created_at: string;
-}
-
-export interface GrantConstraints {
-  expires_at?: string;
-  max_lease_ttl_seconds?: number;
-  max_uses?: number;
-  project?: string;
-}
-
-export interface KeyringRequest {
-  id: string;
-  owner_id: string;
-  agent_id: string;
-  credential_id: string;
-  credential_label: string | null;
-  provider: string | null;
-  constraints: GrantConstraints;
-  note: string | null;
-  /** 'revoked' = retired by the kill switch, whatever state it was in. */
-  status: 'pending' | 'approved' | 'denied' | 'revoked';
-  created_at: string;
-  decided_at: string | null;
-  deny_reason: string | null;
 }
 
 /**
@@ -492,17 +410,6 @@ export interface ActionBeginResponse {
   timeout?: number;
 }
 
-/** The server-armed challenge for the approve_grant ceremony. */
-export interface ApproveBeginResponse {
-  challenge: string;
-  nonce: string;
-  rpId: string;
-  allowCredentials?: Array<{ type: 'public-key'; id: string; transports?: string[] }>;
-  action_canonical: string;
-  agent_pubkey: string;
-  timeout?: number;
-}
-
 export interface OwnerAssertion {
   credentialId: string;
   authenticatorData: string;
@@ -521,18 +428,4 @@ export interface RecoverFinishResponse {
   credential_id: string;
   revoked_passkeys: number;
   next_step: string;
-}
-
-export interface BillingInfo {
-  plan: 'free' | 'pro' | 'team';
-  plan_status: 'active' | 'past_due' | 'canceled';
-  current_period_end: string | null;
-  entitlements: {
-    /** null = unlimited */
-    max_agents: number | null;
-    retention_days: number;
-    anomaly_flags: boolean;
-  };
-  active_agents: number;
-  billing_configured: boolean;
 }

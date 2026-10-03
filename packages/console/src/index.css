@@ -164,7 +164,7 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .status-denied { color: var(--danger); background: var(--danger-bg); }
 
 /* ── banners ── */
-.banner { border-radius: 10px; padding: 0.7rem 0.9rem; margin: 1rem 0; font-size: 0.9rem; line-height: 1.4; }
+.banner { border-radius: 10px; padding: 0.7rem 0.9rem; margin: 1rem 0; font-size: 0.9rem; line-height: 1.4; overflow-wrap: anywhere; }
 .banner-error { color: #ffd4d4; background: var(--danger-bg); border: 1px solid #5b2730; }
 .banner-warn { color: #ffe9b0; background: var(--warn-bg); border: 1px solid #5b4a1a; }
 
@@ -184,7 +184,7 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .auth-brand { display: inline-block; font-weight: 700; margin-bottom: 1.5rem; color: var(--text); text-decoration: none; }
 a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .auth-title { font-size: 1.4rem; margin: 0 0 0.4rem; }
-.auth-lede { color: var(--muted); margin: 0 0 1.5rem; line-height: 1.5; }
+.auth-lede { color: var(--muted); margin: 0 0 1.5rem; line-height: 1.5; overflow-wrap: anywhere; }
 .auth-lede code { color: var(--text); }
 .auth-switch { margin-top: 1.25rem; text-align: center; font-size: 0.9rem; }
 
@@ -203,7 +203,7 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .input-affix input { flex: 1 1 auto; }
 .affix { color: var(--muted); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.02em; }
 
-/* ── panels (Vault page sections) ── */
+/* ── panels (Home sign-in, agent page) ── */
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.4rem; margin-top: 1.5rem; }
 .panel h2 { font-size: 1.05rem; margin: 0 0 0.9rem; }
 .panel-note { font-size: 0.88rem; line-height: 1.5; }
@@ -226,7 +226,7 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .row-muted { opacity: 0.7; }
 .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.85rem; }
 
-/* ── onboarding ladder (link / signup / invited / welcome / home) ── */
+/* ── onboarding ladder (start / login / home) ── */
 .btn-danger { background: transparent; color: var(--danger); border-color: #5b2730; }
 .btn-danger:not(:disabled):hover { background: var(--danger-bg); }
 
@@ -251,7 +251,7 @@ a.auth-brand:hover { color: var(--text); opacity: 0.8; }
 .welcome-done { margin-top: 2.5rem; }
 .welcome-done .btn { margin-top: 0.75rem; }
 
-/* ── /welcome live checklist ── */
+/* ── checklist ── */
 .checklist { list-style: none; margin: 1.25rem 0 0; padding: 0; display: grid; gap: 0.9rem; }
 .check-step { display: flex; gap: 0.9rem; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.2rem; }
 .check-step.active { border-color: var(--accent); }

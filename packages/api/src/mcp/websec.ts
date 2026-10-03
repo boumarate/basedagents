@@ -17,8 +17,28 @@
  * is verified in constant time so a byte-by-byte forgery oracle is closed.
  */
 
+import { sha256, bytesToHex } from '../crypto/index.js';
+
 const enc = new TextEncoder();
 const dec = new TextDecoder();
+
+/**
+ * Best client-IP guess on the edge: Cloudflare's header first, the left-most
+ * X-Forwarded-For hop as the fallback. Shared by the OAuth DCR throttle and the
+ * /mcp anonymous-call limiter so both key the same way.
+ */
+export function clientIpFrom(header: (name: string) => string | undefined): string {
+  return (
+    header('cf-connecting-ip') ||
+    header('x-forwarded-for')?.split(',')[0]?.trim() ||
+    'unknown'
+  );
+}
+
+/** Rate-limit keys store a hash, never the raw IP. */
+export function ipHash(ip: string): string {
+  return bytesToHex(sha256(enc.encode(ip)));
+}
 
 /** URL-safe base64 without padding — the repo-wide token/id encoding. */
 export function base64urlEncode(bytes: Uint8Array): string {

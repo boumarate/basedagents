@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useOwner } from '../state/session.js';
-import { agentDisplayName } from '../lib/agentActions.js';
+import { agentDisplayName } from '../lib/agents.js';
 
 /** Truncate an owner id for the sidebar (ow_ + base58 is long). */
 function shortOwner(id: string): string {
@@ -8,11 +8,9 @@ function shortOwner(id: string): string {
 }
 
 /**
- * The logged-in shell: one left sidebar for every page. The base case lives
- * at the top — Home, then every connected agent by name (click one to see
- * what it can use, cut it off, rotate its keys) and "Add an agent". The
- * power pages sit below under "Advanced", so the vocabulary split survives:
- * base-case words above the fold, the full console one section down.
+ * The logged-in shell: one left sidebar for every page. Home at the top, then
+ * every connected agent by name (click one to see its page or disconnect it)
+ * and "Add an agent"; the work pages — browse, your tasks, the board — below.
  *
  * Base-case surface — the banned-words rule applies (scripts/lint-ui-words.mjs).
  */
@@ -58,14 +56,11 @@ export default function Layout() {
           + Add an agent
         </NavLink>
 
-        <div className="side-head">Advanced</div>
+        <div className="side-head">Work</div>
         <NavLink to="/explore" className={cls}>Browse tasks</NavLink>
         <NavLink to="/tasks" className={cls}>My tasks</NavLink>
         <NavLink to="/testing" className={cls}>Testing</NavLink>
         <NavLink to="/board" className={cls}>Board</NavLink>
-        <NavLink to="/approvals" className={cls}>Approvals</NavLink>
-        <NavLink to="/vault" className={cls}>Vault</NavLink>
-        <NavLink to="/settings/billing" className={cls}>Billing</NavLink>
         {owner?.is_admin && <NavLink to="/admin/feedback" className={cls}>Feedback</NavLink>}
         {owner?.is_admin && <NavLink to="/admin/acquisition" className={cls}>Acquisition</NavLink>}
         {owner?.is_admin && <NavLink to="/testing/admin" className={cls}>Testing ops</NavLink>}

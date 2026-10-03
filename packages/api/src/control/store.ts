@@ -14,7 +14,6 @@
  * prefixed random id. Times are stored as ISO-8601 strings.
  */
 import type { DBAdapter } from '../db/adapter.js';
-import type { GrantConstraints } from './grant-actions.js';
 import {
   base58Encode,
   sha256,
@@ -31,15 +30,11 @@ export interface OwnerRow {
   email_verified: number;
   display_name: string | null;
   status: string;
+  /** Stripe customer for one-time purchases (Agent Testing). Keyring Pro's
+   * subscription columns were dropped in 0048; the customer id survives. */
+  stripe_customer_id: string | null;
   created_at: string;
   updated_at: string;
-  /** Billing (migration 0026): 'free' | 'pro' | 'team'. */
-  plan: string;
-  /** 'active' | 'past_due' | 'canceled'. */
-  plan_status: string;
-  stripe_customer_id: string | null;
-  stripe_subscription_id: string | null;
-  current_period_end: string | null;
 }
 
 export interface CredentialRow {
@@ -103,16 +98,6 @@ export interface ActionAssertionRow {
   created_at: string;
 }
 
-export interface VaultKeyRow {
-  id: string;
-  owner_id: string;
-  vault_public_key: string;
-  status: string;
-  binding_assertion_id: string | null;
-  bound_at: string;
-  rotated_at: string | null;
-}
-
 export interface DelegationRow {
   id: string;
   owner_id: string;
@@ -129,51 +114,6 @@ export interface DelegationRow {
   daemon_confirmed_at: string | null;
   /** Counts-only JSON report from that kill — never values. */
   daemon_kill_report: string | null;
-}
-
-// ── Keyring approvals (migration 0024) ──
-
-export interface KeyringRequestRow {
-  id: string;
-  owner_id: string;
-  agent_id: string;
-  credential_id: string;
-  credential_label: string | null;
-  provider: string | null;
-  /** JSON text — the requested constraints (only the recognized keys). */
-  constraints: string;
-  note: string | null;
-  status: string; // pending | approved | denied
-  created_at: string;
-  decided_at: string | null;
-  decision_assertion_id: string | null;
-  deny_reason: string | null;
-}
-
-export interface GrantApprovalRow {
-  id: string;
-  owner_id: string;
-  request_id: string;
-  agent_id: string;
-  /** base58 Ed25519 — the pinned sealing target the owner signed. */
-  agent_pubkey: string;
-  credential_id: string;
-  /** JSON text — the exact approved constraints. */
-  constraints: string;
-  nonce: string;
-  action_hash: string;
-  /** WebAuthn credential id of the passkey that signed the approval. */
-  assertion_credential_id: string;
-  authenticator_data: string;
-  client_data_json: string;
-  signature: string;
-  /** action_assertions.id of the hash-chained assertion that authorized this. */
-  assertion_id: string;
-  status: string; // pending_daemon | confirmed | failed
-  created_at: string;
-  confirmed_at: string | null;
-  daemon_grant_id: string | null;
-  failure_reason: string | null;
 }
 
 // ─── local helpers ───
@@ -232,13 +172,9 @@ function mapOwnerRow(r: RawRow): OwnerRow {
     email_verified: Number(r.email_verified),
     display_name: asNullableStr(r.display_name),
     status: asStr(r.status),
+    stripe_customer_id: asNullableStr(r.stripe_customer_id),
     created_at: asStr(r.created_at),
     updated_at: asStr(r.updated_at),
-    plan: asStr(r.plan ?? 'free'),
-    plan_status: asStr(r.plan_status ?? 'active'),
-    stripe_customer_id: asNullableStr(r.stripe_customer_id),
-    stripe_subscription_id: asNullableStr(r.stripe_subscription_id),
-    current_period_end: asNullableStr(r.current_period_end),
   };
 }
 
@@ -307,18 +243,6 @@ function mapActionAssertionRow(r: RawRow): ActionAssertionRow {
   };
 }
 
-function mapVaultKeyRow(r: RawRow): VaultKeyRow {
-  return {
-    id: asStr(r.id),
-    owner_id: asStr(r.owner_id),
-    vault_public_key: asStr(r.vault_public_key),
-    status: asStr(r.status),
-    binding_assertion_id: asNullableStr(r.binding_assertion_id),
-    bound_at: asStr(r.bound_at),
-    rotated_at: asNullableStr(r.rotated_at),
-  };
-}
-
 function mapDelegationRow(r: RawRow): DelegationRow {
   return {
     id: asStr(r.id),
@@ -336,53 +260,6 @@ function mapDelegationRow(r: RawRow): DelegationRow {
   };
 }
 
-function mapKeyringRequestRow(r: RawRow): KeyringRequestRow {
-  return {
-    id: asStr(r.id),
-    owner_id: asStr(r.owner_id),
-    agent_id: asStr(r.agent_id),
-    credential_id: asStr(r.credential_id),
-    credential_label: asNullableStr(r.credential_label),
-    provider: asNullableStr(r.provider),
-    constraints: asStr(r.constraints),
-    note: asNullableStr(r.note),
-    status: asStr(r.status),
-    created_at: asStr(r.created_at),
-    decided_at: asNullableStr(r.decided_at),
-    decision_assertion_id: asNullableStr(r.decision_assertion_id),
-    deny_reason: asNullableStr(r.deny_reason),
-  };
-}
-
-function mapGrantApprovalRow(r: RawRow): GrantApprovalRow {
-  return {
-    id: asStr(r.id),
-    owner_id: asStr(r.owner_id),
-    request_id: asStr(r.request_id),
-    agent_id: asStr(r.agent_id),
-    agent_pubkey: asStr(r.agent_pubkey),
-    credential_id: asStr(r.credential_id),
-    constraints: asStr(r.constraints),
-    nonce: asStr(r.nonce),
-    action_hash: asStr(r.action_hash),
-    assertion_credential_id: asStr(r.assertion_credential_id),
-    authenticator_data: asStr(r.authenticator_data),
-    client_data_json: asStr(r.client_data_json),
-    signature: asStr(r.signature),
-    assertion_id: asStr(r.assertion_id),
-    status: asStr(r.status),
-    created_at: asStr(r.created_at),
-    confirmed_at: asNullableStr(r.confirmed_at),
-    daemon_grant_id: asNullableStr(r.daemon_grant_id),
-    failure_reason: asNullableStr(r.failure_reason),
-  };
-}
-
-/**
- * The canonical, hash-covered view of an action-assertion event: every stored
- * column EXCEPT entry_hash itself. entry_hash = sha256Hex(canonicalJson(this)).
- * canonicalJsonStringify sorts keys, so field order here is irrelevant.
- */
 function actionAssertionEvent(row: Omit<ActionAssertionRow, 'entry_hash'>): Record<string, unknown> {
   return {
     id: row.id,
@@ -447,13 +324,6 @@ export interface AppendActionAssertionInput {
   signature: string;
 }
 
-export interface CreateVaultBindingInput {
-  ownerId: string;
-  vaultPublicKey: string;
-  /** Absent for ladder-claimed bindings (ratified by the magic-link claim). */
-  bindingAssertionId?: string;
-}
-
 export interface CreateDelegationInput {
   ownerId: string;
   agentId: string;
@@ -467,42 +337,6 @@ export interface RevokeDelegationInput {
   delegationId: string;
   revokeAssertionId: string;
   nowIso: string;
-}
-
-export interface CreateKeyringRequestInput {
-  ownerId: string;
-  agentId: string;
-  credentialId: string;
-  credentialLabel?: string;
-  provider?: string;
-  /** Recognized constraint keys only — stored as JSON text. */
-  constraints: GrantConstraints;
-  note?: string;
-}
-
-export interface SetRequestDecisionInput {
-  id: string;
-  status: 'approved' | 'denied';
-  assertionId?: string;
-  denyReason?: string;
-  nowIso: string;
-}
-
-export interface CreateGrantApprovalInput {
-  ownerId: string;
-  requestId: string;
-  agentId: string;
-  agentPubkey: string;
-  credentialId: string;
-  /** Recognized constraint keys only — stored as JSON text. */
-  constraints: GrantConstraints;
-  nonce: string;
-  actionHash: string;
-  assertionCredentialId: string;
-  authenticatorData: string;
-  clientDataJson: string;
-  signature: string;
-  assertionId: string;
 }
 
 // ─── ControlStore ───
@@ -911,22 +745,7 @@ export class ControlStore {
     return res.changes === 1;
   }
 
-  // ── Billing (migration 0026 — plan state; NEVER consulted on security paths) ──
-
-  /** The agent is the unit of scale: how many ACTIVE delegations this owner holds. */
-  async countActiveDelegations(ownerId: string): Promise<number> {
-    const r = await this.db.get<RawRow>(
-      `SELECT COUNT(*) AS n FROM delegations WHERE owner_id = ? AND status = 'active'`,
-      ownerId
-    );
-    return Number(r?.n ?? 0);
-  }
-
-  async getOwnerByStripeCustomerId(customerId: string): Promise<OwnerRow | null> {
-    const r = await this.db.get<RawRow>(`SELECT * FROM owners WHERE stripe_customer_id = ?`, customerId);
-    return r ? mapOwnerRow(r) : null;
-  }
-
+  /** Remember the owner's Stripe customer so Agent Testing checkouts reuse it. */
   async setStripeCustomerId(ownerId: string, customerId: string): Promise<void> {
     await this.db.run(
       `UPDATE owners SET stripe_customer_id = ?, updated_at = ? WHERE id = ?`,
@@ -936,129 +755,8 @@ export class ControlStore {
     );
   }
 
-  async updateOwnerBilling(input: {
-    ownerId: string;
-    plan: 'free' | 'pro' | 'team';
-    planStatus: 'active' | 'past_due' | 'canceled';
-    stripeSubscriptionId?: string | null;
-    currentPeriodEnd?: string | null;
-  }): Promise<void> {
-    await this.db.run(
-      `UPDATE owners
-       SET plan = ?, plan_status = ?, stripe_subscription_id = ?, current_period_end = ?, updated_at = ?
-       WHERE id = ?`,
-      input.plan,
-      input.planStatus,
-      input.stripeSubscriptionId ?? null,
-      input.currentPeriodEnd ?? null,
-      nowIsoString(),
-      input.ownerId
-    );
-  }
+  // ── Authority ladder (migration 0027): magic links ──
 
-  /**
-   * ATOMIC idempotency claim for a Stripe webhook event: the INSERT succeeds
-   * exactly once per event id; a replay hits the UNIQUE constraint and returns
-   * false (§4 conditional-write discipline).
-   */
-  async claimStripeEvent(eventId: string, type: string): Promise<boolean> {
-    try {
-      await this.db.run(
-        `INSERT INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)`,
-        eventId,
-        type,
-        nowIsoString()
-      );
-      return true;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('UNIQUE') || msg.includes('SQLITE_CONSTRAINT')) return false;
-      throw e;
-    }
-  }
-
-  // ── Authority ladder (migration 0027): link codes, magic links, invites ──
-
-  /**
-   * Ensure a registry row exists for a keyring-first agent (created by
-   * `keyring init`, claimed via email — the ladder's abuse brake replaces
-   * proof-of-work for these). No-op when the agent is already registered.
-   */
-  async ensureAgent(agentId: string, publicKey: Uint8Array, name: string): Promise<void> {
-    try {
-      await this.db.run(
-        `INSERT INTO agents (id, public_key, name, description, capabilities, protocols, status)
-         VALUES (?, ?, ?, 'Registered via Keyring link claim', '[]', '["mcp"]', 'active')`,
-        agentId,
-        publicKey,
-        name
-      );
-    } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
-    }
-  }
-
-  async createLinkCode(input: {
-    vaultPublicKey: string;
-    agentId: string;
-    agentPublicKey: string;
-    agentName?: string;
-    ttlSeconds: number;
-  }): Promise<{ id: string; code: string }> {
-    const id = randomId('lnk_');
-    // Short, URL-safe, unambiguous (no lookalike chars in base58).
-    const code = base58Encode(randomBytes(8));
-    const now = new Date();
-    await this.db.run(
-      `INSERT INTO link_codes
-         (id, code, vault_public_key, agent_id, agent_public_key, agent_name,
-          email, status, created_at, expires_at, claimed_at)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', ?, ?, NULL)`,
-      id,
-      code,
-      input.vaultPublicKey,
-      input.agentId,
-      input.agentPublicKey,
-      input.agentName ?? null,
-      now.toISOString(),
-      new Date(now.getTime() + input.ttlSeconds * 1000).toISOString()
-    );
-    return { id, code };
-  }
-
-  async getLinkCode(code: string): Promise<{
-    id: string; code: string; vault_public_key: string; agent_id: string;
-    agent_public_key: string; agent_name: string | null; email: string | null;
-    status: string; expires_at: string;
-  } | null> {
-    const r = await this.db.get<RawRow>(`SELECT * FROM link_codes WHERE code = ?`, code);
-    if (!r) return null;
-    return {
-      id: asStr(r.id), code: asStr(r.code),
-      vault_public_key: asStr(r.vault_public_key),
-      agent_id: asStr(r.agent_id), agent_public_key: asStr(r.agent_public_key),
-      agent_name: asNullableStr(r.agent_name), email: asNullableStr(r.email),
-      status: asStr(r.status), expires_at: asStr(r.expires_at),
-    };
-  }
-
-  async getLinkCodeById(id: string): Promise<{
-    id: string; code: string; vault_public_key: string; agent_id: string;
-    agent_public_key: string; agent_name: string | null; email: string | null;
-    status: string; expires_at: string;
-  } | null> {
-    const r = await this.db.get<RawRow>(`SELECT * FROM link_codes WHERE id = ?`, id);
-    if (!r) return null;
-    return {
-      id: asStr(r.id), code: asStr(r.code),
-      vault_public_key: asStr(r.vault_public_key),
-      agent_id: asStr(r.agent_id), agent_public_key: asStr(r.agent_public_key),
-      agent_name: asNullableStr(r.agent_name), email: asNullableStr(r.email),
-      status: asStr(r.status), expires_at: asStr(r.expires_at),
-    };
-  }
-
-  /** The claim click IS the email verification. */
   async setEmailVerified(ownerId: string): Promise<void> {
     await this.db.run(
       `UPDATE owners SET email_verified = 1, updated_at = ? WHERE id = ?`,
@@ -1067,60 +765,22 @@ export class ControlStore {
     );
   }
 
-  /**
-   * Attach a start-code-verified email to a still-pending link code (the
-   * browser-door hand-off). Status stays 'pending' — nothing has been sent;
-   * /link renders the masked address with a one-click send instead of an
-   * empty email field. markLinkEmailSent overwrites on actual submission.
-   */
-  async attachLinkEmail(linkCodeId: string, email: string): Promise<void> {
-    await this.db.run(
-      `UPDATE link_codes SET email = ? WHERE id = ? AND status = 'pending'`,
-      email,
-      linkCodeId
-    );
-  }
-
-  /** Record the claim email + move pending → email_sent (idempotent re-send allowed). */
-  async markLinkEmailSent(linkCodeId: string, email: string): Promise<void> {
-    await this.db.run(
-      `UPDATE link_codes SET email = ?, status = 'email_sent'
-       WHERE id = ? AND status IN ('pending','email_sent')`,
-      email,
-      linkCodeId
-    );
-  }
-
-  /** ATOMICALLY claim a link code — single-use, unexpired (§4 discipline). */
-  async claimLinkCode(linkCodeId: string, nowIso: string): Promise<boolean> {
-    const res = await this.db.run(
-      `UPDATE link_codes SET status = 'claimed', claimed_at = ?
-       WHERE id = ? AND status IN ('pending','email_sent') AND expires_at > ?`,
-      nowIso,
-      linkCodeId,
-      nowIso
-    );
-    return res.changes === 1;
-  }
-
   async createMagicLinkToken(input: {
     tokenHash: string;
-    purpose: 'claim' | 'login' | 'start' | 'start_code';
+    purpose: 'login' | 'start' | 'start_code';
     email: string;
-    linkCodeId?: string;
     ownerId?: string;
     ttlSeconds: number;
   }): Promise<void> {
     const now = new Date();
     await this.db.run(
       `INSERT INTO magic_link_tokens
-         (id, token_hash, purpose, email, link_code_id, owner_id, created_at, expires_at, consumed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+         (id, token_hash, purpose, email, owner_id, created_at, expires_at, consumed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
       randomId('mlt_'),
       input.tokenHash,
       input.purpose,
       input.email,
-      input.linkCodeId ?? null,
       input.ownerId ?? null,
       now.toISOString(),
       new Date(now.getTime() + input.ttlSeconds * 1000).toISOString()
@@ -1129,10 +789,10 @@ export class ControlStore {
 
   /** ATOMICALLY consume a magic-link token (single-use, unexpired). Returns the row or null. */
   async consumeMagicLinkToken(tokenHash: string, purpose: string, nowIso: string): Promise<{
-    email: string; link_code_id: string | null; owner_id: string | null;
+    email: string; owner_id: string | null;
   } | null> {
     const r = await this.db.get<RawRow>(
-      `SELECT email, link_code_id, owner_id FROM magic_link_tokens
+      `SELECT email, owner_id FROM magic_link_tokens
        WHERE token_hash = ? AND purpose = ? AND consumed_at IS NULL AND expires_at > ?`,
       tokenHash,
       purpose,
@@ -1149,363 +809,8 @@ export class ControlStore {
     if (res.changes !== 1) return null; // a concurrent consume won the race
     return {
       email: asStr(r.email),
-      link_code_id: asNullableStr(r.link_code_id),
       owner_id: asNullableStr(r.owner_id),
     };
-  }
-
-  // ── Owner invites (agent-first entry; claim-pending = structurally nothing) ──
-
-  async countRecentInvitesByAgent(agentId: string, sinceIso: string): Promise<number> {
-    const r = await this.db.get<RawRow>(
-      `SELECT COUNT(*) AS n FROM owner_invites WHERE agent_id = ? AND created_at > ?`,
-      agentId,
-      sinceIso
-    );
-    return Number(r?.n ?? 0);
-  }
-
-  async getOpenInvite(email: string, agentId: string): Promise<{
-    id: string; invite_count: number; last_sent_at: string | null;
-  } | null> {
-    const r = await this.db.get<RawRow>(
-      `SELECT id, invite_count, last_sent_at FROM owner_invites
-       WHERE email = ? AND agent_id = ? AND status = 'pending' AND expires_at > ?
-       ORDER BY created_at DESC, id DESC LIMIT 1`,
-      email,
-      agentId,
-      nowIsoString()
-    );
-    return r
-      ? { id: asStr(r.id), invite_count: Number(r.invite_count), last_sent_at: asNullableStr(r.last_sent_at) }
-      : null;
-  }
-
-  /**
-   * Create a pending invite. Returns null if a concurrent racer already created
-   * the open (email, agent) row — the partial unique index (0027) makes this
-   * exactly-once, so callers treat null as "someone else just created it".
-   */
-  async createInvite(input: { email: string; agentId: string; agentName?: string; ttlSeconds: number }): Promise<string | null> {
-    const id = randomId('inv_');
-    const now = new Date();
-    const res = await this.db.run(
-      `INSERT INTO owner_invites
-         (id, email, agent_id, agent_name, invite_count, status, created_at, last_sent_at, expires_at, claimed_at)
-       VALUES (?, ?, ?, ?, 1, 'pending', ?, ?, ?, NULL)
-       ON CONFLICT DO NOTHING`,
-      id,
-      input.email,
-      input.agentId,
-      input.agentName ?? null,
-      now.toISOString(),
-      now.toISOString(),
-      new Date(now.getTime() + input.ttlSeconds * 1000).toISOString()
-    );
-    return res.changes === 1 ? id : null;
-  }
-
-  /** Bump the re-send counter (backoff bookkeeping for unresponsive emails). */
-  async touchInvite(id: string, nowIso: string): Promise<void> {
-    await this.db.run(
-      `UPDATE owner_invites SET invite_count = invite_count + 1, last_sent_at = ? WHERE id = ?`,
-      nowIso,
-      id
-    );
-  }
-
-  async markInviteClaimed(email: string, nowIso: string): Promise<void> {
-    await this.db.run(
-      `UPDATE owner_invites SET status = 'claimed', claimed_at = ?
-       WHERE email = ? AND status = 'pending'`,
-      nowIso,
-      email
-    );
-  }
-
-  // ── Pending connections (connect card: browser-sealed, daemon-resolved) ──
-
-  async createPendingConnection(input: {
-    ownerId: string;
-    agentId: string;
-    provider: string;
-    label?: string;
-    envVar?: string;
-    /** '' for kinds 'provision'/'rotate'/'remove' — no secret is ever in flight for those rows. */
-    sealedSecret: string;
-    kind?: 'sealed' | 'provision' | 'rotate' | 'remove';
-    /** kinds 'rotate'/'remove': the daemon credential to act on — set at BIRTH, not resolve. */
-    daemonCredentialId?: string;
-  }): Promise<string> {
-    const id = randomId('pcx_');
-    await this.db.run(
-      `INSERT INTO pending_connections
-         (id, owner_id, agent_id, provider, label, env_var, sealed_secret, kind, daemon_credential_id, status, created_at, resolved_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL)`,
-      id,
-      input.ownerId,
-      input.agentId,
-      input.provider,
-      input.label ?? null,
-      input.envVar ?? null,
-      input.sealedSecret,
-      input.kind ?? 'sealed',
-      input.daemonCredentialId ?? null,
-      nowIsoString()
-    );
-    return id;
-  }
-
-  /**
-   * The id of a live (pending/processing) row that already represents this
-   * exact work, if any — the dedup key. Field-hit: clicking "Do it for me"
-   * more than once queued a separate provision row each time, and a daemon
-   * drained them one per round, re-opening the browser and (after the first
-   * success) minting a redundant key per duplicate. Provision dedups on
-   * (agent, provider); rotate on (agent, provider, target credential).
-   */
-  async findLivePendingConnection(input: {
-    ownerId: string; agentId: string; provider: string; kind: string; target?: string | null;
-  }): Promise<string | null> {
-    const row = await this.db.get<RawRow>(
-      `SELECT id FROM pending_connections
-       WHERE owner_id = ? AND agent_id = ? AND provider = ? AND kind = ?
-         AND status IN ('pending', 'processing')
-         AND (? IS NULL OR daemon_credential_id = ?)
-       ORDER BY created_at ASC LIMIT 1`,
-      input.ownerId, input.agentId, input.provider, input.kind,
-      input.target ?? null, input.target ?? null
-    );
-    return row ? asStr(row.id) : null;
-  }
-
-  /**
-   * Once a PROVISION row stores, retire the OTHER live provision rows for the
-   * same (agent, provider) — each surviving duplicate would mint a redundant
-   * provider-side key. No-op unless the kept row is itself a stored provision.
-   * Terminal 'revoked' status every reader's positive filter skips.
-   */
-  async cancelSiblingProvisions(ownerId: string, keptId: string): Promise<number> {
-    const res = await this.db.run(
-      `UPDATE pending_connections
-       SET status = 'revoked', resolved_at = ?, sealed_secret = ''
-       WHERE owner_id = ? AND kind = 'provision' AND status IN ('pending', 'processing') AND id != ?
-         AND (SELECT kind FROM pending_connections WHERE id = ?) = 'provision'
-         AND agent_id = (SELECT agent_id FROM pending_connections WHERE id = ?)
-         AND provider = (SELECT provider FROM pending_connections WHERE id = ?)`,
-      nowIsoString(), ownerId, keptId, keptId, keptId, keptId
-    );
-    return res.changes;
-  }
-
-  /**
-   * When a 'remove' operation resolves, retire the CHIP it removed: the
-   * stored/live row for the same (agent, credential). This is what makes the
-   * console chip disappear after a per-key Remove. No-op unless the kept row
-   * is itself a 'remove' (so a normal resolve never retires a real holding).
-   */
-  async retireChipsForRemovedKey(ownerId: string, removeRowId: string): Promise<number> {
-    const res = await this.db.run(
-      `UPDATE pending_connections
-       SET status = 'revoked', resolved_at = ?, sealed_secret = ''
-       WHERE owner_id = ? AND id != ? AND kind != 'remove'
-         AND status IN ('stored', 'pending', 'processing')
-         AND (SELECT kind FROM pending_connections WHERE id = ?) = 'remove'
-         AND agent_id = (SELECT agent_id FROM pending_connections WHERE id = ?)
-         AND daemon_credential_id = (SELECT daemon_credential_id FROM pending_connections WHERE id = ?)`,
-      nowIsoString(), ownerId, removeRowId, removeRowId, removeRowId, removeRowId
-    );
-    return res.changes;
-  }
-
-  /**
-   * Mirror the machine's real local grants into console-visible rows so the
-   * console reflects terminal `keyring connect`/`grant`, not only
-   * console-initiated connections (field-hit). Each entry becomes a 'stored'
-   * row unless a LIVE row (stored/pending/processing) for that local
-   * credential already exists — so this is idempotent across sync rounds and
-   * never duplicates a console-initiated connection or a prior mirror. A
-   * credential whose only prior row was retired (kill) gets a fresh stored row
-   * if the grant is live again. Metadata only — sealed_secret is always ''.
-   * Returns the number of new rows created.
-   */
-  async mirrorStoredConnections(
-    ownerId: string,
-    entries: Array<{ agentId: string; provider: string; label: string; daemonCredentialId: string }>,
-  ): Promise<number> {
-    const now = nowIsoString();
-    let created = 0;
-    for (const e of entries) {
-      const existing = await this.db.get<RawRow>(
-        `SELECT id FROM pending_connections
-         WHERE owner_id = ? AND agent_id = ? AND daemon_credential_id = ?
-           AND status IN ('stored', 'pending', 'processing')
-         LIMIT 1`,
-        ownerId, e.agentId, e.daemonCredentialId
-      );
-      if (existing) continue;
-      await this.db.run(
-        `INSERT INTO pending_connections
-           (id, owner_id, agent_id, provider, label, env_var, sealed_secret, kind, daemon_credential_id, status, created_at, resolved_at)
-         VALUES (?, ?, ?, ?, ?, NULL, '', 'sealed', ?, 'stored', ?, ?)`,
-        randomId('pcx_'), ownerId, e.agentId, e.provider, e.label, e.daemonCredentialId, now, now
-      );
-      created++;
-    }
-    return created;
-  }
-
-  async listPendingConnections(ownerId: string, status?: string): Promise<Array<{
-    id: string; agent_id: string; provider: string; label: string | null;
-    env_var: string | null; sealed_secret: string; kind: 'sealed' | 'provision' | 'rotate' | 'remove'; status: string;
-    failure_reason: string | null; daemon_credential_id: string | null; created_at: string;
-  }>> {
-    const rows = status
-      ? await this.db.all<RawRow>(
-          `SELECT * FROM pending_connections WHERE owner_id = ? AND status = ? ORDER BY created_at ASC`,
-          ownerId, status)
-      : await this.db.all<RawRow>(
-          `SELECT * FROM pending_connections WHERE owner_id = ? ORDER BY created_at ASC`,
-          ownerId);
-    return rows.map((r) => ({
-      id: asStr(r.id), agent_id: asStr(r.agent_id), provider: asStr(r.provider),
-      label: asNullableStr(r.label), env_var: asNullableStr(r.env_var),
-      sealed_secret: asStr(r.sealed_secret),
-      // Preserve every kind faithfully — collapsing an unknown kind to
-      // 'sealed' would hand a secretless row to a daemon's sealed path.
-      kind: (['provision', 'rotate', 'remove'].includes(asStr(r.kind)) ? asStr(r.kind) : 'sealed') as 'sealed' | 'provision' | 'rotate' | 'remove',
-      status: asStr(r.status),
-      failure_reason: asNullableStr(r.failure_reason),
-      daemon_credential_id: asNullableStr(r.daemon_credential_id),
-      created_at: asStr(r.created_at),
-    }));
-  }
-
-  /**
-   * ATOMICALLY claim a pending connection for processing (pending →
-   * processing). Only the single winner gets `true`; a concurrent daemon (or
-   * the same daemon on an overlapping poll) loses the race and must skip. This
-   * is what makes connect-card storage exactly-once across processes.
-   */
-  async claimPendingConnection(id: string, ownerId: string): Promise<boolean> {
-    const res = await this.db.run(
-      `UPDATE pending_connections SET status = 'processing', resolved_at = ?
-       WHERE id = ? AND owner_id = ? AND status = 'pending'`,
-      nowIsoString(),
-      id,
-      ownerId
-    );
-    return res.changes === 1;
-  }
-
-  /**
-   * Reap connection rows that will never resolve on their own — lazily, on the
-   * read paths (console poll, daemon pull), no cron. Two stall shapes, each
-   * with its own honest reason:
-   *
-   *  - 'processing' older than the window: a daemon CLAIMED it (claim stamps
-   *    resolved_at) then went quiet — killed one-shot, crash, lost network.
-   *  - 'pending' older than the window: NO daemon ever claimed it — the
-   *    console's "Do it for me" / paste needs Keyring running on the machine
-   *    and nothing is (field-hit: both provision cards span forever with no
-   *    watcher). Reaped ONLY on the console path (`includePending`): a human is
-   *    watching and wants an end state. The daemon path leaves pending rows
-   *    alone so a freshly-started daemon can still service old work.
-   *
-   * A daemon that is merely SLOW keeps working locally; its late resolve finds
-   * the row already failed and reports false — the honest outcome for work
-   * nobody could observe for this long. Ciphertext is blanked on the way out.
-   */
-  async expireStaleConnections(
-    ownerId: string,
-    opts: { includePending?: boolean; olderThanMs?: number } = {}
-  ): Promise<number> {
-    const olderThanMs = opts.olderThanMs ?? 15 * 60 * 1000;
-    const cutoff = new Date(Date.now() - olderThanMs).toISOString();
-    const pendingClause = opts.includePending
-      ? ` OR (status = 'pending' AND created_at < ?)`
-      : '';
-    const params: unknown[] = [nowIsoString(), ownerId, cutoff];
-    if (opts.includePending) params.push(cutoff);
-    const res = await this.db.run(
-      `UPDATE pending_connections
-       SET status = 'failed',
-           failure_reason = CASE
-             WHEN status = 'processing'
-               THEN 'This started on your computer but never finished — it may have been interrupted. Try again.'
-             ELSE 'This needs Keyring running on your computer. Run ` + '`npx basedagents keyring sync`' + ` there, then try again.'
-           END,
-           resolved_at = ?,
-           sealed_secret = ''
-       WHERE owner_id = ?
-         AND ((status = 'processing' AND resolved_at < ?)${pendingClause})`,
-      ...params
-    );
-    return res.changes;
-  }
-
-  /**
-   * Daemon-reported credential facts (0031): metadata about machine-local
-   * keys — currently just rotatability — so the console only offers actions
-   * the machine can actually perform. Ids and booleans only, never values.
-   */
-  async upsertCredentialFacts(
-    ownerId: string,
-    facts: Array<{ credentialId: string; provider: string; rotatable: boolean }>,
-  ): Promise<void> {
-    const now = nowIsoString();
-    for (const f of facts) {
-      await this.db.run(
-        `INSERT INTO credential_facts (owner_id, credential_id, provider, rotatable, reported_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(owner_id, credential_id) DO UPDATE SET
-           provider = excluded.provider, rotatable = excluded.rotatable, reported_at = excluded.reported_at`,
-        ownerId,
-        f.credentialId,
-        f.provider,
-        f.rotatable ? 1 : 0,
-        now
-      );
-    }
-  }
-
-  async listCredentialFacts(ownerId: string): Promise<Array<{
-    credential_id: string; provider: string; rotatable: boolean; reported_at: string;
-  }>> {
-    const rows = await this.db.all<RawRow>(
-      `SELECT * FROM credential_facts WHERE owner_id = ? ORDER BY credential_id ASC`,
-      ownerId
-    );
-    return rows.map((r) => ({
-      credential_id: asStr(r.credential_id),
-      provider: asStr(r.provider),
-      rotatable: Number(r.rotatable) === 1,
-      reported_at: asStr(r.reported_at),
-    }));
-  }
-
-  /** Daemon resolution — ATOMIC single transition out of pending/processing. */
-  async resolvePendingConnection(input: {
-    id: string;
-    ownerId: string;
-    outcome: 'stored' | 'failed';
-    daemonCredentialId?: string;
-    failureReason?: string;
-  }): Promise<boolean> {
-    const res = await this.db.run(
-      `UPDATE pending_connections
-       SET status = ?, daemon_credential_id = COALESCE(?, daemon_credential_id), failure_reason = ?, resolved_at = ?,
-           sealed_secret = CASE WHEN ? = 'stored' THEN '' ELSE sealed_secret END
-       WHERE id = ? AND owner_id = ? AND status IN ('pending', 'processing')`,
-      input.outcome,
-      input.daemonCredentialId ?? null,
-      input.failureReason ?? null,
-      nowIsoString(),
-      input.outcome,
-      input.id,
-      input.ownerId
-    );
-    return res.changes === 1;
   }
 
   // ── E2E test outbox (Task 2 — only ever written in E2E=1 environments) ──
@@ -1656,41 +961,6 @@ export class ControlStore {
     return { ok: errors.length === 0, errors };
   }
 
-  // ── Vault-key binding ──
-
-  async createVaultBinding(input: CreateVaultBindingInput): Promise<VaultKeyRow> {
-    const id = randomId('vk_');
-    const now = nowIsoString();
-    await this.db.run(
-      `INSERT INTO owner_vault_keys
-         (id, owner_id, vault_public_key, status, binding_assertion_id, bound_at, rotated_at)
-       VALUES (?, ?, ?, 'active', ?, ?, NULL)`,
-      id,
-      input.ownerId,
-      input.vaultPublicKey,
-      input.bindingAssertionId ?? null,
-      now
-    );
-    const row = await this.getVaultKeyByRowId(id);
-    if (!row) throw new Error(`createVaultBinding: vault key ${id} not found after insert`);
-    return row;
-  }
-
-  private async getVaultKeyByRowId(id: string): Promise<VaultKeyRow | null> {
-    const r = await this.db.get<RawRow>(`SELECT * FROM owner_vault_keys WHERE id = ?`, id);
-    return r ? mapVaultKeyRow(r) : null;
-  }
-
-  async getActiveVaultKey(ownerId: string): Promise<VaultKeyRow | null> {
-    const r = await this.db.get<RawRow>(
-      `SELECT * FROM owner_vault_keys
-       WHERE owner_id = ? AND status = 'active'
-       ORDER BY bound_at DESC, id DESC LIMIT 1`,
-      ownerId
-    );
-    return r ? mapVaultKeyRow(r) : null;
-  }
-
   // ── Delegations (owner -> agent edge) ──
 
   async createDelegation(input: CreateDelegationInput): Promise<DelegationRow> {
@@ -1764,35 +1034,6 @@ export class ControlStore {
     return rows.map(mapDelegationRow);
   }
 
-  /**
-   * Revocation orders awaiting the machine's local kill (0032): revoked
-   * delegations no daemon has confirmed yet. The daemon runs the same local
-   * kill as `based kill` and confirms back; until then the console shows
-   * "cut off at the account" — never "your machine dropped it" on faith.
-   */
-  async listUnconfirmedRevocations(ownerId: string): Promise<DelegationRow[]> {
-    const rows = await this.db.all<RawRow>(
-      `SELECT * FROM delegations
-       WHERE owner_id = ? AND status = 'revoked' AND daemon_confirmed_at IS NULL
-       ORDER BY revoked_at ASC, id ASC`,
-      ownerId
-    );
-    return rows.map(mapDelegationRow);
-  }
-
-  /** One-shot confirm (idempotence guard: only an unconfirmed revocation flips). */
-  async confirmDelegationKill(ownerId: string, delegationId: string, reportJson: string): Promise<boolean> {
-    const res = await this.db.run(
-      `UPDATE delegations SET daemon_confirmed_at = ?, daemon_kill_report = ?
-       WHERE id = ? AND owner_id = ? AND status = 'revoked' AND daemon_confirmed_at IS NULL`,
-      nowIsoString(),
-      reportJson,
-      delegationId,
-      ownerId
-    );
-    return res.changes === 1;
-  }
-
   async listDelegationsByAgent(agentId: string): Promise<DelegationRow[]> {
     const rows = await this.db.all<RawRow>(
       `SELECT * FROM delegations WHERE agent_id = ? ORDER BY created_at ASC, id ASC`,
@@ -1812,299 +1053,7 @@ export class ControlStore {
     );
     const row = await this.getDelegationByRowId(input.delegationId);
     if (!row) throw new Error(`revokeDelegation: delegation ${input.delegationId} not found`);
-    // The kill must actually kill, server-side too (field-hit: a revived agent
-    // showed "Can use: Vercel" chips fed by rows the kill never touched, and a
-    // pre-kill approval would have been served to the daemon AFTER its local
-    // kill ran — re-granting access to an agent the owner just cut off).
-    // Retiring rides the revoke itself so no caller can forget it.
-    await this.retireAgentWork(row.owner_id, row.agent_id);
     return row;
   }
 
-  /**
-   * Retire every server-side row that could keep a killed agent looking — or
-   * becoming — connected: open/approved asks (fed the "Can use" chips),
-   * daemon-bound approvals (would apply a grant after the kill), and
-   * connect-card rows in any live state (fed the chips and the daemon queue).
-   * Terminal statuses ('revoked' / 'cancelled') that every reader's positive
-   * filter simply skips. A revived agent starts with an honest empty hand.
-   */
-  async retireAgentWork(ownerId: string, agentId: string): Promise<{ requests: number; approvals: number; connections: number }> {
-    const now = nowIsoString();
-    const requests = await this.db.run(
-      `UPDATE keyring_requests SET status = 'revoked', decided_at = COALESCE(decided_at, ?)
-       WHERE owner_id = ? AND agent_id = ? AND status IN ('pending', 'approved')`,
-      now, ownerId, agentId
-    );
-    const approvals = await this.db.run(
-      `UPDATE grant_approvals SET status = 'cancelled'
-       WHERE owner_id = ? AND agent_id = ? AND status = 'pending_daemon'`,
-      ownerId, agentId
-    );
-    const connections = await this.db.run(
-      `UPDATE pending_connections
-       SET status = 'revoked', resolved_at = ?, sealed_secret = ''
-       WHERE owner_id = ? AND agent_id = ? AND status IN ('pending', 'processing', 'stored')`,
-      now, ownerId, agentId
-    );
-    return { requests: requests.changes, approvals: approvals.changes, connections: connections.changes };
-  }
-
-  // ── Agents (open registry — read-only cross-reference) ──
-
-  /**
-   * The grantee's Ed25519 public key from the open `agents` table, or null if the
-   * agent is unknown / has no key on file. Used to PIN the sealing target in the
-   * grant-approval action (CONTROL_PLANE.md §2.1): the owner signs base58(this).
-   */
-  async getAgentPublicKey(agentId: string): Promise<Uint8Array | null> {
-    const r = await this.db.get<RawRow>(
-      `SELECT public_key FROM agents WHERE id = ?`,
-      agentId
-    );
-    if (!r || r.public_key == null) return null;
-    return toUint8Array(r.public_key);
-  }
-
-  // ── Keyring requests (approvals inbox, migration 0024) ──
-
-  async createKeyringRequest(input: CreateKeyringRequestInput): Promise<KeyringRequestRow> {
-    const id = randomId('req_');
-    const now = nowIsoString();
-    await this.db.run(
-      `INSERT INTO keyring_requests
-         (id, owner_id, agent_id, credential_id, credential_label, provider,
-          constraints, note, status, created_at, decided_at, decision_assertion_id, deny_reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL)`,
-      id,
-      input.ownerId,
-      input.agentId,
-      input.credentialId,
-      input.credentialLabel ?? null,
-      input.provider ?? null,
-      JSON.stringify(input.constraints ?? {}),
-      input.note ?? null,
-      now
-    );
-    const row = await this.getKeyringRequest(id);
-    if (!row) throw new Error(`createKeyringRequest: request ${id} not found after insert`);
-    return row;
-  }
-
-  async getKeyringRequest(id: string): Promise<KeyringRequestRow | null> {
-    const r = await this.db.get<RawRow>(`SELECT * FROM keyring_requests WHERE id = ?`, id);
-    return r ? mapKeyringRequestRow(r) : null;
-  }
-
-  async listKeyringRequests(ownerId: string, status?: string): Promise<KeyringRequestRow[]> {
-    const rows = status
-      ? await this.db.all<RawRow>(
-          `SELECT * FROM keyring_requests
-           WHERE owner_id = ? AND status = ?
-           ORDER BY created_at DESC, id DESC`,
-          ownerId,
-          status
-        )
-      : await this.db.all<RawRow>(
-          `SELECT * FROM keyring_requests
-           WHERE owner_id = ?
-           ORDER BY created_at DESC, id DESC`,
-          ownerId
-        );
-    return rows.map(mapKeyringRequestRow);
-  }
-
-  /** Record an owner's approve/deny decision. Idempotency is enforced by the
-   * route (it only decides a request whose status is still 'pending'). */
-  async setRequestDecision(input: SetRequestDecisionInput): Promise<KeyringRequestRow> {
-    await this.db.run(
-      `UPDATE keyring_requests
-         SET status = ?, decided_at = ?, decision_assertion_id = ?, deny_reason = ?
-       WHERE id = ?`,
-      input.status,
-      input.nowIso,
-      input.assertionId ?? null,
-      input.denyReason ?? null,
-      input.id
-    );
-    const row = await this.getKeyringRequest(input.id);
-    if (!row) throw new Error(`setRequestDecision: request ${input.id} not found`);
-    return row;
-  }
-
-  // ── Grant approvals (ready for the daemon, migration 0024) ──
-
-  async createGrantApproval(input: CreateGrantApprovalInput): Promise<GrantApprovalRow> {
-    const id = randomId('gap_');
-    const now = nowIsoString();
-    await this.db.run(
-      `INSERT INTO grant_approvals
-         (id, owner_id, request_id, agent_id, agent_pubkey, credential_id, constraints,
-          nonce, action_hash, assertion_credential_id, authenticator_data,
-          client_data_json, signature, assertion_id, status, created_at,
-          confirmed_at, daemon_grant_id, failure_reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_daemon', ?, NULL, NULL, NULL)`,
-      id,
-      input.ownerId,
-      input.requestId,
-      input.agentId,
-      input.agentPubkey,
-      input.credentialId,
-      JSON.stringify(input.constraints ?? {}),
-      input.nonce,
-      input.actionHash,
-      input.assertionCredentialId,
-      input.authenticatorData,
-      input.clientDataJson,
-      input.signature,
-      input.assertionId,
-      now
-    );
-    const row = await this.getGrantApproval(id);
-    if (!row) throw new Error(`createGrantApproval: approval ${id} not found after insert`);
-    return row;
-  }
-
-  async getGrantApproval(id: string): Promise<GrantApprovalRow | null> {
-    const r = await this.db.get<RawRow>(`SELECT * FROM grant_approvals WHERE id = ?`, id);
-    return r ? mapGrantApprovalRow(r) : null;
-  }
-
-  /** The approvals the daemon still needs to apply for an owner. */
-  async listPendingApprovals(ownerId: string): Promise<GrantApprovalRow[]> {
-    const rows = await this.db.all<RawRow>(
-      `SELECT * FROM grant_approvals
-       WHERE owner_id = ? AND status = 'pending_daemon'
-       ORDER BY created_at ASC, id ASC`,
-      ownerId
-    );
-    return rows.map(mapGrantApprovalRow);
-  }
-
-  /**
-   * Mark an approval confirmed by the daemon — atomic conditional so a confirm
-   * can only transition a pending_daemon row (never resurrect a failed one or
-   * double-confirm). Returns the row iff it transitioned, else null.
-   */
-  async confirmGrantApproval(input: {
-    id: string;
-    daemonGrantId: string;
-    nowIso: string;
-  }): Promise<GrantApprovalRow | null> {
-    const res = await this.db.run(
-      `UPDATE grant_approvals
-         SET status = 'confirmed', confirmed_at = ?, daemon_grant_id = ?
-       WHERE id = ? AND status = 'pending_daemon'`,
-      input.nowIso,
-      input.daemonGrantId,
-      input.id
-    );
-    if (res.changes !== 1) return null;
-    return this.getGrantApproval(input.id);
-  }
-
-  /** Mark an approval failed (the daemon rejected/could not apply it). */
-  async failGrantApproval(input: {
-    id: string;
-    reason: string;
-    nowIso: string;
-  }): Promise<GrantApprovalRow | null> {
-    const res = await this.db.run(
-      `UPDATE grant_approvals
-         SET status = 'failed', confirmed_at = ?, failure_reason = ?
-       WHERE id = ? AND status = 'pending_daemon'`,
-      input.nowIso,
-      input.reason,
-      input.id
-    );
-    if (res.changes !== 1) return null;
-    return this.getGrantApproval(input.id);
-  }
-
-  // ─── Cloud passport (SANDBOX_SPEC §4b): handoffs + the sealed-credential shelf ───
-
-  async createPassportHandoff(ownerId: string, browserPublicKey: string): Promise<string> {
-    const id = randomId('pph_');
-    await this.db.run(
-      `INSERT INTO passport_handoffs (id, owner_id, browser_public_key, status, created_at)
-       VALUES (?, ?, ?, 'pending', ?)`,
-      id, ownerId, browserPublicKey, nowIsoString(),
-    );
-    return id;
-  }
-
-  async listPendingPassportHandoffs(ownerId: string): Promise<Array<{ id: string; browser_public_key: string; created_at: string }>> {
-    const rows = await this.db.all<RawRow>(
-      `SELECT id, browser_public_key, created_at FROM passport_handoffs
-       WHERE owner_id = ? AND status = 'pending' ORDER BY created_at ASC`, ownerId);
-    return rows.map((r) => ({ id: asStr(r.id), browser_public_key: asStr(r.browser_public_key), created_at: asStr(r.created_at) }));
-  }
-
-  /** Daemon fulfilled the handoff with ciphertext sealed to the browser key. */
-  async fulfillPassportHandoff(id: string, ownerId: string, sealedPassport: string): Promise<boolean> {
-    const res = await this.db.run(
-      `UPDATE passport_handoffs SET sealed_passport = ?, status = 'fulfilled', fulfilled_at = ?
-       WHERE id = ? AND owner_id = ? AND status = 'pending'`,
-      sealedPassport, nowIsoString(), id, ownerId,
-    );
-    return res.changes === 1;
-  }
-
-  /**
-   * One-shot read: return the ciphertext exactly once, then BLANK it. The
-   * control plane never keeps a fulfilled passport around, even sealed.
-   */
-  async consumePassportHandoff(id: string, ownerId: string): Promise<{ status: string; sealed_passport: string | null }> {
-    const row = await this.db.get<RawRow>(
-      `SELECT status, sealed_passport FROM passport_handoffs WHERE id = ? AND owner_id = ?`, id, ownerId);
-    if (!row) return { status: 'not_found', sealed_passport: null };
-    const status = asStr(row.status);
-    if (status !== 'fulfilled') return { status, sealed_passport: null };
-    const sealed = asNullableStr(row.sealed_passport);
-    await this.db.run(
-      `UPDATE passport_handoffs SET sealed_passport = '', status = 'consumed' WHERE id = ? AND owner_id = ? AND status = 'fulfilled'`,
-      id, ownerId,
-    );
-    return { status: 'fulfilled', sealed_passport: sealed };
-  }
-
-  /** True once any handoff was ever fulfilled — the owner is cloud-enabled and daemons may deposit. */
-  async hasFulfilledPassport(ownerId: string): Promise<boolean> {
-    const row = await this.db.get<RawRow>(
-      `SELECT COUNT(*) AS n FROM passport_handoffs WHERE owner_id = ? AND status IN ('fulfilled','consumed')`, ownerId);
-    return Number(row?.n ?? 0) > 0;
-  }
-
-  /**
-   * Whole-snapshot shelf deposit: upsert everything given, delete everything
-   * absent — so local revocation/removal propagates to the shelf as absence.
-   */
-  async putShelfSnapshot(ownerId: string, rows: Array<{ credential_id: string; v: number; meta: string; sealed: string; grants: string }>): Promise<void> {
-    const keep = new Set(rows.map((r) => r.credential_id));
-    const existing = await this.db.all<RawRow>(
-      `SELECT credential_id FROM sealed_credentials WHERE owner_id = ?`, ownerId);
-    for (const r of existing) {
-      const id = asStr(r.credential_id);
-      if (!keep.has(id)) {
-        await this.db.run(`DELETE FROM sealed_credentials WHERE owner_id = ? AND credential_id = ?`, ownerId, id);
-      }
-    }
-    for (const r of rows) {
-      await this.db.run(
-        `INSERT INTO sealed_credentials (owner_id, credential_id, v, meta, sealed, grants, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(owner_id, credential_id) DO UPDATE SET v=excluded.v, meta=excluded.meta, sealed=excluded.sealed, grants=excluded.grants, updated_at=excluded.updated_at`,
-        ownerId, r.credential_id, r.v, r.meta, r.sealed, r.grants, nowIsoString(),
-      );
-    }
-  }
-
-  async listShelf(ownerId: string): Promise<Array<{ credential_id: string; v: number; meta: string; sealed: string; grants: string; updated_at: string }>> {
-    const rows = await this.db.all<RawRow>(
-      `SELECT credential_id, v, meta, sealed, grants, updated_at FROM sealed_credentials WHERE owner_id = ? ORDER BY credential_id ASC`, ownerId);
-    return rows.map((r) => ({
-      credential_id: asStr(r.credential_id), v: Number(r.v), meta: asStr(r.meta),
-      sealed: asStr(r.sealed), grants: asStr(r.grants), updated_at: asStr(r.updated_at),
-    }));
-  }
 }

@@ -9,7 +9,7 @@
  *     unwritable or corrupt state file never blocks a tool — the server then
  *     runs with NO installation id (unattributed) rather than minting a fresh
  *     one per launch.
- *   - Telemetry off (BASEDAGENTS_TELEMETRY=off, or the keyring convention
+ *   - Telemetry off (BASEDAGENTS_TELEMETRY=off, or its alias
  *     BASEDAGENTS_NO_TELEMETRY=1) means: no state file is read or created, no
  *     attribution headers are sent, no outcome telemetry leaves the process.
  *     Business requests (signing, tools) are unaffected.
@@ -69,9 +69,9 @@ function cleanClientString(v: string | undefined | null): string {
 // ─── Opt-out ────────────────────────────────────────────────────────────────
 
 /**
- * BASEDAGENTS_TELEMETRY=off is this package's documented switch; the keyring's
- * BASEDAGENTS_NO_TELEMETRY=1 is honored too so one opt-out covers the whole
- * toolchain. Off disables optional analytics only — registrations, tasks,
+ * BASEDAGENTS_TELEMETRY=off is this package's documented switch;
+ * BASEDAGENTS_NO_TELEMETRY=1 is honored as an alias so one opt-out covers the
+ * MCP server and the CLI. Off disables optional analytics only — registrations, tasks,
  * receipts and payments still produce their required operational records.
  */
 export function telemetryEnabled(): boolean {

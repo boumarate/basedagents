@@ -1,5 +1,5 @@
 /**
- * Acquisition attribution capture (migration 0048, acquisition/capture.ts) —
+ * Acquisition attribution capture (migration 0049, acquisition/capture.ts) —
  * the data boundaries, not the helper internals:
  *
  *  - the INSERT that creates an installation is the immutable first

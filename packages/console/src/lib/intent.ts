@@ -15,7 +15,7 @@ const TTL_MS = 30 * 60 * 1000; // 30 minutes — long enough for the inbox round
 /** A safe same-origin path: starts with a single "/", and is not an auth page. */
 function isSafePath(path: string): boolean {
   if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return false;
-  return !/^\/(login|start|recover|claim|invited|link)(\/|$|\?|#)/.test(path);
+  return !/^\/(login|start|recover)(\/|$|\?|#)/.test(path);
 }
 
 export function rememberIntent(path: string): void {

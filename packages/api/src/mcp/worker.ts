@@ -37,11 +37,23 @@ export type WorkerBindings = {
   MCP_RESOURCE_URL?: string;
   MCP_ISSUER?: string;
   API_BASE_URL?: string;
+  CONSOLE_BASE_URL?: string;
   MCP_SIGNING_SECRET?: string;
   MCP_DEV?: string;
   E2E?: string;
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+  /** Per-IP limit overrides (decimal strings) — see oauth.ts / handler.ts. */
+  MCP_DCR_HOURLY?: string;
+  MCP_DCR_DAILY_CLIENTS?: string;
+  MCP_ANON_HOURLY?: string;
+  /**
+   * OpenAI plugin-directory domain verification: the portal hands out a
+   * challenge token at submission time; set it as a var (it is public plain
+   * text, not a secret), redeploy, and /.well-known/openai-apps-challenge
+   * serves it. Unset → 404.
+   */
+  OPENAI_APPS_CHALLENGE?: string;
 };
 
 export type WorkerVariables = {
@@ -86,6 +98,15 @@ app.use('*', async (c, next) => {
   const db = (c.env as WorkerBindings | undefined)?.DB;
   if (db) c.set('db', new D1Adapter(db));
   await next();
+});
+
+// ─── OpenAI plugin-directory domain verification ─────────────────────────────
+// Served here (not by the oauth sub-app) because it is a deploy-time setting of
+// THIS host, not an OAuth surface. Plain text, exactly the token, nothing else.
+app.get('/.well-known/openai-apps-challenge', (c: Context<WorkerEnv>) => {
+  const token = (c.env as WorkerBindings | undefined)?.OPENAI_APPS_CHALLENGE;
+  if (!token) return c.json({ error: 'not_found' }, 404);
+  return c.text(token);
 });
 
 // ─── mounts: OAuth AS (incl. /.well-known/*) + the /mcp RS. Nothing else. ─────

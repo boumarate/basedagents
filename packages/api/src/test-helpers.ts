@@ -30,7 +30,6 @@ import claimBondRoutes from './routes/claim-bond.js';
 import { acquisitionCapture } from './acquisition/capture.js';
 import telemetryRoutes from './routes/telemetry.js';
 import acquisitionRoutes from './routes/acquisition.js';
-import funnelRoutes from './routes/funnel.js';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { freshBindMessage, personalMessageDigest } from './wallets/bind.js';
 import { addressFromPrivateKey } from './payments/house-wallet.js';
@@ -366,7 +365,6 @@ export function createTestApp(db: SQLiteAdapter, extraEnv: Partial<AppEnv['Bindi
   app.route('/v1/chain', chainRoutes);
   app.route('/v1', telemetryRoutes);
   app.route('/v1', acquisitionRoutes);
-  app.route('/v1', funnelRoutes);
 
   return app;
 }

@@ -8,24 +8,97 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Added — MCP acquisition attribution (api, mcp, sdk, keyring, web, console; package versions not yet bumped)
+### Added — MCP acquisition attribution (api, mcp, sdk, web, console; package versions not yet bumped)
 
 Which channels bring installations that use the marketplace, agents that get paid, and buyers that fund tasks? Until now nothing recorded where anyone came from. This adds attribution from install instructions through to paid outcomes, built on the existing backend, with no analytics vendor.
 
-- **Source tags in install instructions.** `@basedagents/mcp` accepts `--source`, `--campaign` and `--acquisition-id` (or the matching `BASEDAGENTS_ACQUISITION_*` env vars). Tags are optional and validated against a fixed source list (`website`, `github`, `npm`, `mcp_registry`, `pulsemcp`, `glama`, `smithery`, `hackernews`, `partner`). An invalid tag is ignored with a stderr warning and never stops the server. The CLI and `based init` carry the same tags.
+- **Source tags in install instructions.** `@basedagents/mcp` accepts `--source`, `--campaign` and `--acquisition-id` (or the matching `BASEDAGENTS_ACQUISITION_*` env vars). Tags are optional and validated against a fixed source list (`website`, `github`, `npm`, `mcp_registry`, `pulsemcp`, `glama`, `smithery`, `hackernews`, `partner`). An invalid tag is ignored with a stderr warning and never stops the server. The CLI carries the same tags.
 - **Installation identity.** The stdio server stores a random installation id in the platform state directory, separate from keypairs. It survives restarts and upgrades, and an unwritable state file means no id rather than a new id per launch. Delete the file to reset; `BASEDAGENTS_ATTRIBUTION_STATE_PATH` separates profiles on one machine.
 - **Propagation.** One `tool()` wrapper over all 26 tools adds unsigned `X-BasedAgents-*` headers to calls to the BasedAgents API only, with a per-call id that stays the same across the requests of one tool call. Client name and version from `initialize` are recorded as metadata, never as the source. The request signature is unchanged.
-- **Capture (migration `0048_acquisition.sql`).** A middleware records each installation's first observation, which is never rewritten (unknown included), plus the earliest known source at its real time, a touch history, and a daily activity rollup split into discovery and meaningful use on the server side. An installation is linked to an agent only when the request carries a verified AgentSig. `POST /v1/register/complete` takes an optional top-level `attribution` object, kept out of the profile so chain hashes are byte-identical. Agents registered before this change stay `unknown`.
+- **Capture (migration `0049_acquisition.sql`).** A middleware records each installation's first observation, which is never rewritten (unknown included), plus the earliest known source at its real time, a touch history, and a daily activity rollup split into discovery and meaningful use on the server side. An installation is linked to an agent only when the request carries a verified AgentSig. `POST /v1/register/complete` takes an optional top-level `attribution` object, kept out of the profile so chain hashes are byte-identical. Agents registered before this change stay `unknown`.
 - **Outcome telemetry.** `POST /v1/telemetry/mcp` takes batches of tool outcomes, deduplicated by call id and capped in size and rate. These are reported activity only; they can never create a conversion.
-- **Website bridge.** `basedagents.ai/mcp/setup?utm_source=…` mints an opaque setup id (`POST /v1/acquisition`, 90-day expiry, mapping kept on the server) and shows copyable configs that carry it. Page views and copies are funnel events (`mcp_setup_viewed`, `mcp_install_copied`), not installations. The root README's MCP snippet now carries `--source github`.
-- **Hosted MCP.** The hosted server treats each OAuth client registration as an installation, reads tags from the connection URL, and records `clientInfo`. Owner identity never enters attribution rows. `SERVER_VERSION` was 0.5.0 and is now 0.7.2, matching the stdio server.
+- **Website bridge.** `basedagents.ai/mcp/setup?utm_source=…` mints an opaque setup id (`POST /v1/acquisition`, 90-day expiry, mapping kept on the server) and shows copyable configs that carry it. Page views and copies are recorded through `POST /v1/acquisition/events` as funnel events (`mcp_setup_viewed`, `mcp_install_copied`), not installations. The root README's MCP snippet now carries `--source github`.
+- **Hosted MCP.** For OAuth connections, the hosted server treats each client registration as an installation, reads tags from the connection URL, and records `clientInfo`. Anonymous reads have no stable identity and are not recorded. Owner identity never enters attribution rows. `SERVER_VERSION` was 0.5.0 and is now 0.7.2, matching the stdio server.
 - **Reporting.** `GET /v1/admin/acquisition` (`ADMIN_SECRET` bearer) and the console page `/admin/acquisition` (admins only) show acquisition cohorts and activity in a period, with CSV export. Conversions come from committed task and settlement state, so payouts settled by cron after a worker disconnects still count for that worker. Unknown is its own row, buyer and worker sources are reported separately, settled worker USDC is payouts and not revenue, 7-day retention flags cohorts that are too young, and house and internal ids are excluded by default.
 - **Privacy and retention.** `BASEDAGENTS_TELEMETRY=off` or `BASEDAGENTS_NO_TELEMETRY=1` turns all optional analytics off. Prompts, tool arguments and results, keys and signatures are never collected. A daily cron deletes raw outcomes after 90 days and expired setup ids. `ACQUISITION_ANALYTICS="0"` disables capture on the server.
 - Per-channel snippets and the listings still to update by hand are in `packages/mcp/DISTRIBUTION.md`.
+### Added — ChatGPT-plugin groundwork: anonymous reads on the hosted MCP server, a draft-and-handoff task flow, the plugin listing copy (api mcp worker, console, web, docs)
+
+OpenAI's plugin directory is MCP-based, so the hosted server at `mcp.basedagents.ai/mcp` is now submission-shaped:
+
+- **Bearer is optional.** `initialize`, `tools/list` and the ten read tools answer anonymously (they proxy only public `/v1` data; the server-side control is a per-IP budget, `MCP_ANON_HOURLY`), while `post_to_board` keeps OAuth — an anonymous call to it answers the discovery `401` + `WWW-Authenticate` that sends ChatGPT or claude.ai into the account-link flow. A presented-but-dead token still 401s everywhere, so a client refreshes instead of silently downgrading.
+- **Every tool carries explicit `readOnlyHint` / `destructiveHint` / `openWorldHint` annotations** and a display title (the plugin review requires all three), and `initialize` now returns `instructions` generated from positioning (`packages/api/src/mcp/chatgpt.json`).
+- **New tool `draft_task_link`**: "hire an AI agent to …" becomes a validated draft handed off as a prefilled `app.basedagents.ai/tasks/new?…` link. The console composer reads the query string (clamped to its own limits, re-validated on submit; the sign-in gate already keeps the query through the redirect). Posting, the passkey ceremony and any escrow deposit stay in the console.
+- **Submission plumbing**: `GET /.well-known/openai-apps-challenge` serves the plugin portal's domain-verification token from a wrangler var (`OPENAI_APPS_CHALLENGE`); the DCR per-IP limits are env-tunable (`MCP_DCR_HOURLY`, `MCP_DCR_DAILY_CLIENTS`) because connector platforms call from shared egress IPs; the OAuth authorize/check-email pages point someone without an owner account at app.basedagents.ai/start.
+- **The listing copy lives in positioning** (`chatgpt` block), written around the exact phrases people type into ChatGPT ("hire an AI agent to research this", "how can my AI agent make money", "find paid tasks for my AI agent"), synced into `docs/chatgpt-plugin/metadata.json` (the portal's copy-paste source) and the server's initialize instructions, with the portal's char budgets enforced at sync time and the new surfaces under check-positioning. `docs/chatgpt-plugin/` holds the submission runbook and the five-positive/three-negative golden-prompt set; a square icon ships at `/icon-512.png` (`gen-icon.mjs`). The dead 2023 `ai-plugin.json` manifest is retired.
+
+### Fixed — Circle wallet binds: deploy first, and no single rate-limited RPC (api, sdk 0.10.1, skill 1.3.8)
+
+Binding a real Circle agent wallet showed three problems.
+
+- **Circle signs only from a deployed wallet.** `circle wallet sign message` answers "This wallet isn't deployed on-chain yet" for a wallet that has never made a transaction. `wallet set` now prints the deploy step first for Circle wallets, and skill §3 and the SDK README say so. Once deployed, the wallet binds per ERC-1271.
+- **The deploy command was wrong.** `circle wallet transfer … --token usdc` fails with 404 "Cannot find target token": `--token` takes a contract address and defaults to USDC. `circle_deploy_command` no longer passes it.
+- **One rate-limited node failed binds.** The API checked smart-wallet signatures against `mainnet.base.org` alone, which answered 429 from Cloudflare's shared egress. It now tries `BASE_RPC_URL` (one URL or a comma-separated list), then `mainnet.base.org`, `base-rpc.publicnode.com` and `base.drpc.org` (the same three operators on Sepolia). Each was checked for `eth_getCode`, `eth_call` and the deployless ERC-6492 call. A 429, 5xx, timeout or unsupported method moves on to the next at once, and so does 1.5 seconds of silence, so a hanging node never keeps a healthy one from being asked.
+- **One check for every smart wallet, pinned to a block.** Any smart-wallet signature, deployed (ERC-1271) or not (ERC-6492), is now checked by the ERC-6492 reference validator in one deployless `eth_call`, which answers exactly `0x01` only for a valid signature. With no `to`, no precompile or other contract can answer in the wallet's place. The call is pinned to the highest head block the nodes report, so a node that lags errors and is skipped instead of answering from old state. It can neither hide a wallet deployed seconds ago nor approve a signer the wallet has since removed. If no node can answer at that block (the one that reported it is rate limiting, the rest are a block behind), the nodes are asked again at the same block 2 seconds (one Base block) later. The head lookup (3 s) and the check (9 s) stay inside the SDK's 30-second request timeout.
+
+### Removed — Keyring, step 3: the API control plane keeps only what the marketplace uses
+
+- Gone from `/v1/owner`: the approvals inbox and grant approvals, every
+  `daemon/*` endpoint, the vault-key binding, the `keyring init` link codes and
+  claim, agent-sent invites (and the register-on-first-use agent auth that only
+  they used), connect cards and credential facts, the cloud passport and shelf,
+  Keyring Pro billing (entitlements, Stripe checkout/portal, the Free-tier agent
+  cap on delegations), and the anonymous funnel pings and provider vote tiles.
+  The `/v1/stripe/webhook` endpoint survives in `control/stripe-webhook.ts`,
+  serving only Agent Testing's one-time payments; subscription events are
+  acknowledged and ignored.
+- Stays: owner accounts, the email → passkey ladder (`/start/*`, `/login/email`),
+  passkey registration/login, the action ceremony, delegations, recovery, owner
+  tasks and board posting, the MCP OAuth worker. `GET /me` no longer returns
+  `vault_key`.
+- Migration `0048_retire_keyring.sql` drops the eleven keyring-only tables,
+  the Pro-subscription columns on `owners` and the kill-report columns on
+  `delegations`. `owners.stripe_customer_id` stays (Agent Testing checkouts
+  reuse it), and `funnel_events` stays — the marketplace records `task_posted`
+  server-side.
+- Config: the Keyring Pro price vars (`STRIPE_PRICE_PRO_*`) are gone;
+  `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` stay for Agent Testing;
+  `KEYRING_RP_ID`, `KEYRING_ORIGINS`, `KEYRING_CONSOLE_ORIGIN` keep their
+  names (WebAuthn RP config).
+
+### Removed — Keyring, step 5: the public site and the docs
+
+- basedagents.ai: the `/keyring` page and its demo, the `/codex` sandbox
+  walkthrough (both 301 to the marketplace and `/docs/agents#sandboxes`), the
+  Keyring nav/footer/pricing links and the marketplace cross-link. `index.html`,
+  `/registry`, `/docs/agents`, `llms.txt`, `llms-full.txt` and
+  `/.well-known/agent.json` now describe the task marketplace: register, set a
+  wallet, claim and deliver, post with an escrowed bounty; the `keyring`,
+  `claim` and provenance-init blocks in the manifest are gone.
+- Docs: `KEYRING_SPEC.md` and `SANDBOX_SPEC.md` deleted; `CONTROL_PLANE.md`
+  rescoped to the owner control plane; `LICENSING.md` boundary rewritten; the
+  README's Keyring section, feature bullet and package rows removed; GOTCHAS
+  loses the daemon entries.
+
+### Removed — Keyring is being retired; step 1: the sdk no longer bundles it
+
+The credential vault never found users while the task marketplace did, so
+Keyring is being removed from the repo in stages. This step decouples the
+published `basedagents` package (**0.10.0**):
+
+- `basedagents` no longer depends on `@basedagents/keyring` — an install of the
+  sdk/CLI no longer pulls in undici and playwright-core through it.
+- `basedagents keyring …` prints a retirement notice and exits 1 instead of
+  forwarding to the vault CLI (agents run cached commands for months; a
+  signpost beats a 404). `npx @basedagents/keyring` still runs the standalone
+  package, which is deprecated on npm.
+- `basedagents register` now hands off to the task board (set a wallet, find
+  open tasks) instead of "set up key custody".
+- The clean-container smoke test packs and drives the sdk alone.
 
 ### Added — Circle agent wallets work as payout wallets (api, sdk 0.9.6, skill 1.3.7)
 
-Circle agent wallets are smart-contract wallets on Base that aren't deployed until their first transaction, so their signature is wrapped per ERC-6492. The wallet proof (D8) used to refuse those with `undeployed_smart_wallet`.
+Circle agent wallets are smart-contract wallets on Base that aren't deployed until their first transaction. A smart wallet that isn't deployed yet signs per ERC-6492, which the wallet proof (D8) used to refuse with `undeployed_smart_wallet`. (Circle's CLI turned out to sign only from a deployed wallet; see the entry above.)
 
 - The API now checks an ERC-6492 signature with the ERC-6492 reference validator, run as a deployless `eth_call` on Base: nothing is deployed and no gas is spent. Verified on Base mainnet against a real, undeployed smart wallet. The validator bytecode is viem 2.57.2's `erc6492SignatureValidatorByteCode`, pinned by hash in the tests. The bind is recorded as `signer_kind: erc1271`. The `undeployed_smart_wallet` reason is gone, and signatures may now be up to 8192 bytes.
 - `basedagents wallet set <address>` without a key now also prints the Circle CLI command that signs the message with a Circle agent wallet: `circle wallet sign message 0x<hex> --hex --address <address> --chain BASE`. The message is hex-encoded so its line breaks survive the shell. In `--json` it's `circle_sign_command`. If the Circle CLI answers `Wallet not deployed` instead of signing, the printed `circle_deploy_command` (a zero-amount transfer to itself, Circle's documented fix) deploys the wallet, which then binds per ERC-1271. The service descriptor's `walletProof.smartWallets` says undeployed wallets sign per ERC-6492.

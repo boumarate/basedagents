@@ -21,7 +21,7 @@
  *     that file is skipped). Anything else is fatal — `rm data/registry.db`
  *     (GOTCHAS.md). E2E DBs are always fresh (`rm -rf .e2e-data`).
  *   - process.env is passed as the Hono env, so KEYRING_RP_ID /
- *     KEYRING_ORIGINS / E2E / Stripe vars work exactly like Worker vars.
+ *     KEYRING_ORIGINS / E2E vars work exactly like Worker vars.
  *     E2E runs set: E2E=1 KEYRING_RP_ID=localhost
  *     KEYRING_ORIGINS=http://localhost:5174 KEYRING_CONSOLE_ORIGIN=http://localhost:5174
  */

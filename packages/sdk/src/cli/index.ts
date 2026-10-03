@@ -33,9 +33,6 @@ Agents: the runbook is https://basedagents.ai/skill.md
 Commands:
   id                               Show the identity this machine signs as (never the private key)
   init                             Interactive registration wizard
-  keyring <args...>                Scoped, revocable API keys for your agents
-                                   (alias for the @basedagents/keyring CLI;
-                                    e.g. basedagents keyring init)
   whois <name-or-id>               Look up any agent by name or ID
   check <package-or-agent-id>      Check if a package/agent is trusted
   scan <package>                   Download & scan an npm package for dangerous patterns
@@ -74,7 +71,6 @@ Environment:
 
 Examples:
   npx basedagents init
-  npx basedagents keyring init
   npx basedagents whois Hans
   npx basedagents whois ag_7Xk9mP2qR8nK4vL3
   npx basedagents check @some/mcp-server
@@ -101,8 +97,8 @@ export async function main(): Promise<void> {
     ...attributionClientHeaders({ interface: 'cli', ...attributionFromEnv() }),
   });
 
-  // `keyring` forwards EVERYTHING (including --help / --version / subcommands) to
-  // the @basedagents/keyring CLI, so intercept it before the global flag handling.
+  // `keyring` is retired; it prints a signpost and exits (see ./keyring.ts).
+  // Intercept it before the global flag handling so `keyring --help` lands there too.
   if (args[0] === 'keyring') {
     await keyring(args.slice(1));
     return;

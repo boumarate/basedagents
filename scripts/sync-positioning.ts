@@ -7,16 +7,18 @@
  *   npx tsx scripts/sync-positioning.ts --check    # exit 1 and list the drifted files
  *
  * Surfaces: positioning.json · README hero (markers) · packages/web/index.html
- * head (markers) · sdk / mcp / keyring package.json descriptions ·
+ * head (markers) · sdk / mcp package.json descriptions ·
  * packages/mcp/server.json · Python pyproject + __init__ docstring line ·
- * agent.json (tagline, note, marketplace block) · ai-plugin.json descriptions ·
- * _headers (X-Agent-Instructions) · llms.txt · sitemap.xml · openapi.json info.
+ * agent.json (tagline, note, marketplace block) · _headers
+ * (X-Agent-Instructions) · llms.txt · sitemap.xml · openapi.json info ·
+ * ChatGPT plugin metadata (docs/chatgpt-plugin/metadata.json + the MCP
+ * server's packages/api/src/mcp/chatgpt.json).
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  positioning as p, siteTitle, siteDescription, packageBlurb, agentInstructionsHeader,
+  positioning as p, siteTitle, siteDescription, packageBlurb, agentInstructionsHeader, chatgpt,
   SITE_URL, API_URL, CONSOLE_URL, OG_IMAGE_VERSION, PRERENDERED_ROUTES, STATIC_ROUTES, INDEXED_SPA_ROUTES, routeMeta,
 } from '../packages/web/src/content/positioning.js';
 
@@ -59,7 +61,7 @@ upsert('packages/web/src/content/positioning.json', JSON.stringify({
 
 ${p.supplyLine} ${p.trustLine}
 
-${p.paymentLine} ${p.keyringLine} Open source — the registry API, SDKs, CLI and MCP server are Apache-2.0.
+${p.paymentLine} Open source — the registry API, SDKs, CLI and MCP server are Apache-2.0.
 
 **[basedagents.ai](${SITE_URL}) · [Open tasks](${SITE_URL}/tasks) · [Post a task](${p.ctas.postTask.href}) · [API](${API_URL}) · [npm](https://www.npmjs.com/package/basedagents) · [MCP Registry](https://glama.ai/mcp/servers/io.github.maxfain/basedagents)**`;
   upsert(rel, replaceBetween(src, '<!-- positioning:start -->', '<!-- positioning:end -->', hero, rel));
@@ -126,10 +128,6 @@ jsonFile('packages/sdk/package.json', (d) => { d.description = packageBlurb.sdk;
 jsonFile('packages/mcp/package.json', (d) => { d.description = packageBlurb.mcp; });
 if (packageBlurb.mcpRegistry.length > 100) throw new Error(`packageBlurb.mcpRegistry is ${packageBlurb.mcpRegistry.length} chars; the MCP Registry allows 100`);
 jsonFile('packages/mcp/server.json', (d) => { d.description = packageBlurb.mcpRegistry; });
-jsonFile('packages/keyring/package.json', (d) => {
-  const base = String(d.description ?? '').replace(/\s*Part of BasedAgents, the task marketplace for AI agents\.\s*$/, '');
-  d.description = `${base} ${packageBlurb.keyringNote}`;
-});
 {
   const rel = 'packages/python/pyproject.toml'; const src = readFileSync(join(ROOT, rel), 'utf8');
   upsert(rel, src.replace(/^description = ".*"$/m, `description = ${JSON.stringify(packageBlurb.python)}`));
@@ -142,7 +140,7 @@ jsonFile('packages/keyring/package.json', (d) => {
   upsert(rel, lines.join('\n'));
 }
 
-// ── 5. agent.json, ai-plugin.json ──
+// ── 5. agent.json ──
 jsonFile('packages/web/public/.well-known/agent.json', (d) => {
   d.tagline = p.oneLiner.replace(/\.$/, '');
   const fa = d.for_agents as Record<string, unknown>;
@@ -168,11 +166,6 @@ jsonFile('packages/web/public/.well-known/agent.json', (d) => {
   const rest = Object.fromEntries(Object.entries(fa).filter(([k]) => k !== 'note' && k !== 'marketplace'));
   d.for_agents = { note, marketplace, ...rest };
 });
-jsonFile('packages/web/public/.well-known/ai-plugin.json', (d) => {
-  d.description_for_human = `${p.oneLiner} ${p.subhead}`;
-  d.description_for_model = `Find paid tasks for AI agents, claim and deliver them for USDC, post tasks with escrowed bounties, and look up agent identity and reputation on ${p.name}.`;
-  d.logo_url = ogImage;
-});
 
 // ── 6. _headers ──
 {
@@ -187,8 +180,8 @@ upsert('packages/web/public/llms.txt', `# ${p.name}
 > ${p.supplyLine}
 > ${p.trustLine}
 > ${p.paymentLine}
-> Open source: npm \`basedagents\` (SDK + CLI), \`@basedagents/mcp\` (MCP server), PyPI \`basedagents\`,
-> \`@basedagents/keyring\`; source github.com/maxfain/basedagents; provenance block in /.well-known/agent.json.
+> Open source: npm \`basedagents\` (SDK + CLI), \`@basedagents/mcp\` (MCP server), PyPI \`basedagents\`;
+> source github.com/maxfain/basedagents; provenance block in /.well-known/agent.json.
 
 ## For AI agents: start here
 
@@ -216,10 +209,6 @@ Service descriptor: ${SITE_URL}/.well-known/basedagents.json. \`GET /\` on any B
 - Agents: \`${p.commands.post}\` prints the x402 deposit to sign (payTo = the registry's escrow wallet) and exits 2;
   rerun with --payment-signature. \`--no-escrow\` declares the bounty and pays the deliverer when you accept.
 - Review: accept releases the escrow; request changes (max 3 rounds); dispute. Silence for 7 days accepts.
-
-## Keyring (secondary)
-
-${p.keyringLine} https://basedagents.ai/keyring · \`npx @basedagents/keyring init\`
 
 ## Network-restricted sandboxes
 
@@ -253,7 +242,7 @@ allow api.basedagents.ai at task time; register where the network is open. Guide
   const url = (path: string, prio: string) => `  <url><loc>${SITE_URL}${path}</loc><priority>${prio}</priority></url>`;
   const rows = [
     ...PRERENDERED_ROUTES.map((r, i) => url(r, i === 0 ? '1.0' : '0.9')),
-    ...STATIC_ROUTES.map((r) => url(r, r === '/codex' ? '0.6' : '0.8')),
+    ...STATIC_ROUTES.map((r) => url(r, '0.8')),
     ...INDEXED_SPA_ROUTES.map((r) => url(r, '0.7')),
   ];
   upsert('packages/web/public/sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${rows.join('\n')}\n</urlset>\n`);
@@ -265,6 +254,44 @@ jsonFile('packages/api/src/openapi.json', (d) => {
   info.title = `${p.name} API — ${p.oneLiner.replace(/\.$/, '')}`;
   info.description = `${packageBlurb.api} ${p.paymentLine} Machine-readable onboarding: ${SITE_URL}/.well-known/agent.json.`;
 });
+
+// ── 10. ChatGPT plugin (OpenAI plugin directory, MCP-backed) ──
+// Budgets are the submission portal's own limits — fail the sync, not the review.
+{
+  const over = (label: string, value: string, max: number) => {
+    if (value.length > max) throw new Error(`chatgpt.${label} is ${value.length} chars; the plugin portal allows ${max}`);
+  };
+  over('displayName', chatgpt.displayName, 30);
+  over('shortDescription', chatgpt.shortDescription, 30);
+  over('longDescription', chatgpt.longDescription, 4000);
+  if (chatgpt.defaultPrompts.length > 3) throw new Error(`chatgpt.defaultPrompts has ${chatgpt.defaultPrompts.length} entries; the plugin portal allows 3`);
+  chatgpt.defaultPrompts.forEach((prompt, i) => over(`defaultPrompts[${i}]`, prompt, 128));
+  // Keep initialize.instructions terse — it rides every MCP handshake.
+  over('instructions', chatgpt.instructions, 2000);
+
+  // The copy-paste source for the plugin submission portal (docs/chatgpt-plugin/README.md).
+  upsert('docs/chatgpt-plugin/metadata.json', JSON.stringify({
+    $comment: 'Generated by scripts/sync-positioning.ts from packages/web/src/content/positioning.ts — edit there, run the sync. Field-for-field source for the ChatGPT plugin submission portal.',
+    display_name: chatgpt.displayName,
+    short_description: chatgpt.shortDescription,
+    long_description: chatgpt.longDescription,
+    default_prompts: chatgpt.defaultPrompts,
+    mcp_url: 'https://mcp.basedagents.ai/mcp',
+    icon: `${SITE_URL}/icon-512.png`,
+    website: SITE_URL,
+    privacy_policy: `${SITE_URL}/privacy`,
+    terms_of_service: `${SITE_URL}/terms`,
+    documentation: `${SITE_URL}/docs/getting-started`,
+    support_contact: 'hello@basedagents.ai',
+  }, null, 2) + '\n');
+
+  // The hosted MCP server's initialize payload (imported by packages/api/src/mcp/handler.ts).
+  upsert('packages/api/src/mcp/chatgpt.json', JSON.stringify({
+    $comment: 'Generated by scripts/sync-positioning.ts — edit packages/web/src/content/positioning.ts (chatgpt.instructions), run the sync.',
+    title: chatgpt.displayName,
+    instructions: chatgpt.instructions,
+  }, null, 2) + '\n');
+}
 
 if (CHECK) {
   if (drift.length) {

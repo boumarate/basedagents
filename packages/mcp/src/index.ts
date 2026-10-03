@@ -62,7 +62,7 @@ import {
 
 const API = process.env.BASEDAGENTS_API_URL ?? 'https://api.basedagents.ai';
 const SITE = 'https://basedagents.ai';
-// ONE version source: package.json, read at runtime (the sdk/keyring
+// ONE version source: package.json, read at runtime (the sdk's
 // createRequire pattern — a hand-bumped copy shipped stale once already).
 const VERSION: string = (
   createRequire(import.meta.url)('../package.json') as { version: string }
@@ -1883,7 +1883,7 @@ tool(
 async function main() {
   // Optional analytics identity + source tags (attribution.ts). Never blocks
   // startup: invalid tags are discarded to stderr, an unusable state file just
-  // means unattributed, and BASEDAGENTS_TELEMETRY=off (or the keyring's
+  // means unattributed, and BASEDAGENTS_TELEMETRY=off (or its alias
   // BASEDAGENTS_NO_TELEMETRY=1) turns all of it off.
   await initAttribution({ apiUrl: API, version: VERSION });
   const transport = new StdioServerTransport();

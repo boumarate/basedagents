@@ -105,7 +105,7 @@ describe('public intake (no account)', () => {
     expect(queue.awaiting_email_verification).toBe(0);
   });
 
-  it('adopts into an EXISTING account on its next visit — and never touches its Keyring shape', async () => {
+  it('adopts into an EXISTING account on its next visit — and never adds delegations or a passkey', async () => {
     const buyer = await signupBuyer(h, 'returning@example.com');
     await publicSubmit('Returning@Example.com'); // case-insensitive match
 
@@ -117,7 +117,7 @@ describe('public intake (no account)', () => {
 
     const me = (await (await h.get('/v1/owner/me', buyer.cookie)).json()) as { delegations: unknown[]; vault_key: unknown };
     expect(me.delegations).toEqual([]);
-    expect(me.vault_key).toBeNull();
+    expect(me.vault_key).toBeUndefined(); // field retired with Keyring (0048)
   });
 
   it('rejects invalid payloads, secret material, and unverifiable emails without creating anything', async () => {

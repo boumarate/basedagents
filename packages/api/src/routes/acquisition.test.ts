@@ -2,7 +2,7 @@
  * POST /v1/acquisition (setup-flow id issuance) and the website→installation
  * bridge: a minted id carries its server-side source mapping through MCP-style
  * traffic and registration, several installations may share one copied
- * snippet, and the funnel allowlist accepts the two setup events.
+ * snippet, and POST /v1/acquisition/events records only the two setup events.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setupTestDb, createTestApp } from '../test-helpers.js';
@@ -68,16 +68,24 @@ describe('acquisition id issuance + bridge', () => {
     }
   });
 
-  it('accepts the two setup funnel events with the acquisition id as funnel_id', async () => {
+  it('records the two setup events with the acquisition id as funnel_id, and nothing else', async () => {
+    const post = (body: unknown) => app.request('/v1/acquisition/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
     for (const event of ['mcp_setup_viewed', 'mcp_install_copied']) {
-      const res = await app.request('/v1/funnel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event, funnel_id: 'acq_test12345' }),
-      });
+      const res = await post({ event, acquisition_id: 'acq_test12345', source: 'pulsemcp' });
       expect(res.status, event).toBe(200);
     }
-    const rows = await db.all<{ event: string }>('SELECT event FROM funnel_events ORDER BY event');
-    expect(rows.map((r) => r.event)).toEqual(['mcp_install_copied', 'mcp_setup_viewed']);
+    expect((await post({ event: 'task_paid' })).status).toBe(400); // not a client event
+    expect((await post({ event: 'mcp_setup_viewed', acquisition_id: 'not-an-id' })).status).toBe(400);
+    const rows = await db.all<{ event: string; funnel_id: string; provider: string }>(
+      'SELECT event, funnel_id, provider FROM funnel_events ORDER BY event',
+    );
+    expect(rows).toEqual([
+      { event: 'mcp_install_copied', funnel_id: 'acq_test12345', provider: 'pulsemcp' },
+      { event: 'mcp_setup_viewed', funnel_id: 'acq_test12345', provider: 'pulsemcp' },
+    ]);
   });
 });

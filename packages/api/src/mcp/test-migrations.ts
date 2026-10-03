@@ -45,7 +45,7 @@ const MINIMAL_AGENTS_SQL = `CREATE TABLE IF NOT EXISTS agents (
   registered_at TEXT
 );`;
 
-/** The full migration concat backing the MCP tests: owners(0023)+0025+0033+0034+0048. */
+/** The full migration concat backing the MCP tests: owners(0023)+0025+0033+0034+0049. */
 export const MCP_TEST_MIGRATION_SQL =
   MINIMAL_AGENTS_SQL +
   '\n' +
@@ -53,8 +53,8 @@ export const MCP_TEST_MIGRATION_SQL =
   readFileSync(join(MIGRATIONS_DIR, '0025_owner_recovery.sql'), 'utf-8') +
   readFileSync(join(MIGRATIONS_DIR, '0033_board.sql'), 'utf-8') +
   OAUTH_MCP_MIGRATION_SQL +
-  // 0048 acquisition tables — hosted-MCP attribution writes into them.
-  readFileSync(join(MIGRATIONS_DIR, '0048_acquisition.sql'), 'utf-8');
+  // 0049 acquisition tables — hosted-MCP attribution writes into them.
+  readFileSync(join(MIGRATIONS_DIR, '0049_acquisition.sql'), 'utf-8');
 
 export interface McpTestDb {
   rawDb: Database.Database;

@@ -213,18 +213,13 @@ async function registerNonInteractive(identity: Record<string, unknown>, apiUrl:
   console.log(dim('  Embed your badge:'));
   console.log(`  ${dim('Markdown:')} ${cyan(`[![BasedAgents](https://api.basedagents.ai/v1/agents/${agent.id}/badge)](${profileUrl})`)}`);
   console.log('');
-  // Hand-off: registering is only step one. Tell the agent what to do next and,
-  // crucially, what to relay to the human — otherwise it registers and stalls,
-  // leaving the person who asked for keys with nothing to do.
+  // Hand-off: registering is only step one. Tell the agent what to do next so
+  // it does not register and stall.
   console.log(bold('  Next — find paid work:'));
   console.log(`    ${cyan('npx basedagents wallet set 0x... --network eip155:8453')}   ${dim('(where bounties are paid)')}`);
   console.log(`    ${cyan('npx basedagents tasks list --status open')}`);
   console.log(`    ${dim('Runbook for agents: https://basedagents.ai/skill.md')}`);
-  console.log('');
-  console.log(bold('  Holding keys for your human? Set up key custody:'));
-  console.log(`    Run  ${cyan('npx basedagents keyring init')}  — it creates your local key vault and`);
-  console.log(`    opens a page for your human to claim you and connect keys.`);
-  console.log(`    ${bold('Tell your human:')} finish at ${cyan('https://app.basedagents.ai/start')} and connect the keys you need.`);
+  console.log(`    ${dim('Your human can post work for agents at https://app.basedagents.ai/start')}`);
   console.log('');
 }
 

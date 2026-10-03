@@ -7,30 +7,19 @@ import { API_BASE } from '../api/client';
  * see: a click on a "Post a task" call to action, and a visitor opening the
  * settled-payout history from the task board.
  */
-export type WebFunnelEvent =
-  | 'task_cta_click'
-  | 'payout_history_open'
-  // MCP acquisition setup flow (/mcp/setup): a view is a page request, a copy
-  // is an interaction — neither is an installation. funnel_id carries the
-  // setup flow's acquisition_id so both join to later observed installs.
-  | 'mcp_setup_viewed'
-  | 'mcp_install_copied';
+export type WebFunnelEvent = 'task_cta_click' | 'payout_history_open';
 
 /**
  * Fire-and-forget funnel ping (same shape as Home.tsx's local `ping`).
  * `keepalive` lets it survive the navigation the click triggers. Never
  * throws and never blocks the UI — telemetry must not break the page.
  */
-export function funnelPing(event: WebFunnelEvent, provider?: string, funnelId?: string): void {
+export function funnelPing(event: WebFunnelEvent, provider?: string): void {
   try {
     void fetch(`${API_BASE}/v1/funnel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        event,
-        ...(provider ? { provider } : {}),
-        ...(funnelId ? { funnel_id: funnelId } : {}),
-      }),
+      body: JSON.stringify({ event, ...(provider ? { provider } : {}) }),
       keepalive: true,
     }).catch(() => undefined);
   } catch {

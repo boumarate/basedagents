@@ -31,20 +31,18 @@ import taskRoutes from './routes/tasks.js';
 import scanRoutes from './routes/scan.js';
 import probeRoutes from './routes/probe.js';
 import { queueStaleReports, processRescanQueue } from './scanner/rescan.js';
-// Keyring control plane (proprietary — see packages/api/src/control/LICENSE).
+// Owner control plane (proprietary — see packages/api/src/control/LICENSE).
 import ownerRoutes from './control/routes.js';
 import ownerTaskRoutes from './control/tasks.js';
-import approvalRoutes from './control/approvals.js';
 import recoveryRoutes from './control/recovery.js';
-import { billingRoutes, stripeWebhookRoutes } from './control/billing.js';
 import testingRoutes from './control/testing.js';
 // Agent Testing product (proprietary control plane — packages/api/src/control/LICENSE).
 import { testingPublicRoutes, testingCustomerRoutes } from './control/agent-testing/routes.js';
 import { testingAdminRoutes } from './control/agent-testing/admin.js';
 import { runTestingJobs } from './control/agent-testing/jobs.js';
 import { testingStripeFromEnv } from './control/agent-testing/checkout.js';
+import { stripeWebhookRoutes } from './control/stripe-webhook.js';
 import ladderRoutes from './control/ladder.js';
-import funnelRoutes, { VOTABLE_PROVIDERS } from './routes/funnel.js';
 import feedbackRoutes from './routes/feedback.js';
 import adminRoutes from './control/admin.js';
 import { acquisitionCapture, runAcquisitionRetention } from './acquisition/capture.js';
@@ -90,18 +88,14 @@ const RATE_LIMITS: Record<string, { max: number; windowMs: number }> = {
   '/v1/owner/recover/begin':   { max: 3,  windowMs: 60_000 },
   '/v1/owner/recover/options': { max: 10, windowMs: 60_000 },
   '/v1/owner/recover/finish':  { max: 10, windowMs: 60_000 },
-  // Authority ladder: link creation and email-sending endpoints are abuse targets.
-  '/v1/owner/link':            { max: 10, windowMs: 60_000 },
+  // Authority ladder: the email-sending endpoints are abuse targets.
   '/v1/owner/login/email':     { max: 3,  windowMs: 60_000 },
   '/v1/owner/start/email':     { max: 3,  windowMs: 60_000 },
-  '/v1/owner/claim/finish':    { max: 10, windowMs: 60_000 },
-  '/v1/owner/invites':         { max: 10, windowMs: 60_000 },
-  // Anonymous counters (funnel pings, vote tiles) — cheap, but cap the firehose.
-  '/v1/funnel':                { max: 30, windowMs: 60_000 },
   // Client-reported MCP tool outcomes — bounded batches, idempotent ingestion.
   '/v1/telemetry/mcp':         { max: 30, windowMs: 60_000 },
-  // Setup-flow acquisition ids — anonymous mint, bounded retention.
+  // Setup-flow acquisition ids and setup-page events — anonymous, bounded.
   '/v1/acquisition':           { max: 30, windowMs: 60_000 },
+  '/v1/acquisition/events':    { max: 30, windowMs: 60_000 },
   // Public board list read — uncached (unlike the 60s-edge-cached Atom feed),
   // so cap scraping per IP. The middleware is method-blind, so this entry
   // also fronts POSTs on the same path; 120/min sits far above the write
@@ -117,10 +111,6 @@ const RATE_LIMITS: Record<string, { max: number; windowMs: number }> = {
   // limits run after the Idempotency-Key replay check, so a retry of a filed
   // report always gets its response back.)
 };
-// Vote tiles are parameterized paths — one exact entry per allowlisted slug.
-for (const p of VOTABLE_PROVIDERS) {
-  RATE_LIMITS[`/v1/providers/${p}/vote`] = { max: 10, windowMs: 60_000 };
-}
 
 // Rate limits for PARAMETERIZED paths (the exact-match map above can't reach
 // them). Keyed by `key` (not the concrete path) so an attacker rotating the id
@@ -566,21 +556,15 @@ app.route('/v1/tasks', taskRoutes);
 app.route('/v1/scan', scanRoutes);
 // MCP Probe: /v1/agents/:id/probe
 app.route('/v1/agents', probeRoutes);
-// Keyring control plane (owner accounts, passkeys, delegations): /v1/owner
+// Owner control plane (owner accounts, passkeys, delegations): /v1/owner
 app.route('/v1/owner', ownerRoutes);
 app.route('/v1/owner', ownerTaskRoutes);
 // Operator-only console pages (feedback triage) — ADMIN_OWNER_IDS
 app.route('/v1/owner', adminRoutes);
 // Agent feedback (WS5)
 app.route('/v1/feedback', feedbackRoutes);
-// Keyring approvals inbox + grant approvals + daemon pull/confirm: /v1/owner
-app.route('/v1/owner', approvalRoutes);
-// Keyring account recovery (magic link + recovery code → passkey rotation): /v1/owner
+// Owner account recovery (magic link + recovery code → passkey rotation): /v1/owner
 app.route('/v1/owner', recoveryRoutes);
-// Keyring billing (entitlements, Stripe checkout/portal): /v1/owner
-app.route('/v1/owner', billingRoutes);
-// Stripe webhook — no session, the Stripe signature is the auth: /v1/stripe/webhook
-app.route('/v1', stripeWebhookRoutes);
 // E2E-only support (404s unless E2E=1): /v1/owner/test/*
 app.route('/v1/owner', testingRoutes);
 // Agent Testing product: public catalog + worker briefs, customer service
@@ -588,13 +572,13 @@ app.route('/v1/owner', testingRoutes);
 app.route('/v1/testing', testingPublicRoutes);
 app.route('/v1/owner/testing', testingCustomerRoutes);
 app.route('/v1/owner/admin/testing', testingAdminRoutes);
-// The authority ladder (link codes, magic-link claim/login, invites, connect cards): /v1/owner
+// Stripe webhook (Agent Testing payments) — no session, the Stripe signature is the auth: /v1/stripe/webhook
+app.route('/v1', stripeWebhookRoutes);
+// The authority ladder (magic-link login, the /start door, buyer signup): /v1/owner
 app.route('/v1/owner', ladderRoutes);
-// Onboarding funnel events + provider vote tiles (anonymous): /v1/funnel, /v1/providers/*
-app.route('/v1', funnelRoutes);
 // Client-reported MCP tool outcomes (acquisition analytics): /v1/telemetry/mcp
 app.route('/v1', telemetryRoutes);
-// Setup-flow acquisition ids (website→installation bridge): /v1/acquisition
+// Setup-flow acquisition ids + setup-page events (website→installation bridge): /v1/acquisition
 app.route('/v1', acquisitionRoutes);
 
 // ─── 404 Handler ───

@@ -15,7 +15,7 @@
  *   packages/console/public/skill.md                              (for negotiation on app.)
  *   packages/{web,console}/public/.well-known/basedagents.json     (service descriptor)
  *   packages/api/src/discovery/skill.generated.ts                 (the API serves both)
- *   packages/web/public/llms-full.txt                             (skill + API summary + Keyring guide)
+ *   packages/web/public/llms-full.txt                             (skill + API summary + sandbox guide)
  *   packages/{web,console}/functions/headers.generated.ts          (headers for `/` responses)
  *
  * Checks (both modes):
@@ -108,7 +108,7 @@ export const SKILL_MIN_CLI_VERSION = ${JSON.stringify(meta.min_cli_version)};
 export const SKILL_MD = ${JSON.stringify(skill)};
 `);
 
-// ── 5. llms-full.txt: skill + API summary + the Keyring/sandbox guide ──
+// ── 5. llms-full.txt: skill + API summary + the sandbox guide ──
 type Op = { summary?: string };
 const openapi = JSON.parse(read('packages/api/src/openapi.json')) as { paths: Record<string, Record<string, Op>> };
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
@@ -126,7 +126,7 @@ upsert('packages/web/public/llms-full.txt', `# BasedAgents — full
 > receipts, and bounties are paid in USDC on Base.
 >
 > GENERATED from ${SITE}/skill.md (the agent runbook, v${version}) plus the API
-> summary and the Keyring guide. Machine-readable: ${SITE}/.well-known/basedagents.json
+> summary and the sandbox guide. Machine-readable: ${SITE}/.well-known/basedagents.json
 
 ${body.trim()}
 
@@ -136,7 +136,7 @@ Base: https://api.basedagents.ai · OpenAPI: https://api.basedagents.ai/v1/opena
 
 ${apiLines.join('\n')}
 
-${read('skills/basedagents/partials/keyring-and-sandboxes.md').trim()}
+${read('skills/basedagents/partials/sandboxes.md').trim()}
 
 ## Links
 
@@ -144,7 +144,6 @@ ${read('skills/basedagents/partials/keyring-and-sandboxes.md').trim()}
 - Service descriptor: ${SITE}/.well-known/basedagents.json
 - Agent manifest: ${SITE}/.well-known/agent.json
 - Agent docs: ${SITE}/docs/agents
-- Keyring: ${SITE}/keyring
 - Get started (human): https://app.basedagents.ai/start
 - Source: https://github.com/maxfain/basedagents
 `);

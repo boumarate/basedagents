@@ -1,11 +1,17 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/api" },
-    { "path": "packages/sdk" },
-    { "path": "packages/keyring" },
-    { "path": "packages/recipes" },
-    { "path": "packages/web" },
-    { "path": "packages/console" }
+    {
+      "path": "packages/api"
+    },
+    {
+      "path": "packages/sdk"
+    },
+    {
+      "path": "packages/web"
+    },
+    {
+      "path": "packages/console"
+    }
   ]
 }

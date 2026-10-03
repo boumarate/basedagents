@@ -212,6 +212,18 @@ describe('dynamic client registration', () => {
     expect(blocked.status).toBe(429);
     expect((await blocked.json()) as { error: string }).toMatchObject({ error: 'too_many_requests' });
   });
+
+  it('MCP_DCR_HOURLY raises the per-IP limit without a code change (shared connector egress IPs)', async () => {
+    // 22 registrations pass a limit raised to 25 — they would have tripped the default 20.
+    const raised = { ...ENV, MCP_DCR_HOURLY: '25' };
+    for (let i = 0; i < 22; i++) {
+      expect((await registerClient(raised)).status).toBe(201);
+    }
+    // A garbage override falls back to the compiled default rather than opening the gate.
+    const garbage = { ...ENV, MCP_DCR_HOURLY: 'unlimited' };
+    const blocked = await registerClient(garbage); // 23rd from this IP ≥ default 20
+    expect(blocked.status).toBe(429);
+  });
 });
 
 // ─────────────────────────────── /authorize ───────────────────────────────

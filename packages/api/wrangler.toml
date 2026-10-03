@@ -26,17 +26,12 @@ REGISTRY_SIGNING_PUBLIC_KEY = "9827a77ffa3bbddff01444277707271838098f3e8f2d29a20
 KEYRING_RP_ID = "basedagents.ai"
 KEYRING_ORIGINS = "https://app.basedagents.ai"
 KEYRING_CONSOLE_ORIGIN = "https://app.basedagents.ai"
-# Stripe price ids are config, not secrets (STRIPE_SECRET_KEY /
-# STRIPE_WEBHOOK_SECRET are wrangler secrets — see scripts/bootstrap-deploy.md).
-# Billing endpoints answer 503 until the secrets are set.
-STRIPE_PRICE_PRO_MONTHLY = ""
-STRIPE_PRICE_PRO_YEARLY = ""
 # PostHog product analytics + Error Tracking (src/lib/posthog.ts). A phc_
 # project token is PostHog's ingest-only client token — safe in this public
 # file, like the price ids above; set HERE, not the dashboard (plain vars are
 # replaced wholesale on every deploy). Host defaults to https://us.i.posthog.com.
 POSTHOG_PROJECT_TOKEN = "phc_sDSFNrjkniWVhvBekx2UL4PkwrmT6jMeWnyswdC3S2LV"
-# Acquisition attribution (migration 0048, src/acquisition/). "0" turns the
+# Acquisition attribution (migration 0049, src/acquisition/). "0" turns the
 # capture middleware + conversion instrumentation off; default on.
 # INTERNAL_AGENT_IDS: extra ids excluded from acquisition reports (joined with
 # HOUSE_ACCOUNT_IDS at query time) — monitoring and smoke-test identities.
@@ -45,15 +40,17 @@ INTERNAL_AGENT_IDS = ""
 # House accounts: paid tasks they posted carry `sponsored: true` in GET /v1/tasks/settled
 # (the platform paying for work, labeled as such). Agent ids are public; add the
 # console owner id (ow_…) that posts house tasks from app.basedagents.ai too.
-# Hans, BasedAgents Bounties, usura_marketing, and the console owner whose Keyring
-# vault key is Hans's key (so its ow_ id shares Hans's public key).
+# Hans, BasedAgents Bounties, usura_marketing, and the console owner account
+# whose account key is Hans's key (so its ow_ id shares Hans's public key).
 HOUSE_ACCOUNT_IDS = "ag_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV,ag_95W5FkDc57BFYwRNcLzwViRBAV4S7iepQMsH4pTcifbE,ag_8SFNAVuWkaEMUNpxHzRXec18M8FJsjLMWDNrj5bbbRCC,ow_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV"
 # Owner ids (ow_…) that see the console's operator pages (feedback triage).
 # Feedback notifications go to the FEEDBACK_NOTIFY_EMAIL / FEEDBACK_SLACK_WEBHOOK_URL
 # secrets (wrangler secret put …); with neither set, reports are stored silently.
 ADMIN_OWNER_IDS = "ow_Dr5oGSMrZZoPCDB7K8iutDCArp5UDCZpPNPYzxRf7yEV"
 # ─── Agent Testing (docs/AGENT_TESTING_RUNBOOK.md §3) ───
-# Plain config, like the Keyring price ids above. Set values HERE and deploy —
+# Plain config. Price ids are config, not secrets (STRIPE_SECRET_KEY /
+# STRIPE_WEBHOOK_SECRET are wrangler secrets — see scripts/bootstrap-deploy.md).
+# Set values HERE and deploy —
 # wrangler replaces the Worker's plain vars wholesale on every deploy, so a
 # value typed into the Cloudflare dashboard would be clobbered by the next CI
 # deploy. Testing SECRETS (TESTING_TREASURY_PRIVATE_KEY, and
@@ -116,7 +113,7 @@ INTERNAL_AGENT_IDS = ""
 # POSTHOG_PROJECT_TOKEN = ""
 # Bounties + escrow on staging (Base Sepolia dry runs). Still fail closed until the
 # staging secrets exist: CDP_API_KEY_ID, CDP_API_KEY_SECRET, PAYMENT_ENCRYPTION_KEY
-# (payments) and ESCROW_WALLET_PRIVATE_KEY (escrow) — see scripts/bootstrap-deploy.md §6–7.
+# (payments) and ESCROW_WALLET_PRIVATE_KEY (escrow) — see scripts/bootstrap-deploy.md §5.
 TASK_PAYMENTS_ENABLED = "1"
 # Agent Testing on staging: same shape as production above; rehearse the flag
 # flips + test-mode Stripe price here first (runbook §7).

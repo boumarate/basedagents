@@ -7,17 +7,13 @@
     "packages/web",
     "packages/console",
     "packages/mcp",
-    "packages/keyring",
-    "packages/recipes",
     "packages/github-action"
   ],
   "scripts": {
-    "build": "npm run build:dist --workspace=packages/keyring && npm run build --workspaces",
+    "build": "npm run build --workspaces",
     "typecheck": "tsc --build",
     "lint": "eslint . && node scripts/lint-ui-words.mjs",
     "lint:words": "node scripts/lint-ui-words.mjs",
-    "//keyring-dist": "console + api import @basedagents/keyring/{crypto,util}, which resolve to keyring/dist — build it before any workspace that depends on it (dist is gitignored, so a fresh clone has none).",
-    "pretest": "npm run build:dist --workspace=packages/keyring",
     "test": "npm run test --workspaces --if-present",
     "smoke": "node scripts/smoke-clean.mjs",
     "test:e2e": "npm run test:e2e --workspace=packages/console",

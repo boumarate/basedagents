@@ -32,7 +32,7 @@ import type { EmailSender, EmailMessage } from '../email.js';
 import ownerRoutes from '../routes.js';
 import ladderRoutes from '../ladder.js';
 import ownerTaskRoutes from '../tasks.js';
-import { stripeWebhookRoutes } from '../billing.js';
+import { stripeWebhookRoutes } from '../stripe-webhook.js';
 import taskRoutes from '../../routes/tasks.js';
 import { testingPublicRoutes, testingCustomerRoutes } from './routes.js';
 import { testingAdminRoutes } from './admin.js';

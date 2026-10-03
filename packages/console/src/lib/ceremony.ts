@@ -8,19 +8,38 @@
  *   2. WYSIWYS verification (pure, tested): re-hash the returned canonical and
  *      require it to equal the challenge, AND parse the canonical to require it
  *      says exactly what the console asked for — same action type, the signed-in
- *      owner, the echoed nonce, and byte-for-byte the params we sent. For
- *      actions with no daemon re-verification (delegations, vault binding) this
- *      client-side check is the only thing standing between a compromised
- *      control plane and the owner's passkey signing a swapped action.
+ *      owner, the echoed nonce, and byte-for-byte the params we sent. Nothing
+ *      re-verifies these actions downstream, so this client-side check is the
+ *      only thing standing between a compromised control plane and the
+ *      owner's passkey signing a swapped action.
  *   3. Run the passkey assertion over the (now-verified) challenge.
  *
  * The caller then posts {nonce, assertion} to the action's endpoint, which
  * re-derives the same canonical server-side and verifies.
+ *
+ * The passkey itself is born at the FIRST action (`ensurePasskey`): "sessions
+ * to look, signatures to act" — the browser's creation prompt fires the moment
+ * the person first tries to act, which is when it makes sense to them.
  */
 import { control } from '../api/control.js';
-import type { ActionBeginResponse, OwnerAssertion } from '../api/types.js';
+import type { ActionBeginResponse, OwnerAssertion, OwnerMe } from '../api/types.js';
 import { actionChallenge } from './action.js';
-import { getAssertion } from './webauthn.js';
+import { accountKeyFromOwnerId } from './owner.js';
+import { createPasskey, getAssertion } from './webauthn.js';
+
+/**
+ * Mint the account's passkey if it has none yet — a no-op once one exists.
+ * Call it before any action ceremony on an email-rung session. Returns
+ * whether a passkey was minted just now (so the caller can refresh /me).
+ */
+export async function ensurePasskey(owner: OwnerMe): Promise<boolean> {
+  if (owner.has_passkey) return false;
+  const accountKey = accountKeyFromOwnerId(owner.owner_id);
+  const begin = await control.registerBegin(accountKey, owner.email ?? undefined);
+  const reg = await createPasskey(begin.options);
+  await control.registerFinish(accountKey, reg);
+  return true; // minted just now
+}
 
 /** Deep equality over plain JSON values (params are JSON in, JSON out). */
 function jsonEqual(a: unknown, b: unknown): boolean {

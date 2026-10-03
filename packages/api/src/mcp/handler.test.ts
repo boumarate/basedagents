@@ -3,8 +3,10 @@
  *
  * PROPRIETARY control-plane code — see ../control/LICENSE and LICENSING.md.
  *
- * Bearer→owner middleware, stateless JSON-RPC dispatch, the 10 tool schemas, the
- * mocked-fetch read path, and the IN-PROCESS owner post are all exercised here.
+ * Optional-bearer middleware (anonymous reads, 401 only where auth is required
+ * or a presented token is dead), stateless JSON-RPC dispatch, the 11 tool
+ * schemas + annotations, the mocked-fetch read path, and the IN-PROCESS owner
+ * post are all exercised here.
  * Reads mock `globalThis.fetch` (no network); the owner post runs against a real
  * better-sqlite3 DB (setupMcpTestDb + the limiter's 0021 table grafted on, the
  * same graft board-post.test.ts uses — that's the one code path here that writes
@@ -89,18 +91,35 @@ describe('/mcp handler', () => {
     return await app.request('/mcp', { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) }, ENV);
   }
 
-  // ─────────────────────────── bearer middleware ───────────────────────────
+  // ─────────────────────────── bearer middleware (optional) ───────────────────────────
 
-  it('no bearer → 401 with exact WWW-Authenticate (PRM URL + invalid_token)', async () => {
-    const res = await rpc(null, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
-    expect(res.status).toBe(401);
-    const www = res.headers.get('WWW-Authenticate');
-    expect(www).toBe(
-      `Bearer resource_metadata="${MCP_ISSUER}/.well-known/oauth-protected-resource", error="invalid_token"`,
-    );
+  it('no bearer → anonymous: initialize carries instructions + title, tools/list answers', async () => {
+    const init = (await (await rpc(null, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })).json()) as Rpc;
+    const ir = init.result as { serverInfo: { name: string; title?: string }; instructions?: string };
+    expect(ir.serverInfo.name).toBe('basedagents');
+    expect(ir.serverInfo.title).toBe('BasedAgents');
+    expect(typeof ir.instructions).toBe('string');
+    expect(ir.instructions).toContain('task marketplace');
+
+    const res = await rpc(null, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    expect(res.status).toBe(200);
+    const tools = ((await res.json()) as Rpc).result as { tools: { name: string }[] };
+    expect(tools.tools.length).toBeGreaterThan(0);
   });
 
-  it('unknown/garbage bearer → 401', async () => {
+  it('no bearer on an auth-marked tool (post_to_board) → 401 with exact WWW-Authenticate', async () => {
+    const res = await rpc(null, {
+      jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'post_to_board', arguments: { body: 'anon attempt' } },
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('WWW-Authenticate')).toBe(
+      `Bearer resource_metadata="${MCP_ISSUER}/.well-known/oauth-protected-resource", error="invalid_token"`,
+    );
+    const n = (rawDb.prepare('SELECT COUNT(*) AS n FROM board_posts').get() as { n: number }).n;
+    expect(n).toBe(0);
+  });
+
+  it('unknown/garbage bearer → 401 even on an anonymous-callable method (no silent downgrade)', async () => {
     const res = await rpc('not-a-real-token', { jsonrpc: '2.0', id: 1, method: 'tools/list' });
     expect(res.status).toBe(401);
     expect(res.headers.get('WWW-Authenticate')).toContain('error="invalid_token"');
@@ -158,21 +177,32 @@ describe('/mcp handler', () => {
     expect(await res.text()).toBe('');
   });
 
-  it('tools/list returns exactly the 10 §7 tools (9 reads + post_to_board)', async () => {
+  it('tools/list returns the 11 tools (10 reads + post_to_board) with explicit annotations', async () => {
     makeOwner('ow_t', 't@example.com');
     const token = await mintToken({ ownerId: 'ow_t', scope: 'registry:read' });
     const body = (await (await rpc(token, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json()) as Rpc;
-    const tools = (body.result as { tools: { name: string; inputSchema: unknown }[] }).tools;
-    expect(tools).toHaveLength(10);
+    const tools = (body.result as {
+      tools: { name: string; inputSchema: unknown; annotations?: Record<string, unknown> }[];
+    }).tools;
+    expect(tools).toHaveLength(11);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
-        'browse_tasks', 'get_agent', 'get_chain_entry', 'get_chain_status', 'get_receipt',
-        'get_reputation', 'get_task', 'post_to_board', 'read_board', 'search_agents',
+        'browse_tasks', 'draft_task_link', 'get_agent', 'get_chain_entry', 'get_chain_status',
+        'get_receipt', 'get_reputation', 'get_task', 'post_to_board', 'read_board', 'search_agents',
       ].sort(),
     );
-    // Every advertised schema is a JSON-Schema object.
-    for (const t of tools) expect((t.inputSchema as { type: string }).type).toBe('object');
+    for (const t of tools) {
+      // Every advertised schema is a JSON-Schema object.
+      expect((t.inputSchema as { type: string }).type).toBe('object');
+      // ChatGPT plugin review requires the three hints EXPLICITLY on every tool.
+      expect(typeof t.annotations?.readOnlyHint).toBe('boolean');
+      expect(typeof t.annotations?.destructiveHint).toBe('boolean');
+      expect(typeof t.annotations?.openWorldHint).toBe('boolean');
+      expect(typeof t.annotations?.title).toBe('string');
+      // Only the owner-write may claim to change state.
+      if (t.name !== 'post_to_board') expect(t.annotations?.readOnlyHint).toBe(true);
+    }
   });
 
   it('unknown method → -32601; malformed JSON body → -32700', async () => {
@@ -300,6 +330,125 @@ describe('/mcp handler', () => {
       jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'nope', arguments: {} },
     })).json()) as Rpc;
     expect(badTool.error?.code).toBe(-32602);
+  });
+
+  // ─────────────────────────── anonymous reads + limiter ───────────────────────────
+
+  it('an anonymous tools/call on a read tool succeeds (no token, mocked fetch)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ agents: [{ agent_id: 'ag_a', name: 'Anon', status: 'active', reputation_score: 0.5, verification_count: 0, capabilities: [], description: 'x' }], pagination: { total: 1 } }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )));
+    const res = await rpc(null, {
+      jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search_agents', arguments: { q: 'anon' } },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Rpc;
+    expect((body.result as { content: { text: string }[] }).content[0].text).toContain('ag_a');
+  });
+
+  it('anonymous tools/call past the per-IP budget → rate_limited (429-class); authed calls unaffected', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ agents: [], pagination: { total: 0 } }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )));
+    const env = { ...ENV, MCP_ANON_HOURLY: '2' };
+    const call = async (bearer: string | null, id: number) =>
+      await app.request('/mcp', {
+        method: 'POST',
+        headers: bearer ? { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` } : { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'search_agents', arguments: {} } }),
+      }, env);
+
+    expect(((await (await call(null, 1)).json()) as Rpc).error).toBeUndefined();
+    expect(((await (await call(null, 2)).json()) as Rpc).error).toBeUndefined();
+    const over = (await (await call(null, 3)).json()) as Rpc;
+    expect(over.error?.code).toBe(-32004);
+    expect((over.error?.data as { http_status: number }).http_status).toBe(429);
+
+    // A token-bearing caller is NOT consumed by (or blocked on) the anonymous budget.
+    makeOwner('ow_anon', 'anon@example.com');
+    const token = await mintToken({ ownerId: 'ow_anon', scope: 'registry:read' });
+    expect(((await (await call(token, 4)).json()) as Rpc).error).toBeUndefined();
+  });
+
+  // ─────────────────────────── draft_task_link ───────────────────────────
+
+  it('draft_task_link returns a prefilled console URL that round-trips its params', async () => {
+    const args = {
+      title: 'Summarize the top 10 HN posts today',
+      description: 'Plain-language summary of each post & the discussion. Include links.',
+      category: 'research',
+      capabilities: 'web-search, summarization',
+      expected_output: 'A JSON list of 10 items: title, url, summary',
+      output_format: 'json',
+      bounty: '5.00',
+    };
+    const body = (await (await rpc(null, {
+      jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'draft_task_link', arguments: args },
+    })).json()) as Rpc;
+    const out = (body.result as { content: { text: string }[]; isError?: boolean });
+    expect(out.isError).toBeUndefined();
+    const link = /(https:\/\/app\.basedagents\.ai\/tasks\/new\?\S+)/.exec(out.content[0].text)?.[1];
+    expect(link).toBeTruthy();
+    const url = new URL(link!);
+    expect(url.searchParams.get('title')).toBe(args.title);
+    expect(url.searchParams.get('description')).toBe(args.description);
+    expect(url.searchParams.get('category')).toBe('research');
+    expect(url.searchParams.get('capabilities')).toBe(args.capabilities);
+    expect(url.searchParams.get('expected_output')).toBe(args.expected_output);
+    expect(url.searchParams.get('output_format')).toBe('json');
+    expect(url.searchParams.get('bounty')).toBe('5.00');
+    // The escrow wording rides along so the model relays what a bounty does.
+    expect(out.content[0].text).toContain('escrow wallet');
+  });
+
+  it('draft_task_link rejects over-limit and malformed fields (console composer limits)', async () => {
+    const bad = async (args: Record<string, unknown>) =>
+      ((await (await rpc(null, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'draft_task_link', arguments: args } })).json()) as Rpc);
+    expect((await bad({ title: 'x'.repeat(201), description: 'd' })).error?.code).toBe(-32602);
+    expect((await bad({ title: 't', description: 'x'.repeat(10001) })).error?.code).toBe(-32602);
+    expect((await bad({ title: 't', description: 'd', bounty: 'five' })).error?.code).toBe(-32602);
+    // An attacker-length digit run is refused by the validator's 7-digit bound
+    // BEFORE any BigInt parse (Worker-CPU guard).
+    expect((await bad({ title: 't', description: 'd', bounty: '9'.repeat(100_000) })).error?.code).toBe(-32602);
+    expect((await bad({ title: 't', description: 'd', category: 'gardening' })).error?.code).toBe(-32602);
+    expect((await bad({ title: 't', description: 'd', capabilities: 'x'.repeat(501) })).error?.code).toBe(-32602);
+  });
+
+  it('draft_task_link enforces the posting bounty bounds (0.10 min, 1,000 max) instead of linking a doomed draft', async () => {
+    const call = async (args: Record<string, unknown>) => {
+      const body = (await (await rpc(null, {
+        jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'draft_task_link', arguments: args },
+      })).json()) as Rpc;
+      return body.result as { content: { text: string }[]; isError?: boolean };
+    };
+    const base = { title: 'Audit a contract', description: 'Report the findings.' };
+
+    for (const bounty of ['0', '0.05']) {
+      const r = await call({ ...base, bounty });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain('at least 0.10 USDC');
+    }
+    const over = await call({ ...base, bounty: '1000.000001' });
+    expect(over.isError).toBe(true);
+    expect(over.content[0].text).toContain('cannot exceed 1,000 USDC');
+
+    for (const bounty of ['0.10', '1000']) {
+      const r = await call({ ...base, bounty });
+      expect(r.isError).toBeUndefined();
+      expect(r.content[0].text).toContain(`bounty=${encodeURIComponent(bounty)}`);
+    }
+  });
+
+  it('draft_task_link refuses a draft whose encoded link would exceed the 7,500-char URL bound', async () => {
+    const body = (await (await rpc(null, {
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'draft_task_link', arguments: { title: 'Long one', description: 'y'.repeat(9000) } },
+    })).json()) as Rpc;
+    const r = body.result as { content: { text: string }[]; isError?: boolean };
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('7,500-character limit');
   });
 
   // ─────────────────────────── post_to_board (in-process) ───────────────────────────

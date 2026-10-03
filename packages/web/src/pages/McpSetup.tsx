@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import CodeSnippet from '../components/CodeSnippet';
 import { API_BASE } from '../api/client';
-import { funnelPing } from '../lib/funnel';
 
 /**
  * Campaign-aware MCP setup: /mcp/setup?utm_source=…&utm_campaign=… (plain
@@ -31,6 +30,29 @@ function readTags(search: string): { source: string | null; campaign: string | n
   };
 }
 
+type SetupEvent = 'mcp_setup_viewed' | 'mcp_install_copied';
+
+/**
+ * Fire-and-forget setup-page event (POST /v1/acquisition/events). A view or a
+ * copy is never an installation. Never throws and never blocks the page.
+ */
+function setupEvent(event: SetupEvent, source: string | null, acquisitionId: string | null): void {
+  try {
+    void fetch(`${API_BASE}/v1/acquisition/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event,
+        ...(source ? { source } : {}),
+        ...(acquisitionId ? { acquisition_id: acquisitionId } : {}),
+      }),
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    /* analytics must never break the page */
+  }
+}
+
 interface Tagging {
   source: string | null;
   campaign: string | null;
@@ -46,9 +68,9 @@ function envBlock(t: Tagging, indent: string): string {
   return `,\n${indent}"env": {\n${indent}  ${entries.join(`,\n${indent}  `)}\n${indent}}`;
 }
 
+/** The config file is pure JSON, so the copied text must not carry a comment line. */
 function claudeDesktopSnippet(t: Tagging): string {
-  return `// ~/Library/Application Support/Claude/claude_desktop_config.json
-{
+  return `{
   "mcpServers": {
     "basedagents": {
       "command": "npx",
@@ -70,13 +92,18 @@ function npxSnippet(t: Tagging): string {
 export default function McpSetup(): React.ReactElement {
   const location = useLocation();
   const tags = useMemo(() => readTags(location.search), [location.search]);
-  const [acquisitionId, setAcquisitionId] = useState<string | null>(null);
+  // The id is tied to the tags it was minted for: it is only shown while those
+  // tags are still the page's tags, so a stale id from a previous URL can never
+  // ride along with a different (or no) source.
+  const [minted, setMinted] = useState<{ key: string; id: string } | null>(null);
+  const tagKey = `${tags.source ?? ''}|${tags.campaign ?? ''}`;
+  const acquisitionId = minted && minted.key === tagKey ? minted.id : null;
 
   useEffect(() => {
     let cancelled = false;
-    // A view is recorded as a page request, never counted as an installation.
+    setMinted(null);
     if (!tags.source) {
-      funnelPing('mcp_setup_viewed');
+      setupEvent('mcp_setup_viewed', null, null);
       return;
     }
     (async () => {
@@ -91,16 +118,16 @@ export default function McpSetup(): React.ReactElement {
       } catch {
         /* analytics must never break the page — snippets fall back to plain tags */
       }
-      if (!cancelled) {
-        setAcquisitionId(id);
-        funnelPing('mcp_setup_viewed', tags.source ?? undefined, id ?? undefined);
-      }
+      // A response for tags the page has since moved away from is dropped.
+      if (cancelled) return;
+      if (id) setMinted({ key: tagKey, id });
+      setupEvent('mcp_setup_viewed', tags.source, id);
     })();
     return () => { cancelled = true; };
-  }, [tags]);
+  }, [tags, tagKey]);
 
   const tagging: Tagging = { source: tags.source, campaign: tags.campaign, acquisitionId };
-  const copied = () => funnelPing('mcp_install_copied', tags.source ?? undefined, acquisitionId ?? undefined);
+  const copied = () => setupEvent('mcp_install_copied', tags.source, acquisitionId);
 
   return (
     <div style={{ padding: '48px 0' }}>
@@ -118,6 +145,10 @@ export default function McpSetup(): React.ReactElement {
         </p>
 
         <h2 style={{ fontSize: 20, marginBottom: 12 }}>Claude Desktop</h2>
+        <p style={{ color: 'var(--text-tertiary)', fontSize: 13, marginBottom: 8 }}>
+          Paste into <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS)
+          or <code>{'%APPDATA%\\Claude\\claude_desktop_config.json'}</code> (Windows).
+        </p>
         <CodeSnippet language="json" onCopy={copied}>{claudeDesktopSnippet(tagging)}</CodeSnippet>
 
         <h2 style={{ fontSize: 20, margin: '32px 0 12px' }}>Any terminal / other MCP clients</h2>

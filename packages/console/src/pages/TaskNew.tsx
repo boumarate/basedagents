@@ -15,16 +15,14 @@
  * Base-case surface — the banned-words rule applies (scripts/lint-ui-words.mjs).
  */
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { control, payments, paymentChallengeOf } from '../api/control.js';
 import type { CreateTaskInput, TaskCategory, TaskOutputFormat } from '../api/types.js';
 import { usdcToAtomic } from '../lib/money.js';
 import { signBountyPayment, walletAvailable } from '../lib/wallet.js';
-import { funnelPing } from '../lib/funnel.js';
 import { useOwner } from '../state/session.js';
 import { taskErrText } from '../components/TaskBits.js';
-import { ensurePasskey } from '../lib/firstApproval.js';
-import { runAction } from '../lib/ceremony.js';
+import { ensurePasskey, runAction } from '../lib/ceremony.js';
 import { sha256hex, canonicalJsonStringify } from '../lib/action.js';
 
 const MAX_TITLE = 200;
@@ -52,13 +50,22 @@ export function parseCapabilities(raw: string): string[] {
 export default function TaskNew() {
   const { owner, refresh } = useOwner();
   const navigate = useNavigate();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState<'' | TaskCategory>('');
-  const [capabilities, setCapabilities] = useState('');
-  const [expectedOutput, setExpectedOutput] = useState('');
-  const [outputFormat, setOutputFormat] = useState<TaskOutputFormat>('json');
-  const [bounty, setBounty] = useState('');
+  // Prefill from the query string (?title=…&description=…): the handoff target
+  // for drafts composed elsewhere — the hosted MCP server's draft_task_link
+  // tool (ChatGPT, claude.ai) builds these URLs. Everything is clamped to the
+  // composer's own limits and re-validated on submit; a bogus enum value falls
+  // back to the default. The Protected gate keeps the query across sign-in.
+  const [params] = useSearchParams();
+  const [title, setTitle] = useState(() => (params.get('title') ?? '').slice(0, MAX_TITLE));
+  const [description, setDescription] = useState(() => (params.get('description') ?? '').slice(0, MAX_DESCRIPTION));
+  const [category, setCategory] = useState<'' | TaskCategory>(() => {
+    const v = params.get('category');
+    return CATEGORIES.some((c) => c.value === v) ? (v as TaskCategory) : '';
+  });
+  const [capabilities, setCapabilities] = useState(() => params.get('capabilities') ?? '');
+  const [expectedOutput, setExpectedOutput] = useState(() => (params.get('expected_output') ?? '').slice(0, MAX_EXPECTED));
+  const [outputFormat, setOutputFormat] = useState<TaskOutputFormat>(() => (params.get('output_format') === 'link' ? 'link' : 'json'));
+  const [bounty, setBounty] = useState(() => params.get('bounty') ?? '');
   const [maxClaims, setMaxClaims] = useState('');
   const [expiresDays, setExpiresDays] = useState('');
   const [paymentsOn, setPaymentsOn] = useState(false);
@@ -69,16 +76,28 @@ export default function TaskNew() {
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Flips once the payments capability has actually answered — a prefilled
+  // bounty must not be judged against the initial paymentsOn=false default.
+  const [paymentsKnown, setPaymentsKnown] = useState(false);
 
   useEffect(() => {
-    funnelPing('task_composer_view');
-    void payments.enabled().then(setPaymentsOn);
+    void payments.enabled().then((on) => {
+      setPaymentsOn(on);
+      setPaymentsKnown(true);
+    });
     void payments.escrowEnabled().then(setEscrowOn);
     void payments.minBountyUsdc().then(setMinBounty);
   }, []);
 
   if (!owner) return null; // Protected route guarantees a session.
   const activeOwner = owner;
+
+  // A draft link promised a bounty but this registry can't take one (payments
+  // off, or the capability check failed and reads as off). Posting would
+  // silently turn promised-paid work into unpaid work, so block the post until
+  // the bounty is explicitly removed. Typed bounties can't reach this state —
+  // the field only renders when payments are on.
+  const bountyBlocked = paymentsKnown && !paymentsOn && bounty.trim().length > 0;
 
   async function onSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -179,7 +198,7 @@ export default function TaskNew() {
     }
   }
 
-  const canPost = !busy && title.trim().length > 0 && description.trim().length > 0;
+  const canPost = !busy && title.trim().length > 0 && description.trim().length > 0 && !bountyBlocked;
   const hasBounty = paymentsOn && bounty.trim().length > 0;
 
   return (
@@ -292,7 +311,21 @@ export default function TaskNew() {
             </span>
           </div>
         ) : (
-          <p className="field-hint">This task is unpaid — an agent claims it and delivers, no bounty attached.</p>
+          <>
+            {bountyBlocked && (
+              <div className="banner banner-error" data-testid="bounty-unavailable">
+                This draft came with a {bounty.trim()} USDC bounty, but bounties are not available
+                here right now, so the task would be posted unpaid. Remove the bounty to post it
+                anyway, or come back when bounties are available.
+                <div className="btn-row">
+                  <button type="button" className="btn btn-ghost" onClick={() => setBounty('')}>
+                    Remove the bounty and post unpaid
+                  </button>
+                </div>
+              </div>
+            )}
+            <p className="field-hint">This task is unpaid — an agent claims it and delivers, no bounty attached.</p>
+          </>
         )}
 
         <div className="field">

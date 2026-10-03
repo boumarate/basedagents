@@ -1,6 +1,6 @@
 # Gotchas
 
-The sharp edges that will bite you when deploying or extending the Keyring
+The sharp edges that will bite you when deploying or extending the owner
 control plane. Each one either bit us already or almost did. The authority
 model lives in [`CONTROL_PLANE.md`](./CONTROL_PLANE.md); this file is the
 operational and development footnotes.
@@ -140,14 +140,6 @@ token rides the URL **fragment** deliberately — fragments never reach the
 server, so the token can't leak into request logs; don't "fix" it into a query
 parameter.
 
-### Rotation intentionally strands the daemon
-
-After account recovery, the daemon's locally anchored passkeys are stale **by
-design** — `based sync` will reject approvals signed by the new passkey until
-the owner re-runs `based link` and confirms the new fingerprint. Don't
-auto-refresh anchors from the control plane; the human confirmation is the
-trust root (CONTROL_PLANE.md §2).
-
 ### CI `deploy-production` installs the wrong wrangler and can't read `wrangler.jsonc`
 
 The `deploy-production` job (`.github/workflows/ci.yml`) uses
@@ -170,25 +162,15 @@ above, then the console Pages deploy).
 
 ## Extending the control plane
 
-### The `ow_` / `ag_` identity split (this was a real bug)
-
-The same Ed25519 vault key has two spellings: the daemon stores the owner
-internally as `ag_<base58>` (it reuses the agent-identity type), but the
-grant-approval contract signs the **`ow_<base58>`** form the console uses.
-`applyApprovedGrant` must build the canonical with
-`` `ow_${vault.owner.public_key_b58}` `` — using `vault.owner.agent_id`
-reproduces the hash-mismatch bug that made the daemon reject every genuine
-approval. Any new code that reconstructs a §2.1 canonical must use the `ow_`
-form.
-
 ### Byte-parity or nothing
 
-The daemon, control plane, and console each re-derive the same canonical JSON
-and hash. `canonicalJsonStringify` **sorts keys recursively and preserves
-`null`s** — if any side drops a null field or orders keys differently, hashes
-disagree and verification fails closed. The shared source of truth is
-`packages/keyring/src/control-actions.ts`; the api and console interop tests
-exist to catch drift. Don't hand-roll a canonical anywhere.
+The control plane and the console each re-derive the same canonical JSON and
+hash. `canonicalJsonStringify` **sorts keys recursively and preserves
+`null`s** — if either side drops a null field or orders keys differently,
+hashes disagree and verification fails closed. The api's
+`crypto/canonicalJsonStringify` and the console's `lib/action.ts` are the two
+implementations; the console E2E catches drift. Don't hand-roll a canonical
+anywhere.
 
 ### `label: null` in the canonical, `label` absent on the wire
 
@@ -206,9 +188,9 @@ Adding an action type means (1) the challenge-`purpose` union in
 (`'register' | 'login' | 'action' | 'recovery'` — it's a closed type),
 (2) arming via `armActionChallenge` (challenge column **is** the action hash —
 `store.createChallenge` generates random challenges and is wrong for actions),
-and (3) client-side WYSIWYS in the console (`verifyArmedAction`). For
-mutations with no daemon re-verification, that client-side check is the only
-defense against a compromised control plane — never skip it because "the
+and (3) client-side WYSIWYS in the console (`verifyArmedAction`). That
+client-side check is the only defense against a compromised control plane
+swapping the action under the owner's passkey — never skip it because "the
 server built the canonical anyway."
 
 ### No transactions — atomic conditional writes only
@@ -238,12 +220,12 @@ to *fail* must break origin/challenge, not the attestation blob.
 The control-plane test files each build an in-memory SQLite from explicit
 migration files (`rawDb.exec(SQL_0023)` …). A new migration that existing
 queries depend on must be added to **every** harness
-(`routes.test.ts`, `store.test.ts`, `approvals.test.ts`, `recovery.test.ts`) —
+(`routes.test.ts`, `store.test.ts`, `ladder.test.ts`, `recovery.test.ts`) —
 forgetting this is 28 mysterious `no such column` failures at once.
 
-### Acquisition analytics (0048) touch three harnesses, and must never shadow real tables
+### Acquisition analytics (0049) touch three harnesses, and must never shadow real tables
 
-Migration `0048_acquisition.sql` is mirrored as one-line statements in
+Migration `0049_acquisition.sql` is mirrored as one-line statements in
 `test-helpers.ts` `EXTRA_ALTER_STATEMENTS` (it is split on newlines, so every
 statement there must fit on one line) and appended to
 `src/mcp/test-migrations.ts`; `node.ts` picks it up from the directory. Don't
@@ -302,13 +284,12 @@ the control-plane/MCP/board test harnesses listed below — they have no
 
 ### Cross-package type imports need TS project references
 
-`packages/api` imports `@basedagents/keyring` (interop tests), whose types
-resolve to the package's **built** `dist/`. On a clean checkout (CI),
-typecheck runs before any build — without
-`"references": [{ "path": "../keyring" }]` in the importer's tsconfig,
-`tsc --build` fails with TS2307. Any new cross-workspace type dependency
-needs the same reference.
-
+When one workspace package imports another's types (e.g. the console's
+Playwright specs importing helpers from the `basedagents` sdk), `tsc --build`
+at the root only resolves them if the importer's tsconfig lists the dependency
+under `"references": [{ "path": "../sdk" }]` and the dependency emits
+declarations. Without the reference the root typecheck fails with a
+"not built" error even though each package builds alone.
 ### Lint doesn't see the React packages
 
 `eslint.config.mjs` ignores `packages/web/**` and `packages/console/**`
@@ -321,10 +302,11 @@ a green `npm run lint` covered console changes.
 
 ### The version lives in ONE place — package.json
 
-`src/version.ts` reads it at runtime (`createRequire('../package.json')`),
-and the CLI/MCP `VERSION` constants import from there. Bump
-`packages/keyring/package.json` and you're done. (It used to live in three
-places and shipped lying about itself once — don't reintroduce a copy.)
+The sdk's `src/version.ts` reads it at runtime (`createRequire('../package.json')`)
+and the CLI's `VERSION` constant imports from there; the stdio MCP server
+(`packages/mcp/src/index.ts`) reads its own package.json the same way. Bump
+the package.json and you're done. (It used to live in three places and shipped
+lying about itself once — don't reintroduce a copy.)
 
 ### The hosted MCP `SERVER_VERSION` is a hand-kept copy
 
@@ -334,21 +316,10 @@ places and shipped lying about itself once — don't reintroduce a copy.)
 `packages/mcp/server.json`). It had drifted to 0.5.0 while the stdio server was
 0.7.2.
 
-### Publish the sdk with EVERY keyring publish — its version is the npx cache key
-
-`npx basedagents@latest` re-resolves only the **sdk's** version. If that
-version hasn't moved, npx reuses the cached tree wholesale — including
-whatever keyring version was installed inside it back then. Keyring 0.6.3
-shipped alone and every warm cache kept serving keyring 0.6.2 with no error
-anywhere (field-hit 2026-07; SANDBOX_SPEC §2b has the full story). So every
-keyring publish is a **pair**: bump the sdk a patch, raise its
-`@basedagents/keyring` range to pin the new version, publish keyring first
-(the sdk's `prepublishOnly` build needs it on the registry), then the sdk.
-
 ### Publishing is trusted publishing (OIDC) — no token anywhere
 
-`.github/workflows/publish.yml` publishes `@basedagents/keyring`, `basedagents`
-(sdk + cli), `@basedagents/mcp` and the PyPI `basedagents` with **trusted
+`.github/workflows/publish.yml` publishes `basedagents` (sdk + cli),
+`@basedagents/mcp` and the PyPI `basedagents` with **trusted
 publishing**: the GitHub Actions job's OIDC identity is the credential, so
 there is no npm token, no PyPI token and no `.env` to leak. It runs **after CI
 finishes on `main`, and only if CI passed** (a push, or a manual CI re-run
@@ -359,10 +330,9 @@ checked-in version is already published and only the packages with an
 unpublished version run — so the workflow is idempotent: merging a bump PR
 publishes it once its CI is green, re-running publishes nothing twice, and a
 bump whose CI run was cancelled by a newer push ships when that newer push's
-CI passes. Keyring publishes before the sdk (see above); mcp and python run
-in parallel.
+CI passes. The npm jobs and python run in parallel.
 
-One-time registry setup (already done for the four packages; repeat for a new
+One-time registry setup (already done for the three packages; repeat for a new
 package): on **npmjs.com** → package → Settings → *Trusted Publisher* →
 GitHub Actions with owner `maxfain`, repository `basedagents`, workflow
 `publish.yml`, environment `publish`. On **pypi.org** → project →

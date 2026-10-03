@@ -2,7 +2,7 @@
 /**
  * check-positioning — the guardrail (POSITIONING_SPEC.md §A4). Fails when:
  *   1. a public surface contains a retired tagline (allowed only in the
- *      /keyring page content and the CHANGELOG);
+ *      CHANGELOG);
  *   1b. a public surface, the README body or a blog post calls BasedAgents
  *      "non-custodial" / says it "never holds funds" outside copy about the
  *      per-task escrow opt-out (escrow is the default, and it is custodial);
@@ -24,7 +24,6 @@ const failures = [];
 // ── 1. retired taglines ──
 const SURFACES = [
   'packages/web/public/.well-known/agent.json',
-  'packages/web/public/.well-known/ai-plugin.json',
   'packages/web/public/llms.txt',
   'packages/web/public/llms-full.txt',
   'skills/basedagents/SKILL.md',
@@ -37,6 +36,11 @@ const SURFACES = [
   'packages/mcp/package.json', 'packages/mcp/server.json', 'packages/mcp/README.md',
   'packages/python/pyproject.toml', 'packages/python/README.md', 'packages/python/basedagents/__init__.py',
   'packages/api/src/openapi.json', 'packages/api/src/index.ts', 'packages/api/README.md',
+  // ChatGPT plugin surfaces: the portal metadata, the hosted MCP server's
+  // initialize payload, and the tool descriptions in the handler itself.
+  'docs/chatgpt-plugin/metadata.json',
+  'packages/api/src/mcp/chatgpt.json',
+  'packages/api/src/mcp/handler.ts',
 ];
 function walk(dir, out = []) {
   for (const f of readdirSync(dir)) {
@@ -46,9 +50,9 @@ function walk(dir, out = []) {
   return out;
 }
 const dist = join(ROOT, 'packages/web/dist');
-// keyring.html may name the retired Keyring tagline; changelog.html is the
-// CHANGELOG rendered (history quotes retired wording on purpose, as the source does).
-const builtHtml = existsSync(dist) ? walk(dist).filter((f) => !/[\\/](keyring|changelog)\.html$/.test(f)) : [];
+// changelog.html is the CHANGELOG rendered (history quotes retired wording
+// on purpose, as the source does).
+const builtHtml = existsSync(dist) ? walk(dist).filter((f) => !/[\\/]changelog\.html$/.test(f)) : [];
 if (!existsSync(dist)) failures.push('packages/web/dist is missing — build the site first');
 
 // README: only the hero between the markers is a public surface here (history/changelog below it is allowed).

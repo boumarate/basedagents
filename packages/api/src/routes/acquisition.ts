@@ -16,7 +16,8 @@ import { z } from 'zod';
 import type { AppEnv } from '../types/index.js';
 import { generatePublicId } from '../lib/ids.js';
 import { requireAdmin } from '../lib/admin-auth.js';
-import { ACQUISITION_SOURCES, LABEL_RE } from '../acquisition/constants.js';
+import { ACQUISITION_ID_RE, ACQUISITION_SOURCES, LABEL_RE } from '../acquisition/constants.js';
+import { recordFunnel } from '../tasks/service.js';
 import { runAcquisitionReport } from '../acquisition/report.js';
 
 /** 90 days: the documented raw-analytics retention default. */
@@ -51,8 +52,38 @@ app.post('/acquisition', async (c) => {
 });
 
 /**
+ * The two setup-page interactions: a view of /mcp/setup and a copy of one of
+ * its snippets. Written to funnel_events (via recordFunnel, like the
+ * server-side task funnel) with funnel_id = the setup flow's acquisition id
+ * when there is one. Anonymous and allowlisted; neither event is an
+ * installation — installations are counted only when the API later observes
+ * activity carrying an installation id.
+ */
+const SETUP_EVENTS = ['mcp_setup_viewed', 'mcp_install_copied'] as const;
+const EventSchema = z.object({
+  event: z.enum(SETUP_EVENTS),
+  acquisition_id: z.string().regex(ACQUISITION_ID_RE).optional(),
+  source: z.enum(ACQUISITION_SOURCES.filter((s) => s !== 'unknown') as [string, ...string[]]).optional(),
+});
+
+app.post('/acquisition/events', async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'bad_request', message: 'invalid JSON body' }, 400);
+  }
+  const parsed = EventSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'bad_request', message: 'Validation failed' }, 400);
+  if (c.env?.ACQUISITION_ANALYTICS !== '0') {
+    await recordFunnel(c.get('db'), parsed.data.event, parsed.data.acquisition_id ?? null, parsed.data.source ?? null);
+  }
+  return c.json({ ok: true });
+});
+
+/**
  * GET /v1/admin/acquisition — the acquisition report (ADMIN_SECRET bearer,
- * like /v1/admin/funnel). ?view=cohort|activity, ?format=json|csv
+ * like the other ADMIN_SECRET routes). ?view=cohort|activity, ?format=json|csv
  * (+ ?table=installations|agents for cohort CSV), ?from/?to/?source/?campaign/
  * ?interface filters, ?include_internal=1 to include house/monitoring traffic
  * (excluded by default, from env lists — never a client header).

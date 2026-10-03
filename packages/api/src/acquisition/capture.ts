@@ -1,6 +1,6 @@
 /**
  * Acquisition attribution capture: turn optional, unsigned attribution headers
- * on normal API traffic into the private attribution records (migration 0048).
+ * on normal API traffic into the private attribution records (migration 0049).
  *
  * Trust model (mirrors the version-header telemetry in index.ts):
  *   - Anonymous-OK: installation id, source/campaign/acquisition id, client
@@ -75,7 +75,7 @@ export function parseAttributionHeaders(header: (name: string) => string | undef
 }
 
 /** Paths that are analytics plumbing, never "activity" of the caller. */
-const ANALYTICS_PATHS = new Set(['/v1/funnel', '/v1/telemetry/mcp', '/v1/acquisition']);
+const ANALYTICS_PATHS = new Set(['/v1/telemetry/mcp', '/v1/acquisition', '/v1/acquisition/events']);
 
 /**
  * Server-side activity classification for the daily rollup: reads and polling

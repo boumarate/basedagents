@@ -37,6 +37,20 @@ zone_name = "basedagents.ai"
 MCP_RESOURCE_URL = "https://mcp.basedagents.ai/mcp"
 MCP_ISSUER = "https://mcp.basedagents.ai"
 API_BASE_URL = "https://api.basedagents.ai"
+CONSOLE_BASE_URL = "https://app.basedagents.ai"
+
+# Per-IP limits, raised above the compiled single-tenant defaults because
+# connector platforms (ChatGPT, claude.ai) call from SHARED egress IPs — one
+# "IP" there is many legitimate users. Decimal strings (wrangler vars are
+# strings); the code falls back to its defaults when unset or non-numeric.
+MCP_DCR_HOURLY = "120"            # DCR registrations per IP-hash per hour (default 20)
+MCP_DCR_DAILY_CLIENTS = "1000"    # standing oauth_clients rows per IP-hash per day (default 100)
+MCP_ANON_HOURLY = "600"           # anonymous tools/call per IP-hash per hour (default 600)
+
+# OpenAI plugin-directory domain verification (public plain text, NOT a secret):
+# the submission portal hands out the token; set it here, redeploy, and
+# GET /.well-known/openai-apps-challenge serves it. Leave commented until then.
+# OPENAI_APPS_CHALLENGE = "<token from the plugin submission portal>"
 
 # No KV, no Durable Object, no service binding — the RS is stateless (no
 # Mcp-Session-Id issued) and every write is an atomic D1 statement.
