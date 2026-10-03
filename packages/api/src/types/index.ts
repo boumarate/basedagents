@@ -59,6 +59,11 @@ export const RegisterCompleteSchema = z.object({
   profile: ProfileSchema,
   wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
   wallet_network: z.enum(ALLOWED_WALLET_NETWORKS_CONST as unknown as [string, ...string[]]).default('eip155:8453').optional(),
+  // Optional acquisition attribution (acquisition/capture.ts). z.unknown() on
+  // purpose: each field is sanitized leniently in the handler — a malformed
+  // tag is dropped, never a 400. Deliberately OUTSIDE ProfileSchema so it can
+  // never enter hashProfile(), the chain entry, or any signature.
+  attribution: z.unknown().optional(),
 });
 
 // ─── Structured Verification Report ───
@@ -561,6 +566,14 @@ export type Bindings = {
   // Open-task expiry (decision D13, tasks/expiry.ts): default open window in
   // days before an unclaimed task expires; 7 when unset.
   TASK_OPEN_TTL_DAYS?: string;
+  // Acquisition attribution (migration 0049, acquisition/). '0' turns the
+  // capture middleware and conversion-event instrumentation off; anything else
+  // (including unset) leaves it on. INTERNAL_AGENT_IDS: comma-separated agent
+  // (ag_…) / owner (ow_…) ids excluded from acquisition reports by default
+  // (monitoring, smoke tests) — joined with HOUSE_ACCOUNT_IDS at query time,
+  // never classified from a client header.
+  ACQUISITION_ANALYTICS?: string;
+  INTERNAL_AGENT_IDS?: string;
   // PostHog product analytics + Error Tracking (lib/posthog.ts). Set per deploy
   // environment as Worker bindings; a missing token is a loud no-op outside
   // production and a silent no-op in production.

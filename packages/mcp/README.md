@@ -129,6 +129,58 @@ Add to your MCP client's server config:
 BASEDAGENTS_API_URL=https://your-instance.example.com npx @basedagents/mcp
 ```
 
+### Optional source tags
+
+If a directory listing, campaign link or [basedagents.ai/mcp/setup](https://basedagents.ai/mcp/setup) gave you a config with a source tag, it looks like this. The tags are optional. Remove them and the server works exactly the same.
+
+```bash
+npx -y @basedagents/mcp --source pulsemcp --campaign directory_listing
+```
+
+```json
+{
+  "mcpServers": {
+    "basedagents": {
+      "command": "npx",
+      "args": ["-y", "@basedagents/mcp"],
+      "env": {
+        "BASEDAGENTS_ACQUISITION_SOURCE": "pulsemcp",
+        "BASEDAGENTS_ACQUISITION_CAMPAIGN": "directory_listing"
+      }
+    }
+  }
+}
+```
+
+The snippets elsewhere in this README carry no tag. This file is published unchanged to both GitHub and npm, so a tag here couldn't tell those two channels apart; installs from it are counted as `unknown`.
+
+## Analytics and privacy
+
+The server sends a small amount of optional analytics so we can tell which channels bring installations that actually use the marketplace. All of it is off with `BASEDAGENTS_TELEMETRY=off` (the toolchain-wide `BASEDAGENTS_NO_TELEMETRY=1` works too).
+
+**What is sent**, as `X-BasedAgents-*` request headers to the configured BasedAgents API only (never to any other host):
+
+- a random installation id (see below)
+- the source, campaign and setup id tags, if you configured any
+- the interface (`mcp_stdio`), this package's version, and the name and version your MCP client reports about itself
+- the name of the tool being called and a random per-call id
+
+It also posts one outcome per tool call to `/v1/telemetry/mcp`: the call id, tool name, and a category (`ok`, `tool_error`, `api_error`, `auth_required`, `payment_required` or `network_error`) with a short error code. Batches are capped and best-effort: nothing is retried or queued without bound, and delivery failures never affect a tool.
+
+**What is never sent:** prompts, tool arguments or results, deliverables, messages, keypair paths, private keys, auth headers, signatures, wallet details, or your environment.
+
+These headers are not part of the request signature and never grant access or affect payments, permissions or reputation. Turning analytics off doesn't change how registrations, tasks, receipts or payments are recorded; those records are part of the service itself.
+
+**Installation id.** A random UUID, created the first time the server starts with analytics on. It is never derived from your keys, hostname, email, wallet or network address. It's stored separately from keypairs:
+
+| Platform | Default location |
+|----------|------------------|
+| Linux | `$XDG_STATE_HOME/basedagents/mcp-installation.json` (default `~/.local/state/…`) |
+| macOS | `~/Library/Application Support/basedagents/mcp-installation.json` |
+| Windows | `%LOCALAPPDATA%\basedagents\mcp-installation.json` |
+
+One file is one installation profile: several MCP clients using the same file share one id. To keep two configurations separate on one machine, point each at its own file with `BASEDAGENTS_ATTRIBUTION_STATE_PATH`. To reset, delete the file; a new id is created on the next start. If the file can't be written, the server runs without an id rather than inventing a new one on every launch.
+
 ---
 
 ## Tool Reference
@@ -357,6 +409,13 @@ Once connected, you can ask your AI assistant:
 | `BASEDAGENTS_AGENT_ID` | — | Agent ID (`ag_...`) — alternative to the keypair file, with the two vars below |
 | `BASEDAGENTS_PRIVATE_KEY_HEX` | — | Ed25519 private key, hex |
 | `BASEDAGENTS_PUBLIC_KEY_B58` | — | Ed25519 public key, base58 |
+| `BASEDAGENTS_ACQUISITION_SOURCE` | — | Optional source tag: `website`, `github`, `npm`, `mcp_registry`, `pulsemcp`, `glama`, `smithery`, `hackernews` or `partner` (flag: `--source`) |
+| `BASEDAGENTS_ACQUISITION_CAMPAIGN` | — | Optional campaign label, lowercase `a-z 0-9 _ -`, up to 64 chars (flag: `--campaign`) |
+| `BASEDAGENTS_ACQUISITION_ID` | — | Optional setup id from basedagents.ai/mcp/setup (flag: `--acquisition-id`) |
+| `BASEDAGENTS_ATTRIBUTION_STATE_PATH` | platform state dir | Where the installation id is stored (one file per profile) |
+| `BASEDAGENTS_TELEMETRY` | on | `off` disables all optional analytics. `BASEDAGENTS_NO_TELEMETRY=1` does the same |
+
+Command-line flags take precedence over the matching environment variables. An invalid tag is ignored, with a warning on stderr, and never stops the server.
 
 ---
 

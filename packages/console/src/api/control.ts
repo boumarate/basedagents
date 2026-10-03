@@ -26,6 +26,9 @@ import type {
   TaskPaymentResponse,
   PublicTaskList,
   FeedbackList,
+  AcquisitionQuery,
+  AcquisitionCohortReport,
+  AcquisitionActivityReport,
   FeedbackItem,
   FeedbackStatus,
 } from './types.js';
@@ -86,6 +89,17 @@ async function request<T>(method: string, path: string, body?: unknown, extraHea
     throw new ControlApiError(res.status, e.error ?? 'error', e.message ?? `HTTP ${res.status}`, parsed);
   }
   return parsed as T;
+}
+
+function acquisitionParams(q: AcquisitionQuery): URLSearchParams {
+  const p = new URLSearchParams({ view: q.view });
+  if (q.from) p.set('from', q.from);
+  if (q.to) p.set('to', q.to);
+  if (q.source) p.set('source', q.source);
+  if (q.campaign) p.set('campaign', q.campaign);
+  if (q.interface) p.set('interface', q.interface);
+  if (q.include_internal) p.set('include_internal', '1');
+  return p;
 }
 
 export const control = {
@@ -232,6 +246,20 @@ export const control = {
   },
   setFeedbackStatus(feedbackId: string, status: FeedbackStatus, note?: string): Promise<{ feedback: FeedbackItem }> {
     return request('POST', `/admin/feedback/${encodeURIComponent(feedbackId)}`, note ? { status, note } : { status });
+  },
+
+  // ── Operator: acquisition attribution report (404 unless ADMIN_OWNER_IDS lists you) ──
+  adminAcquisition(q: AcquisitionQuery): Promise<AcquisitionCohortReport | AcquisitionActivityReport> {
+    return request('GET', `/admin/acquisition?${acquisitionParams(q)}`);
+  },
+  /** The same report as CSV, fetched with the session cookie (a plain link would not carry it). */
+  async adminAcquisitionCsv(q: AcquisitionQuery, table?: 'installations' | 'agents'): Promise<Blob> {
+    const params = acquisitionParams(q);
+    params.set('format', 'csv');
+    if (table) params.set('table', table);
+    const res = await fetch(`${OWNER}/admin/acquisition?${params}`, { credentials: 'include' });
+    if (!res.ok) throw new ControlApiError(res.status, 'error', `HTTP ${res.status}`, null);
+    return res.blob();
   },
 
   tasks(status: TaskStatus | 'all' = 'all'): Promise<{ ok: true; tasks: OwnerTask[] }> {

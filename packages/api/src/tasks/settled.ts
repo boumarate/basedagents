@@ -52,7 +52,7 @@ const NETS = PAID_NETWORKS.map((n) => `'${n}'`).join(',');
 const SETTLED_BASE = `t.payment_status = 'settled' AND t.bounty_network IN (${NETS}) AND t.settled_at IS NOT NULL
   AND COALESCE(t.escrow_status, '') != 'refunded'`;
 /** Every PAID_NETWORKS entry has an explorer, so a valid hash here always renders a working link. */
-const PAID_WHERE = `${SETTLED_BASE} AND ${TX_VALID}`;
+export const PAID_WHERE = `${SETTLED_BASE} AND ${TX_VALID}`;
 /** First delivery: a revised task's submitted_at is its LAST delivery; the receipts keep every one. */
 const FIRST_SUBMITTED = `COALESCE((SELECT MIN(r.completed_at) FROM delivery_receipts r WHERE r.task_id = t.task_id), t.submitted_at)`;
 

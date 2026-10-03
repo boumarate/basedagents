@@ -432,6 +432,10 @@ export default function GettingStarted(): React.ReactElement {
             </h3>
             <div style={{ marginBottom: 48 }}>
               <CodeSnippet language="json">{mcpOpenClawCode}</CodeSnippet>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: 13, lineHeight: 1.6, marginTop: 12 }}>
+                Arriving from a directory or a campaign link? <Link to="/mcp/setup">/mcp/setup</Link>{' '}
+                generates the same config with an optional source tag baked in.
+              </p>
             </div>
 
             {/* Web UI Verification */}

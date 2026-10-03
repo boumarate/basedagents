@@ -45,6 +45,9 @@ import { stripeWebhookRoutes } from './control/stripe-webhook.js';
 import ladderRoutes from './control/ladder.js';
 import feedbackRoutes from './routes/feedback.js';
 import adminRoutes from './control/admin.js';
+import { acquisitionCapture, runAcquisitionRetention } from './acquisition/capture.js';
+import telemetryRoutes from './routes/telemetry.js';
+import acquisitionRoutes from './routes/acquisition.js';
 import { runTaskCron } from './cron/tasks.js';
 import claimBondRoutes from './routes/claim-bond.js';
 import { paymentsDisabledReason } from './payments/index.js';
@@ -88,6 +91,11 @@ const RATE_LIMITS: Record<string, { max: number; windowMs: number }> = {
   // Authority ladder: the email-sending endpoints are abuse targets.
   '/v1/owner/login/email':     { max: 3,  windowMs: 60_000 },
   '/v1/owner/start/email':     { max: 3,  windowMs: 60_000 },
+  // Client-reported MCP tool outcomes — bounded batches, idempotent ingestion.
+  '/v1/telemetry/mcp':         { max: 30, windowMs: 60_000 },
+  // Setup-flow acquisition ids and setup-page events — anonymous, bounded.
+  '/v1/acquisition':           { max: 30, windowMs: 60_000 },
+  '/v1/acquisition/events':    { max: 30, windowMs: 60_000 },
   // Public board list read — uncached (unlike the 60s-edge-cached Atom feed),
   // so cap scraping per IP. The middleware is method-blind, so this entry
   // also fronts POSTs on the same path; 120/min sits far above the write
@@ -191,6 +199,14 @@ app.use('*', async (c, next) => {
   })().catch((err) => console.error('[telemetry] usage record failed:', err));
   try { c.executionCtx.waitUntil(work); } catch { await work; }
 });
+
+// ─── Acquisition attribution capture ───
+// Optional, unsigned X-BasedAgents-Installation-Id / -Acquisition-* headers on
+// normal traffic become private attribution records (migration 0048). Same
+// contract as the telemetry middleware above: runs after the response, writes
+// via waitUntil, never changes a response, never grants anything. Gated by
+// ACQUISITION_ANALYTICS ('0' disables).
+app.use('*', acquisitionCapture);
 
 // ─── Rate limiting middleware (durable) ───
 app.use('*', async (c, next) => {
@@ -560,6 +576,10 @@ app.route('/v1/owner/admin/testing', testingAdminRoutes);
 app.route('/v1', stripeWebhookRoutes);
 // The authority ladder (magic-link login, the /start door, buyer signup): /v1/owner
 app.route('/v1/owner', ladderRoutes);
+// Client-reported MCP tool outcomes (acquisition analytics): /v1/telemetry/mcp
+app.route('/v1', telemetryRoutes);
+// Setup-flow acquisition ids + setup-page events (website→installation bridge): /v1/acquisition
+app.route('/v1', acquisitionRoutes);
 
 // ─── 404 Handler ───
 app.notFound((c) => {
@@ -616,6 +636,18 @@ const scheduled = async (_event: unknown, env: any, _ctx: unknown) => {
     console.log(`[cron] Feedback cron done: retried=${retried} digest=${digest}`);
   } catch (err) {
     console.error('[cron] Feedback cron failed:', err);
+  }
+
+  // ─── Acquisition analytics retention: raw telemetry + expired setup ids,
+  // claimed once per day via job_runs. Registry tables (installations,
+  // touches, agent acquisition) are kept — they are the cohort evidence.
+  if (env.ACQUISITION_ANALYTICS !== '0') {
+    try {
+      const result = await runAcquisitionRetention(db, new Date());
+      console.log(`[cron] Acquisition retention: ${result}`);
+    } catch (err) {
+      console.error('[cron] Acquisition retention failed:', err);
+    }
   }
 
   // ─── Agent Testing: inbox drain, durable operations, task sync, alerts,

@@ -87,6 +87,88 @@ export interface FeedbackList {
   next_before: string | null;
 }
 
+// ── Operator: acquisition attribution report (GET /v1/owner/admin/acquisition) ──
+
+export interface AcquisitionQuery {
+  view: 'cohort' | 'activity';
+  from?: string;
+  to?: string;
+  source?: string;
+  campaign?: string;
+  interface?: string;
+  include_internal?: boolean;
+}
+
+export interface AcquisitionInstallationRow {
+  source: string;
+  observed_installations: number;
+  known_at_first_observation: number;
+  known_ever: number;
+}
+
+export interface AcquisitionAgentRow {
+  source: string;
+  new_agents: number;
+  agents_with_first_claim: number;
+  agents_with_first_accepted_delivery: number;
+  first_paid_agents: number;
+  settled_worker_usdc_atomic: string;
+  settled_worker_usdc: string;
+  buyers_with_first_funded_task: number;
+  repeat_funded_buyers: number;
+  buyers_with_first_paid_at_accept: number;
+  repeat_paid_at_accept_buyers: number;
+  returning_7d: number;
+  mature_agents: number;
+  immature_agents: number;
+}
+
+export interface AcquisitionCohortReport {
+  ok: true;
+  view: 'cohort';
+  from: string;
+  to: string;
+  include_internal: boolean;
+  installations: AcquisitionInstallationRow[];
+  agents: AcquisitionAgentRow[];
+  human_buyers: {
+    new_owners: number;
+    buyers_with_first_funded_task: number;
+    repeat_funded_buyers: number;
+    buyers_with_first_paid_at_accept: number;
+    repeat_paid_at_accept_buyers: number;
+  };
+  coverage: {
+    observed_installations: number;
+    known_at_first_observation: number;
+    known_ever: number;
+    coverage_at_first_pct: number | null;
+    coverage_ever_pct: number | null;
+  };
+}
+
+export interface AcquisitionActivityRow {
+  perspective: 'worker' | 'buyer';
+  source: string;
+  claims: number;
+  deliveries: number;
+  acceptances: number;
+  funded_tasks: number;
+  paid_at_accept_tasks: number;
+  settled_payouts: number;
+  settled_worker_usdc_atomic: string;
+  settled_worker_usdc: string;
+}
+
+export interface AcquisitionActivityReport {
+  ok: true;
+  view: 'activity';
+  from: string;
+  to: string;
+  include_internal: boolean;
+  rows: AcquisitionActivityRow[];
+}
+
 /**
  * One public board post, as the PUBLIC API renders it (GET /v1/board/posts —
  * packages/api/src/routes/board.ts mapPost). The console reads its own posts

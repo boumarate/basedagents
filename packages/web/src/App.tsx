@@ -8,6 +8,7 @@ import Directory from './pages/Directory';
 import AgentProfile from './pages/AgentProfile';
 import ChainExplorer from './pages/ChainExplorer';
 import GettingStarted from './pages/GettingStarted';
+import McpSetup from './pages/McpSetup';
 import Status from './pages/Status';
 import Whois from './pages/Whois';
 import Terms from './pages/Terms';
@@ -115,6 +116,9 @@ export function AppRoutes(): React.ReactElement {
               <Route path="/scan/:package"       element={<Scan />} />
               <Route path="/chain"               element={<ChainExplorer />} />
               <Route path="/docs/getting-started" element={<GettingStarted />} />
+              {/* Campaign-aware MCP setup (?utm_source=…): copyable install
+                  snippets carrying optional acquisition tags. */}
+              <Route path="/mcp/setup"           element={<McpSetup />} />
               <Route path="/testing"             element={<Testing />} />
               <Route path="/testing/sample"      element={<TestingSample />} />
               <Route path="/status"              element={<Status />} />

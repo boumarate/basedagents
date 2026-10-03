@@ -4,15 +4,18 @@ interface CodeSnippetProps {
   children: string;
   language?: string;
   terminal?: boolean;
+  /** Called after a successful copy — e.g. a funnel ping. Never blocks the copy. */
+  onCopy?: () => void;
 }
 
-export default function CodeSnippet({ children, language, terminal = false }: CodeSnippetProps): React.ReactElement {
+export default function CodeSnippet({ children, language, terminal = false, onCopy }: CodeSnippetProps): React.ReactElement {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(children).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+      try { onCopy?.(); } catch { /* telemetry must never break the copy */ }
     });
   };
 

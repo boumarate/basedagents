@@ -23,6 +23,7 @@ const TaskNew = lazy(() => import('./pages/TaskNew.js'));
 const TaskReview = lazy(() => import('./pages/TaskReview.js'));
 const SignWallet = lazy(() => import('./pages/SignWallet.js'));
 const AdminFeedback = lazy(() => import('./pages/AdminFeedback.js'));
+const AdminAcquisition = lazy(() => import('./pages/AdminAcquisition.js'));
 const TestingAudits = lazy(() => import('./pages/testing/Audits.js'));
 const TestingIntake = lazy(() => import('./pages/testing/Intake.js'));
 const TestingRequestDetail = lazy(() => import('./pages/testing/RequestDetail.js'));
@@ -144,6 +145,7 @@ export default function App() {
                 <Route path="/tasks/:taskId" element={<TaskReview />} />
                 <Route path="/board" element={<BoardPage />} />
                 <Route path="/admin/feedback" element={<AdminFeedback />} />
+                <Route path="/admin/acquisition" element={<AdminAcquisition />} />
                 {/* Agent Testing (customer + operator) */}
                 <Route path="/testing" element={<TestingAudits />} />
                 <Route path="/testing/new" element={<TestingIntake />} />

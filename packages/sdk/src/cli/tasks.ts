@@ -30,7 +30,7 @@ import { basename } from 'path';
 import { VERSION } from '../version.js';
 import {
   RegistryClient, DEFAULT_API_URL, TASK_STATUSES, TASK_CATEGORIES, BOUNTY_NETWORKS,
-  usdcToAtomic, ApiError, PaymentRequiredError, PaymentInvalidError, redactSecrets,
+  usdcToAtomic, ApiError, PaymentRequiredError, PaymentInvalidError, redactSecrets, getClientHeaders,
   type AgentKeypair, type Task, type TaskCreateOptions, type DeliverOptions,
 } from '../index.js';
 import { loadKeypair } from './wallet.js';
@@ -758,7 +758,10 @@ export async function tasksWatch(args: string[]): Promise<void> {
     let res: Response | null = null;
     try {
       res = await fetch(`${base}/v1/tasks/${encodeURIComponent(taskId)}`, {
-        headers: { Accept: 'application/json', 'X-BasedAgents-Cli-Version': VERSION, ...(etag ? { 'If-None-Match': etag } : {}) },
+        // The one fetch outside RegistryClient: version header as before,
+        // plus the shared client headers (interface + optional attribution)
+        // when the CLI entrypoint set them.
+        headers: { Accept: 'application/json', 'X-BasedAgents-Cli-Version': VERSION, ...getClientHeaders(), ...(etag ? { 'If-None-Match': etag } : {}) },
       });
     } catch (err) {
       failures++;

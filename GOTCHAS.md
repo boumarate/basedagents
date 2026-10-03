@@ -223,6 +223,24 @@ queries depend on must be added to **every** harness
 (`routes.test.ts`, `store.test.ts`, `ladder.test.ts`, `recovery.test.ts`) —
 forgetting this is 28 mysterious `no such column` failures at once.
 
+### Acquisition analytics (0049) touch three harnesses, and must never shadow real tables
+
+Migration `0049_acquisition.sql` is mirrored as one-line statements in
+`test-helpers.ts` `EXTRA_ALTER_STATEMENTS` (it is split on newlines, so every
+statement there must fit on one line) and appended to
+`src/mcp/test-migrations.ts`; `node.ts` picks it up from the directory. Don't
+add a stand-in for a control-plane table (e.g. a minimal `owners`) to
+`setupTestDb()`: suites that later `exec` the real `0023` hit
+`CREATE TABLE IF NOT EXISTS`, keep the stand-in, and fail on missing columns.
+Load the real migration in the suite instead (`acquisition/report.test.ts`).
+
+The capture middleware, registration attribution and the retention cron are
+gated by `ACQUISITION_ANALYTICS` (`"0"` = off). Reports exclude
+`HOUSE_ACCOUNT_IDS` ∪ `INTERNAL_AGENT_IDS` by default; set the second list for
+monitoring and smoke-test identities. The bearer report
+(`GET /v1/admin/acquisition`) needs `ADMIN_SECRET`; the console page needs the
+owner in `ADMIN_OWNER_IDS`.
+
 ### `node.ts` replays the FULL migration chain, one transaction per file
 
 The local/E2E runner (`packages/api/src/node.ts`) applies every file in
@@ -285,11 +303,18 @@ a green `npm run lint` covered console changes.
 ### The version lives in ONE place — package.json
 
 The sdk's `src/version.ts` reads it at runtime (`createRequire('../package.json')`)
-and the CLI's `VERSION` constant imports from there. Bump
-`packages/sdk/package.json` and you're done. (It used to live in three places
-and shipped lying about itself once — don't reintroduce a copy. The MCP
-server still carries a hand-bumped `VERSION` in `src/index.ts` — keep it in
-step with its package.json.)
+and the CLI's `VERSION` constant imports from there; the stdio MCP server
+(`packages/mcp/src/index.ts`) reads its own package.json the same way. Bump
+the package.json and you're done. (It used to live in three places and shipped
+lying about itself once — don't reintroduce a copy.)
+
+### The hosted MCP `SERVER_VERSION` is a hand-kept copy
+
+`packages/api/src/mcp/handler.ts` runs on Workers, where the
+`createRequire('../package.json')` pattern has no filesystem. Bump its
+`SERVER_VERSION` together with `packages/mcp/package.json` (and
+`packages/mcp/server.json`). It had drifted to 0.5.0 while the stdio server was
+0.7.2.
 
 ### Publishing is trusted publishing (OIDC) — no token anywhere
 
