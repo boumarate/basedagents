@@ -88,11 +88,12 @@ function CohortTables({ report }: { report: AcquisitionCohortReport }) {
           <thead>
             <tr>
               <th>Source</th><th>New agents</th><th>First claim</th><th>First accepted delivery</th><th>First paid</th>
-              <th>Settled worker USDC</th><th>Buyers w/ funded task</th><th>Repeat funded buyers</th><th>7-day returning</th><th>Immature</th>
+              <th>Settled worker USDC</th><th>Buyers w/ escrow-funded task</th><th>Repeat escrow buyers</th>
+              <th>Buyers paid at accept</th><th>Repeat paid-at-accept</th><th>7-day returning</th><th>Immature</th>
             </tr>
           </thead>
           <tbody>
-            {report.agents.length === 0 && <tr><td colSpan={10} className="muted">No registrations in this period.</td></tr>}
+            {report.agents.length === 0 && <tr><td colSpan={12} className="muted">No registrations in this period.</td></tr>}
             {report.agents.map((r) => (
               <tr key={r.source}>
                 <td><code>{r.source}</code></td>
@@ -103,6 +104,8 @@ function CohortTables({ report }: { report: AcquisitionCohortReport }) {
                 <td>{r.settled_worker_usdc}</td>
                 <td>{r.buyers_with_first_funded_task}</td>
                 <td>{r.repeat_funded_buyers}</td>
+                <td>{r.buyers_with_first_paid_at_accept}</td>
+                <td>{r.repeat_paid_at_accept_buyers}</td>
                 <td>{rate(r.returning_7d, r.mature_agents)}</td>
                 <td>{r.immature_agents}</td>
               </tr>
@@ -115,8 +118,10 @@ function CohortTables({ report }: { report: AcquisitionCohortReport }) {
       <p className="muted acq-note">Console accounts carry no acquisition source in this model; reported as their own bucket.</p>
       <div className="acq-kpis">
         <div><div className="fb-label">New accounts</div><div className="acq-kpi">{report.human_buyers.new_owners}</div></div>
-        <div><div className="fb-label">With a funded task</div><div className="acq-kpi">{report.human_buyers.buyers_with_first_funded_task}</div></div>
-        <div><div className="fb-label">Repeat funded</div><div className="acq-kpi">{report.human_buyers.repeat_funded_buyers}</div></div>
+        <div><div className="fb-label">With an escrow-funded task</div><div className="acq-kpi">{report.human_buyers.buyers_with_first_funded_task}</div></div>
+        <div><div className="fb-label">Repeat escrow</div><div className="acq-kpi">{report.human_buyers.repeat_funded_buyers}</div></div>
+        <div><div className="fb-label">Paid at accept</div><div className="acq-kpi">{report.human_buyers.buyers_with_first_paid_at_accept}</div></div>
+        <div><div className="fb-label">Repeat paid at accept</div><div className="acq-kpi">{report.human_buyers.repeat_paid_at_accept_buyers}</div></div>
       </div>
     </>
   );
@@ -144,14 +149,17 @@ function ActivityTable({ report }: { report: AcquisitionActivityReport }) {
         </table>
       </div>
       <h2 className="acq-h2">Buyer activity in the period</h2>
-      <p className="muted acq-note">Confirmed escrow deposits in the period, grouped by the poster’s source (human_buyer = console accounts).</p>
+      <p className="muted acq-note">
+        Two payment modes, never added together: confirmed escrow deposits, and no-escrow bounties paid at
+        acceptance. Grouped by the poster’s source (human_buyer = console accounts).
+      </p>
       <div className="acq-scroll">
         <table className="acq-table">
-          <thead><tr><th>Source</th><th>Funded tasks</th></tr></thead>
+          <thead><tr><th>Source</th><th>Escrow-funded tasks</th><th>Paid at accept</th></tr></thead>
           <tbody>
-            {buyers.length === 0 && <tr><td colSpan={2} className="muted">No funded tasks in this period.</td></tr>}
+            {buyers.length === 0 && <tr><td colSpan={3} className="muted">No funded or paid tasks in this period.</td></tr>}
             {buyers.map((r) => (
-              <tr key={r.source}><td><code>{r.source}</code></td><td>{r.funded_tasks}</td></tr>
+              <tr key={r.source}><td><code>{r.source}</code></td><td>{r.funded_tasks}</td><td>{r.paid_at_accept_tasks}</td></tr>
             ))}
           </tbody>
         </table>

@@ -8,6 +8,7 @@ import {
   RegistryClient,
   attributionClientHeaders,
   attributionFromEnv,
+  cliRegistrationAttribution,
   generateKeypair,
 } from './index.js';
 
@@ -48,6 +49,19 @@ describe('attributionClientHeaders', () => {
     [{ BASEDAGENTS_TELEMETRY: 'OFF' }],
   ])('sends nothing under opt-out %j', (env) => {
     expect(attributionClientHeaders({ interface: 'cli', source: 'github' }, env)).toEqual({});
+  });
+});
+
+describe('cliRegistrationAttribution', () => {
+  it('tags a CLI registration when telemetry is on', () => {
+    expect(cliRegistrationAttribution({ BASEDAGENTS_ACQUISITION_SOURCE: 'npm' })).toEqual({ interface: 'cli', source: 'npm' });
+  });
+
+  it.each([
+    [{ BASEDAGENTS_NO_TELEMETRY: '1', BASEDAGENTS_ACQUISITION_SOURCE: 'npm' }],
+    [{ BASEDAGENTS_TELEMETRY: 'off', BASEDAGENTS_ACQUISITION_SOURCE: 'npm' }],
+  ])('sends no body attribution at all under opt-out %j', (env) => {
+    expect(cliRegistrationAttribution(env)).toBeUndefined();
   });
 });
 

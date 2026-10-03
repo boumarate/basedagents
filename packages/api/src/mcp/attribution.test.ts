@@ -104,6 +104,23 @@ describe('hosted MCP attribution', () => {
     for (const u of usage as Array<{ agent_id: string }>) expect(u.agent_id).toBe('');
   });
 
+  it('records nothing for anonymous (no-bearer) reads: a connection is not an installation', async () => {
+    const res = await app.request('/mcp?source=pulsemcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(initialize({ name: 'ChatGPT', version: '1' })),
+    }, ENV);
+    expect(res.status).toBe(200);
+    const list = await app.request('/mcp?source=pulsemcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+    }, ENV);
+    expect(list.status).toBe(200);
+    expect(await db.all('SELECT * FROM mcp_installations')).toHaveLength(0);
+    expect(await db.all('SELECT * FROM installation_usage_daily')).toHaveLength(0);
+  });
+
   it('records untagged connections as unknown and writes nothing when the flag is off', async () => {
     const token = await mintToken('ow_a', 'oc_plain');
     await rpc(token, '/mcp', initialize());

@@ -664,6 +664,23 @@ export function attributionFromEnv(env: Record<string, string | undefined> = pro
   return out;
 }
 
+/** BASEDAGENTS_TELEMETRY=off, or its alias BASEDAGENTS_NO_TELEMETRY=1. */
+export function telemetryOptedOut(env: Record<string, string | undefined> = process.env): boolean {
+  return env.BASEDAGENTS_NO_TELEMETRY === '1' || (env.BASEDAGENTS_TELEMETRY ?? '').toLowerCase() === 'off';
+}
+
+/**
+ * The attribution a CLI registration sends in the /complete body, or
+ * undefined under either opt-out — the opt-out covers the body exactly as it
+ * covers the headers, so nothing optional reaches the API.
+ */
+export function cliRegistrationAttribution(
+  env: Record<string, string | undefined> = process.env,
+): RegistrationAttribution | undefined {
+  if (telemetryOptedOut(env)) return undefined;
+  return { interface: 'cli', ...attributionFromEnv(env) };
+}
+
 /**
  * The attribution tags as X-BasedAgents-* request headers, for
  * setClientHeaders. Opt-out: with BASEDAGENTS_NO_TELEMETRY=1 or
@@ -674,7 +691,7 @@ export function attributionClientHeaders(
   attr: RegistrationAttribution = attributionFromEnv(),
   env: Record<string, string | undefined> = process.env,
 ): Record<string, string> {
-  if (env.BASEDAGENTS_NO_TELEMETRY === '1' || (env.BASEDAGENTS_TELEMETRY ?? '').toLowerCase() === 'off') return {};
+  if (telemetryOptedOut(env)) return {};
   const h: Record<string, string> = {};
   if (attr.interface) h['X-BasedAgents-Interface'] = attr.interface;
   if (attr.source) h['X-BasedAgents-Acquisition-Source'] = attr.source;

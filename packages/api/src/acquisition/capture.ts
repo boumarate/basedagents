@@ -312,9 +312,16 @@ export async function acquisitionRetentionSweep(
   return { outcomes: outcomes.changes, acquisitionIds: acquisitionIds.changes, usageDays: usageDays.changes };
 }
 
+/** A failed run is retried this many times per day; a stuck `running` claim after this long. */
+export const RETENTION_MAX_ATTEMPTS = 5;
+export const RETENTION_STALE_RUNNING_MS = 15 * 60_000;
+
 /**
- * Cron entry: claim today once via job_runs (the daily-digest pattern), then
- * sweep. Analytics-only — a failure is logged and retried by a later tick.
+ * Cron entry: claim today via job_runs (the daily-digest pattern), then sweep.
+ * A `failed` run, or a `running` claim left behind by a worker that died
+ * mid-sweep, is re-claimed on a later tick (bounded by
+ * RETENTION_MAX_ATTEMPTS) so one bad tick doesn't skip the day. The sweep is
+ * idempotent (plain cutoff DELETEs), so a re-run is always safe.
  */
 export async function runAcquisitionRetention(db: DBAdapter, now: Date): Promise<string> {
   const nowIso = now.toISOString();
@@ -323,7 +330,22 @@ export async function runAcquisitionRetention(db: DBAdapter, now: Date): Promise
     `INSERT OR IGNORE INTO job_runs (job, run_key, status, attempts, ran_at) VALUES ('acquisition_retention', ?, 'running', 1, ?)`,
     day, nowIso,
   );
-  if (claimed.changes === 0) return 'already_ran';
+  if (claimed.changes === 0) {
+    const row = await db.get<{ status: string; attempts: number; ran_at: string }>(
+      `SELECT status, attempts, ran_at FROM job_runs WHERE job = 'acquisition_retention' AND run_key = ?`, day,
+    );
+    if (!row || row.status === 'done') return 'already_ran';
+    if (row.attempts >= RETENTION_MAX_ATTEMPTS) return 'gave_up';
+    const staleRunning = row.status === 'running' && Date.parse(row.ran_at) <= now.getTime() - RETENTION_STALE_RUNNING_MS;
+    if (row.status !== 'failed' && !staleRunning) return 'in_progress';
+    // Conditional on the exact row we read, so two ticks can't both re-claim.
+    const retry = await db.run(
+      `UPDATE job_runs SET status = 'running', attempts = attempts + 1, ran_at = ?
+       WHERE job = 'acquisition_retention' AND run_key = ? AND status = ? AND attempts = ?`,
+      nowIso, day, row.status, row.attempts,
+    );
+    if (retry.changes === 0) return 'in_progress';
+  }
   try {
     const swept = await acquisitionRetentionSweep(db, nowIso);
     await db.run(

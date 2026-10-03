@@ -17,7 +17,9 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createRequire } from 'node:module';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +33,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 etc.sha512Sync = (...m: Parameters<typeof sha512>) => sha512(...m);
 
 import { setupTestDb, createTestApp } from './api-harness.js';
+import { loadInstallationId } from '../src/attribution.js';
 import type { SQLiteAdapter } from './api-harness.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -241,6 +244,84 @@ describe('MCP attribution', () => {
     } finally {
       await client.close();
     }
+  });
+
+  it('delivers a short session\'s outcomes when the client closes stdin', async () => {
+    const client = await spawn({ BASEDAGENTS_ATTRIBUTION_STATE_PATH: join(tmp, 'short-session', 'state.json') });
+    await client.callTool({ name: 'get_chain_status', arguments: {} });
+    const before = (await db.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM mcp_tool_outcomes WHERE tool_name = 'get_chain_status'",
+    ))!.n;
+    await client.close(); // ends stdin; the server flushes before exiting
+    const deadline = Date.now() + 5_000;
+    let after = before;
+    while (Date.now() < deadline && after === before) {
+      after = (await db.get<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM mcp_tool_outcomes WHERE tool_name = 'get_chain_status'",
+      ))!.n;
+      if (after === before) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(after).toBe(before + 1);
+  });
+
+  it('warns on stderr (once) when the telemetry endpoint rejects a batch, and tools keep working', async () => {
+    // Stub API: tool reads succeed, telemetry is rejected.
+    const stub: Server = createServer((req, res) => {
+      if (req.url?.startsWith('/v1/telemetry/mcp')) {
+        res.writeHead(503, { 'Content-Type': 'application/json' }).end('{"error":"unavailable"}');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"tasks":[]}');
+    });
+    await new Promise<void>((r) => stub.listen(0, '127.0.0.1', () => r()));
+    const stubUrl = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [require_.resolve('tsx/cli'), join(__dirname, '..', 'src', 'index.ts')],
+      env: {
+        ...(Object.fromEntries(
+          Object.entries(process.env).filter(([k, v]) => v !== undefined && !k.startsWith('BASEDAGENTS_'))
+        ) as Record<string, string>),
+        BASEDAGENTS_API_URL: stubUrl,
+        BASEDAGENTS_ATTRIBUTION_STATE_PATH: join(tmp, 'rejected', 'state.json'),
+      },
+      stderr: 'pipe',
+    });
+    let stderr = '';
+    transport.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    const client = new Client({ name: 'mcp-attribution-test', version: '0.0.0' });
+    await client.connect(transport);
+    try {
+      for (let i = 0; i < 20; i++) {
+        const res = (await client.callTool({ name: 'browse_tasks', arguments: {} })) as { isError?: boolean };
+        expect(res.isError ?? false).toBe(false);
+      }
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline && !stderr.includes('HTTP 503')) await new Promise((r) => setTimeout(r, 100));
+      expect(stderr).toContain('telemetry delivery failed (HTTP 503)');
+      expect(stderr.match(/telemetry delivery failed/g)).toHaveLength(1);
+    } finally {
+      await client.close();
+      await new Promise<void>((r) => stub.close(() => r()));
+    }
+  });
+
+  it('converges concurrent first launches on one installation id', async () => {
+    const path = join(tmp, 'race', 'state.json');
+    const ids = await Promise.all(Array.from({ length: 8 }, () => loadInstallationId(path)));
+    expect(ids[0]).toMatch(UUID_RE);
+    expect(new Set(ids).size).toBe(1);
+    const saved = JSON.parse(readFileSync(path, 'utf-8')) as { installation_id: string };
+    expect(saved.installation_id).toBe(ids[0]);
+  });
+
+  it('replaces a corrupt state file instead of running unattributed forever', async () => {
+    const path = join(tmp, 'corrupt', 'state.json');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '{not json');
+    const id = await loadInstallationId(path);
+    expect(id).toMatch(UUID_RE);
+    expect(await loadInstallationId(path)).toBe(id);
   });
 
   it('keeps concurrent tool calls on distinct tool-call ids', async () => {

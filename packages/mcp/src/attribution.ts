@@ -27,7 +27,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -152,22 +152,38 @@ async function readInstallationId(path: string): Promise<string | null> {
 }
 
 /**
- * Load — or mint once — the installation id. Atomic write (temp file + rename
- * in the same directory), then re-read: concurrent first launches both rename,
- * and whichever file landed last is what every process converges on. Any
- * failure returns null: the server runs unattributed rather than minting a new
- * "installation" per launch.
+ * Load — or mint once — the installation id. The first writer wins
+ * atomically: the record is written to a temp file, then hard-linked to the
+ * final path, which fails with EEXIST if another process got there first — in
+ * which case that process's id is read and used. A linked file is always
+ * complete, so an existing file that doesn't parse is genuinely corrupt and is
+ * replaced. Any failure returns null: the server runs unattributed rather than
+ * minting a new "installation" per launch.
  */
-async function loadInstallationId(): Promise<string | null> {
-  const path = attributionStatePath();
+export async function loadInstallationId(path: string = attributionStatePath()): Promise<string | null> {
   const existing = await readInstallationId(path);
   if (existing) return existing;
+  let tmp: string | null = null;
   try {
     await mkdir(dirname(path), { recursive: true });
-    const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     const record = { installation_id: randomUUID(), created_at: new Date().toISOString() };
     await writeFile(tmp, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
-    await rename(tmp, path);
+    try {
+      await link(tmp, path);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') {
+        const winner = await readInstallationId(path);
+        if (winner) return winner;
+        await rename(tmp, path); // corrupt file: replace it
+        tmp = null;
+      } else {
+        // No hard links on this filesystem: plain atomic rename, then reread.
+        await rename(tmp, path);
+        tmp = null;
+      }
+    }
     const settled = await readInstallationId(path);
     if (settled) return settled;
     warn(`attribution state at ${path} is unreadable after write — running unattributed`);
@@ -175,6 +191,8 @@ async function loadInstallationId(): Promise<string | null> {
   } catch (err) {
     warn(`cannot persist attribution state at ${path} (${err instanceof Error ? err.message : String(err)}) — running unattributed`);
     return null;
+  } finally {
+    if (tmp) await unlink(tmp).catch(() => undefined);
   }
 }
 
@@ -329,23 +347,50 @@ function enqueueOutcome(ctx: ToolContext, outcome: McpToolOutcome): void {
  * size-triggered and a timer-triggered flush can never double-count.
  */
 let flushWarned = false;
+function warnDeliveryOnce(reason: string): void {
+  if (flushWarned) return;
+  flushWarned = true;
+  warn(`telemetry delivery failed (${reason}) — continuing without it; undelivered outcomes are dropped, never retried`);
+}
+
+/** Inside the ~2 s an MCP client waits after closing stdin before SIGTERM. */
+const FLUSH_TIMEOUT_MS = 1_500;
+
 export async function flushTelemetry(): Promise<void> {
   flushing = flushing.then(async () => {
     if (!enabled || queue.length === 0) return;
     const batch = queue.slice(0, 50);
     queue = queue.slice(batch.length);
     try {
-      await fetch(`${apiUrl}/v1/telemetry/mcp`, {
+      const res = await fetch(`${apiUrl}/v1/telemetry/mcp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...attributionHeaders() },
         body: JSON.stringify({ events: batch }),
+        signal: AbortSignal.timeout(FLUSH_TIMEOUT_MS),
       });
+      // A rejected batch (rate limit, server error) is a collection gap, not
+      // something to retry without bound — but it is never silent.
+      if (!res.ok) warnDeliveryOnce(`HTTP ${res.status}`);
     } catch (err) {
-      if (!flushWarned) {
-        flushWarned = true;
-        warn(`telemetry delivery failed (${err instanceof Error ? err.message : String(err)}) — continuing without it`);
-      }
+      warnDeliveryOnce(err instanceof Error ? err.message : String(err));
     }
   });
   return flushing;
+}
+
+/**
+ * Deliver what's queued when the session ends. MCP clients end a stdio
+ * server by closing its stdin (then waiting ~2 s before SIGTERM), so a short
+ * session with fewer than a batch of calls still reports them. Bounded by the
+ * request timeout; the in-flight request is what keeps the process alive long
+ * enough to send it.
+ */
+export function installShutdownFlush(): void {
+  if (!enabled) return;
+  const flushNow = () => {
+    if (queue.length > 0) void flushTelemetry();
+  };
+  process.stdin.once('end', flushNow);
+  process.stdin.once('close', flushNow);
+  process.once('beforeExit', flushNow);
 }

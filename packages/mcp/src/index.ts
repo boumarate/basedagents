@@ -55,6 +55,7 @@ import { dirname } from 'node:path';
 import {
   attributionHeaders,
   initAttribution,
+  installShutdownFlush,
   markOutcome,
   runTool,
   setClientInfoProvider,
@@ -1886,6 +1887,7 @@ async function main() {
   // means unattributed, and BASEDAGENTS_TELEMETRY=off (or its alias
   // BASEDAGENTS_NO_TELEMETRY=1) turns all of it off.
   await initAttribution({ apiUrl: API, version: VERSION });
+  installShutdownFlush();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Server runs until stdin closes

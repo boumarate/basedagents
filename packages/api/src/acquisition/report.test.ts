@@ -23,7 +23,7 @@ import type { SQLiteAdapter } from '../db/sqlite-adapter.js';
 import { ControlStore } from '../control/store.js';
 import { sha256, bytesToHex } from '../crypto/index.js';
 import { cohortReport, activityReport, type ReportFilters } from './report.js';
-import { acquisitionRetentionSweep } from './capture.js';
+import { acquisitionRetentionSweep, runAcquisitionRetention, RETENTION_MAX_ATTEMPTS } from './capture.js';
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'migrations');
 /** The real control-plane owners schema (0023) — never a hand-written stand-in. */
@@ -60,10 +60,15 @@ async function insertTask(db: SQLiteAdapter, t: {
   return id;
 }
 
-async function insertAcquisition(db: SQLiteAdapter, agentId: string, source: string, registeredAt: string): Promise<void> {
+async function insertAcquisition(
+  db: SQLiteAdapter, agentId: string, source: string, registeredAt: string,
+  extra: { campaign?: string; iface?: string } = {},
+): Promise<void> {
+  // The cohort is keyed on the agent's real registration time, so keep both in step.
+  await db.run('UPDATE agents SET registered_at = ? WHERE id = ?', registeredAt, agentId);
   await db.run(
-    `INSERT INTO agent_acquisition (agent_id, registered_at, source, method) VALUES (?, ?, ?, 'config_tag')`,
-    agentId, registeredAt, source,
+    `INSERT INTO agent_acquisition (agent_id, registered_at, source, campaign, interface, method) VALUES (?, ?, ?, ?, ?, 'config_tag')`,
+    agentId, registeredAt, source, extra.campaign ?? '', extra.iface ?? '',
   );
 }
 
@@ -150,6 +155,8 @@ describe('acquisition reports', () => {
       new_owners: 1,
       buyers_with_first_funded_task: 1,
       repeat_funded_buyers: 1,
+      buyers_with_first_paid_at_accept: 0,
+      repeat_paid_at_accept_buyers: 0,
     });
     expect(report.agents.find((r) => r.source === 'human_buyer')).toBeUndefined();
   });
@@ -233,6 +240,73 @@ describe('acquisition reports', () => {
     expect(pulse.known_at_first_observation).toBe(0);
   });
 
+  it('counts pay-at-accept buyers as their own payment mode, beside escrow funding', async () => {
+    const buyer = await createTestAgent(db);
+    const worker = await createTestAgent(db);
+    await insertAcquisition(db, buyer.agentId, 'github', iso(30));
+    await insertAcquisition(db, worker.agentId, 'npm', iso(30));
+    // Two no-escrow bounties paid at acceptance (no escrow_funded_at at all).
+    for (const d of [10, 5]) {
+      await insertTask(db, {
+        creatorAgent: buyer.agentId, claimedBy: worker.agentId,
+        claimedAt: iso(d + 2), verifiedAt: iso(d), settledAt: iso(d),
+        bounty: '1000000', paymentStatus: 'settled',
+      });
+    }
+    const cohort = await cohortReport(db, filters());
+    const gh = cohort.agents.find((r) => r.source === 'github')!;
+    expect(gh).toMatchObject({
+      buyers_with_first_funded_task: 0,
+      buyers_with_first_paid_at_accept: 1,
+      repeat_paid_at_accept_buyers: 1,
+    });
+    const activity = await activityReport(db, filters({ from: iso(20) }));
+    const buyerRow = activity.rows.find((r) => r.perspective === 'buyer' && r.source === 'github')!;
+    expect(buyerRow).toMatchObject({ funded_tasks: 0, paid_at_accept_tasks: 2 });
+  });
+
+  it('counts agents with no acquisition record (e.g. other creation paths) under unknown', async () => {
+    const plain = await createTestAgent(db, { registeredAt: iso(5) }); // no agent_acquisition row
+    const report = await cohortReport(db, filters());
+    expect(report.agents.find((r) => r.source === 'unknown')!.new_agents).toBe(1);
+    expect(plain.agentId).toBeTruthy();
+  });
+
+  it('applies campaign and interface filters in the activity view', async () => {
+    const tagged = await createTestAgent(db);
+    const other = await createTestAgent(db);
+    await insertAcquisition(db, tagged.agentId, 'pulsemcp', iso(30), { campaign: 'october', iface: 'mcp_stdio' });
+    await insertAcquisition(db, other.agentId, 'pulsemcp', iso(30), { campaign: 'november', iface: 'cli' });
+    await db.run(`INSERT INTO owners (id, email) VALUES ('ow_f', 'f@example.com')`);
+    for (const w of [tagged, other]) {
+      await insertTask(db, { creatorOwner: 'ow_f', claimedBy: w.agentId, claimedAt: iso(3) });
+    }
+    const all = await activityReport(db, filters({ from: iso(20) }));
+    expect(all.rows.find((r) => r.perspective === 'worker')!.claims).toBe(2);
+    const byCampaign = await activityReport(db, filters({ from: iso(20), campaign: 'october' }));
+    expect(byCampaign.rows.find((r) => r.perspective === 'worker')!.claims).toBe(1);
+    const byIface = await activityReport(db, filters({ from: iso(20), iface: 'cli' }));
+    expect(byIface.rows.find((r) => r.perspective === 'worker')!.claims).toBe(1);
+  });
+
+  it('excludes installations linked to internal agents unless internal traffic is included', async () => {
+    const monitor = await createTestAgent(db);
+    await db.run(
+      `INSERT INTO mcp_installations (installation_id, first_observed_at) VALUES
+         ('11111111-2222-4333-8444-000000000001', ?), ('11111111-2222-4333-8444-000000000002', ?)`,
+      iso(5), iso(5),
+    );
+    await db.run(
+      `INSERT INTO installation_agent_links (installation_id, agent_id, first_linked_at) VALUES ('11111111-2222-4333-8444-000000000001', ?, ?)`,
+      monitor.agentId, iso(5),
+    );
+    const internalIds = new Set([monitor.agentId]);
+    const excluded = await cohortReport(db, filters({ internalIds }));
+    expect(excluded.coverage.observed_installations).toBe(1);
+    const included = await cohortReport(db, filters({ internalIds, includeInternal: true }));
+    expect(included.coverage.observed_installations).toBe(2);
+  });
+
   it('serves the bearer admin endpoint with CSV export, fail-closed auth', async () => {
     const app = createTestApp(db, { ADMIN_SECRET: 's3cret' });
     expect((await app.request('/v1/admin/acquisition')).status).toBe(401);
@@ -282,11 +356,55 @@ describe('acquisition reports', () => {
   });
 });
 
+describe('acquisition retention job', () => {
+  const job = (db: SQLiteAdapter) => db.get<{ status: string; attempts: number }>(
+    `SELECT status, attempts FROM job_runs WHERE job = 'acquisition_retention' AND run_key = ?`, NOW.toISOString().slice(0, 10),
+  );
+
+  it('runs once a day', async () => {
+    const db = setupTestDb();
+    expect(await runAcquisitionRetention(db, NOW)).toMatch(/^swept/);
+    expect(await runAcquisitionRetention(db, NOW)).toBe('already_ran');
+  });
+
+  it('retries a failed run on a later tick the same day', async () => {
+    const db = setupTestDb();
+    await db.exec('ALTER TABLE mcp_tool_outcomes RENAME TO mcp_tool_outcomes_hidden');
+    await expect(runAcquisitionRetention(db, NOW)).rejects.toThrow();
+    expect(await job(db)).toMatchObject({ status: 'failed', attempts: 1 });
+    await db.exec('ALTER TABLE mcp_tool_outcomes_hidden RENAME TO mcp_tool_outcomes');
+    expect(await runAcquisitionRetention(db, new Date(NOW.getTime() + 300_000))).toMatch(/^swept/);
+    expect(await job(db)).toMatchObject({ status: 'done', attempts: 2 });
+  });
+
+  it('re-claims a run stuck in running (worker died mid-sweep), but not a live one', async () => {
+    const db = setupTestDb();
+    await db.run(
+      `INSERT INTO job_runs (job, run_key, status, attempts, ran_at) VALUES ('acquisition_retention', ?, 'running', 1, ?)`,
+      NOW.toISOString().slice(0, 10), NOW.toISOString(),
+    );
+    expect(await runAcquisitionRetention(db, new Date(NOW.getTime() + 60_000))).toBe('in_progress');
+    expect(await runAcquisitionRetention(db, new Date(NOW.getTime() + 20 * 60_000))).toMatch(/^swept/);
+  });
+
+  it('gives up after the attempt cap', async () => {
+    const db = setupTestDb();
+    await db.run(
+      `INSERT INTO job_runs (job, run_key, status, attempts, ran_at) VALUES ('acquisition_retention', ?, 'failed', ?, ?)`,
+      NOW.toISOString().slice(0, 10), RETENTION_MAX_ATTEMPTS, NOW.toISOString(),
+    );
+    expect(await runAcquisitionRetention(db, NOW)).toBe('gave_up');
+  });
+});
+
 describe('acquisition reports — owners edge cases', () => {
   it('reads a missing owners table (OSS deploy without the control plane) as an empty human-buyer bucket', async () => {
     const db = setupTestDb(); // no 0023
     const report = await cohortReport(db, filters());
-    expect(report.human_buyers).toEqual({ new_owners: 0, buyers_with_first_funded_task: 0, repeat_funded_buyers: 0 });
+    expect(report.human_buyers).toEqual({
+      new_owners: 0, buyers_with_first_funded_task: 0, repeat_funded_buyers: 0,
+      buyers_with_first_paid_at_accept: 0, repeat_paid_at_accept_buyers: 0,
+    });
   });
 
   it('normalizes CURRENT_TIMESTAMP-format owner rows against ISO period bounds', async () => {

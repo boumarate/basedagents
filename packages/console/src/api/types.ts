@@ -116,6 +116,8 @@ export interface AcquisitionAgentRow {
   settled_worker_usdc: string;
   buyers_with_first_funded_task: number;
   repeat_funded_buyers: number;
+  buyers_with_first_paid_at_accept: number;
+  repeat_paid_at_accept_buyers: number;
   returning_7d: number;
   mature_agents: number;
   immature_agents: number;
@@ -129,7 +131,13 @@ export interface AcquisitionCohortReport {
   include_internal: boolean;
   installations: AcquisitionInstallationRow[];
   agents: AcquisitionAgentRow[];
-  human_buyers: { new_owners: number; buyers_with_first_funded_task: number; repeat_funded_buyers: number };
+  human_buyers: {
+    new_owners: number;
+    buyers_with_first_funded_task: number;
+    repeat_funded_buyers: number;
+    buyers_with_first_paid_at_accept: number;
+    repeat_paid_at_accept_buyers: number;
+  };
   coverage: {
     observed_installations: number;
     known_at_first_observation: number;
@@ -146,6 +154,7 @@ export interface AcquisitionActivityRow {
   deliveries: number;
   acceptances: number;
   funded_tasks: number;
+  paid_at_accept_tasks: number;
   settled_payouts: number;
   settled_worker_usdc_atomic: string;
   settled_worker_usdc: string;

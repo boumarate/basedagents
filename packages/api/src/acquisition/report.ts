@@ -62,11 +62,23 @@ export interface AgentCohortRow {
   first_paid_agents: number;
   settled_worker_usdc_atomic: string;
   settled_worker_usdc: string;
+  /** Buyer activation, escrow mode: at least one task with confirmed escrow funding. */
   buyers_with_first_funded_task: number;
   repeat_funded_buyers: number;
+  /** Buyer activation, pay-at-accept mode (escrow: false): at least one paid task. */
+  buyers_with_first_paid_at_accept: number;
+  repeat_paid_at_accept_buyers: number;
   returning_7d: number;
   mature_agents: number;
   immature_agents: number;
+}
+
+export interface HumanBuyerBucket {
+  new_owners: number;
+  buyers_with_first_funded_task: number;
+  repeat_funded_buyers: number;
+  buyers_with_first_paid_at_accept: number;
+  repeat_paid_at_accept_buyers: number;
 }
 
 export interface CohortReport {
@@ -77,7 +89,7 @@ export interface CohortReport {
   installations: InstallationCohortRow[];
   agents: AgentCohortRow[];
   /** The separate human-buyer bucket (owner accounts; no acquisition source). */
-  human_buyers: { new_owners: number; buyers_with_first_funded_task: number; repeat_funded_buyers: number };
+  human_buyers: HumanBuyerBucket;
   coverage: {
     observed_installations: number;
     known_at_first_observation: number;
@@ -98,41 +110,69 @@ function internalFilter(f: ReportFilters, column: string): { sql: string; params
   return { sql: ` AND ${column} NOT IN (${ids.map(() => '?').join(',')})`, params: ids };
 }
 
+/**
+ * The acting agent's own acquisition filters (campaign / interface), as an
+ * EXISTS over agent_acquisition. A filter that is set excludes agents without
+ * a matching record, unknown included — the filter means "tagged with this".
+ */
+function acquisitionFilter(f: ReportFilters, agentColumn: string): { sql: string; params: unknown[] } {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (f.campaign) { conds.push('aa.campaign = ?'); params.push(f.campaign); }
+  if (f.iface) { conds.push('aa.interface = ?'); params.push(f.iface); }
+  if (conds.length === 0) return { sql: '', params };
+  return {
+    sql: ` AND EXISTS (SELECT 1 FROM agent_acquisition aa WHERE aa.agent_id = ${agentColumn} AND ${conds.join(' AND ')})`,
+    params,
+  };
+}
+
+/** A buyer's task counted as paid in pay-at-accept mode: no escrow, really settled (PAID_WHERE). */
+const PAID_AT_ACCEPT = `t.escrow = 0 AND ${PAID_WHERE}`;
+
 export async function cohortReport(db: DBAdapter, f: ReportFilters): Promise<CohortReport> {
   const nowIso = (f.now ?? new Date()).toISOString();
 
-  // ── Installations, by source at the earliest KNOWN observation ──
-  const instWhere: string[] = ['first_observed_at >= ?', 'first_observed_at < ?'];
+  // ── Installations, by source at the earliest KNOWN observation. Internal
+  // traffic is excluded through the verified installation⇄agent links. ──
+  const instWhere: string[] = ['i.first_observed_at >= ?', 'i.first_observed_at < ?'];
   const instParams: unknown[] = [f.from, f.to];
-  if (f.campaign) { instWhere.push(`COALESCE(NULLIF(first_known_campaign, ''), campaign_at_first_observation) = ?`); instParams.push(f.campaign); }
-  if (f.iface) { instWhere.push('interface = ?'); instParams.push(f.iface); }
+  if (f.campaign) { instWhere.push(`COALESCE(NULLIF(i.first_known_campaign, ''), i.campaign_at_first_observation) = ?`); instParams.push(f.campaign); }
+  if (f.iface) { instWhere.push('i.interface = ?'); instParams.push(f.iface); }
+  if (!f.includeInternal && f.internalIds.size > 0) {
+    const ids = [...f.internalIds];
+    instWhere.push(`NOT EXISTS (SELECT 1 FROM installation_agent_links l WHERE l.installation_id = i.installation_id AND l.agent_id IN (${ids.map(() => '?').join(',')}))`);
+    instParams.push(...ids);
+  }
   const installations = await db.all<InstallationCohortRow>(
-    `SELECT COALESCE(first_known_source, 'unknown') AS source,
+    `SELECT COALESCE(i.first_known_source, 'unknown') AS source,
             COUNT(*) AS observed_installations,
-            SUM(CASE WHEN source_at_first_observation <> 'unknown' THEN 1 ELSE 0 END) AS known_at_first_observation,
-            SUM(CASE WHEN first_known_source IS NOT NULL THEN 1 ELSE 0 END) AS known_ever
-     FROM mcp_installations
+            SUM(CASE WHEN i.source_at_first_observation <> 'unknown' THEN 1 ELSE 0 END) AS known_at_first_observation,
+            SUM(CASE WHEN i.first_known_source IS NOT NULL THEN 1 ELSE 0 END) AS known_ever
+     FROM mcp_installations i
      WHERE ${instWhere.join(' AND ')}
      GROUP BY 1 ORDER BY observed_installations DESC, source`,
     ...instParams,
   );
 
-  // ── Agent cohort: per-agent committed-state flags, rolled up by source ──
-  const internal = internalFilter(f, 'aa.agent_id');
-  const agentWhere: string[] = ['aa.registered_at >= ?', 'aa.registered_at < ?'];
-  const agentParams: unknown[] = [f.from, f.to];
-  if (f.campaign) { agentWhere.push('aa.campaign = ?'); agentParams.push(f.campaign); }
-  if (f.iface) { agentWhere.push('aa.interface = ?'); agentParams.push(f.iface); }
+  // ── Agent cohort: every agent REGISTERED in the period (agents table),
+  // with its acquisition record when one exists — an agent created by a path
+  // that writes none still counts, under unknown. ──
+  const internal = internalFilter(f, 'a.id');
+  const acq = acquisitionFilter(f, 'a.id');
   const agentRows = await db.all<{
     source: string; new_agents: number; agents_with_first_claim: number;
     agents_with_first_accepted_delivery: number; first_paid_agents: number;
     settled_worker_usdc_atomic: number; buyers_with_first_funded_task: number;
-    repeat_funded_buyers: number; returning_7d: number; mature_agents: number;
+    repeat_funded_buyers: number; buyers_with_first_paid_at_accept: number;
+    repeat_paid_at_accept_buyers: number; returning_7d: number; mature_agents: number;
   }>(
     `WITH cohort AS (
-       SELECT aa.agent_id, aa.source, aa.registered_at
-       FROM agent_acquisition aa
-       WHERE ${agentWhere.join(' AND ')}${internal.sql}
+       SELECT a.id AS agent_id,
+              COALESCE((SELECT aa.source FROM agent_acquisition aa WHERE aa.agent_id = a.id), 'unknown') AS source,
+              a.registered_at
+       FROM agents a
+       WHERE a.registered_at >= ? AND a.registered_at < ?${internal.sql}${acq.sql}
      ),
      per_agent AS (
        SELECT c.source,
@@ -141,6 +181,7 @@ export async function cohortReport(db: DBAdapter, f: ReportFilters): Promise<Coh
          (SELECT COUNT(*) > 0 FROM tasks t WHERE t.claimed_by_agent_id = c.agent_id AND ${PAID_WHERE}) AS has_paid,
          COALESCE((SELECT SUM(CAST(t.bounty_amount AS INTEGER)) FROM tasks t WHERE t.claimed_by_agent_id = c.agent_id AND ${PAID_WHERE}), 0) AS paid_atomic,
          (SELECT COUNT(*) FROM tasks t WHERE t.creator_agent_id = c.agent_id AND t.escrow_funded_at IS NOT NULL) AS funded_tasks,
+         (SELECT COUNT(*) FROM tasks t WHERE t.creator_agent_id = c.agent_id AND ${PAID_AT_ACCEPT}) AS paid_at_accept_tasks,
          (date(substr(c.registered_at, 1, 10), '+14 days') <= date(substr(?, 1, 10))) AS mature,
          (SELECT COUNT(*) > 0 FROM installation_usage_daily u
             WHERE u.agent_id = c.agent_id AND u.kind = 'meaningful'
@@ -156,38 +197,49 @@ export async function cohortReport(db: DBAdapter, f: ReportFilters): Promise<Coh
        SUM(paid_atomic) AS settled_worker_usdc_atomic,
        SUM(CASE WHEN funded_tasks >= 1 THEN 1 ELSE 0 END) AS buyers_with_first_funded_task,
        SUM(CASE WHEN funded_tasks >= 2 THEN 1 ELSE 0 END) AS repeat_funded_buyers,
+       SUM(CASE WHEN paid_at_accept_tasks >= 1 THEN 1 ELSE 0 END) AS buyers_with_first_paid_at_accept,
+       SUM(CASE WHEN paid_at_accept_tasks >= 2 THEN 1 ELSE 0 END) AS repeat_paid_at_accept_buyers,
        SUM(CASE WHEN mature AND returning7 THEN 1 ELSE 0 END) AS returning_7d,
        SUM(mature) AS mature_agents
      FROM per_agent GROUP BY source ORDER BY new_agents DESC, source`,
-    // Placeholder order mirrors the SQL: cohort WHERE (period + filters +
-    // internal ids), then per_agent's maturity timestamp.
-    ...agentParams, ...internal.params, nowIso,
+    // Placeholder order mirrors the SQL: cohort WHERE (period, internal ids,
+    // acquisition filters), then per_agent's maturity timestamp.
+    f.from, f.to, ...internal.params, ...acq.params, nowIso,
   );
 
-  // ── Human buyers: the separate bucket (owners have no acquisition source).
-  // `owners` is a control-plane table that an OSS deploy may not carry, so a
-  // missing table reads as an empty bucket rather than a failed report. ──
-  const ownerInternal = internalFilter(f, 'o.id');
-  let humanBuyers = { new_owners: 0, funded: 0, repeat_funded: 0 };
-  try {
-    humanBuyers = (await db.get<{ new_owners: number; funded: number; repeat_funded: number }>(
-      `WITH owner_cohort AS (
-         SELECT o.id FROM owners o
-         -- normalize: a CURRENT_TIMESTAMP default is 'YYYY-MM-DD HH:MM:SS', not ISO
-         WHERE strftime('%Y-%m-%dT%H:%M:%fZ', o.created_at) >= ? AND strftime('%Y-%m-%dT%H:%M:%fZ', o.created_at) < ?${ownerInternal.sql}
-       ),
-       per_owner AS (
-         SELECT (SELECT COUNT(*) FROM tasks t WHERE t.creator_owner_id = oc.id AND t.escrow_funded_at IS NOT NULL) AS funded_tasks
-         FROM owner_cohort oc
-       )
-       SELECT COUNT(*) AS new_owners,
-         COALESCE(SUM(CASE WHEN funded_tasks >= 1 THEN 1 ELSE 0 END), 0) AS funded,
-         COALESCE(SUM(CASE WHEN funded_tasks >= 2 THEN 1 ELSE 0 END), 0) AS repeat_funded
-       FROM per_owner`,
-      f.from, f.to, ...ownerInternal.params,
-    ))!;
-  } catch {
-    /* no owners table: control plane absent */
+  // ── Human buyers: the separate bucket (owners have no acquisition source,
+  // so campaign/interface filters leave it empty). `owners` is a control-plane
+  // table an OSS deploy may not carry: missing reads as an empty bucket. ──
+  let humanBuyers: HumanBuyerBucket = {
+    new_owners: 0, buyers_with_first_funded_task: 0, repeat_funded_buyers: 0,
+    buyers_with_first_paid_at_accept: 0, repeat_paid_at_accept_buyers: 0,
+  };
+  if (!f.campaign && !f.iface) {
+    const ownerInternal = internalFilter(f, 'o.id');
+    try {
+      humanBuyers = (await db.get<HumanBuyerBucket>(
+        `WITH owner_cohort AS (
+           SELECT o.id FROM owners o
+           -- normalize: a CURRENT_TIMESTAMP default is 'YYYY-MM-DD HH:MM:SS', not ISO
+           WHERE strftime('%Y-%m-%dT%H:%M:%fZ', o.created_at) >= ? AND strftime('%Y-%m-%dT%H:%M:%fZ', o.created_at) < ?${ownerInternal.sql}
+         ),
+         per_owner AS (
+           SELECT
+             (SELECT COUNT(*) FROM tasks t WHERE t.creator_owner_id = oc.id AND t.escrow_funded_at IS NOT NULL) AS funded_tasks,
+             (SELECT COUNT(*) FROM tasks t WHERE t.creator_owner_id = oc.id AND ${PAID_AT_ACCEPT}) AS paid_at_accept_tasks
+           FROM owner_cohort oc
+         )
+         SELECT COUNT(*) AS new_owners,
+           COALESCE(SUM(CASE WHEN funded_tasks >= 1 THEN 1 ELSE 0 END), 0) AS buyers_with_first_funded_task,
+           COALESCE(SUM(CASE WHEN funded_tasks >= 2 THEN 1 ELSE 0 END), 0) AS repeat_funded_buyers,
+           COALESCE(SUM(CASE WHEN paid_at_accept_tasks >= 1 THEN 1 ELSE 0 END), 0) AS buyers_with_first_paid_at_accept,
+           COALESCE(SUM(CASE WHEN paid_at_accept_tasks >= 2 THEN 1 ELSE 0 END), 0) AS repeat_paid_at_accept_buyers
+         FROM per_owner`,
+        f.from, f.to, ...ownerInternal.params,
+      ))!;
+    } catch {
+      /* no owners table: control plane absent */
+    }
   }
 
   const sourceFilter = <T extends { source: string }>(rows: T[]): T[] =>
@@ -202,6 +254,8 @@ export async function cohortReport(db: DBAdapter, f: ReportFilters): Promise<Coh
     settled_worker_usdc: atomicToDisplay(String(r.settled_worker_usdc_atomic)),
     buyers_with_first_funded_task: r.buyers_with_first_funded_task,
     repeat_funded_buyers: r.repeat_funded_buyers,
+    buyers_with_first_paid_at_accept: r.buyers_with_first_paid_at_accept,
+    repeat_paid_at_accept_buyers: r.repeat_paid_at_accept_buyers,
     returning_7d: r.returning_7d,
     mature_agents: r.mature_agents,
     immature_agents: r.new_agents - r.mature_agents,
@@ -218,11 +272,7 @@ export async function cohortReport(db: DBAdapter, f: ReportFilters): Promise<Coh
     include_internal: f.includeInternal,
     installations: sourceFilter(installations),
     agents,
-    human_buyers: {
-      new_owners: humanBuyers.new_owners,
-      buyers_with_first_funded_task: humanBuyers.funded,
-      repeat_funded_buyers: humanBuyers.repeat_funded,
-    },
+    human_buyers: humanBuyers,
     coverage: {
       observed_installations: totalInstalls,
       known_at_first_observation: knownAtFirst,
@@ -241,7 +291,10 @@ export interface ActivityRow {
   claims: number;
   deliveries: number;
   acceptances: number;
+  /** Buyer side, escrow mode: tasks whose escrow deposit confirmed in the period. */
   funded_tasks: number;
+  /** Buyer side, pay-at-accept mode: no-escrow tasks whose payment settled in the period. */
+  paid_at_accept_tasks: number;
   settled_payouts: number;
   settled_worker_usdc_atomic: string;
   settled_worker_usdc: string;
@@ -257,11 +310,14 @@ export interface ActivityReport {
 
 /**
  * Events that OCCURRED in the period, grouped by the acting side's acquisition
- * source (worker events by the claimer's source, funding by the buyer's).
- * Deliberately a different denominator from the cohort view.
+ * source (worker events by the claimer's source, funding and pay-at-accept
+ * payments by the buyer's). Campaign and interface filters apply to the acting
+ * side's acquisition record. Deliberately a different denominator from the
+ * cohort view.
  */
 export async function activityReport(db: DBAdapter, f: ReportFilters): Promise<ActivityReport> {
   const workerInternal = internalFilter(f, 't.claimed_by_agent_id');
+  const workerAcq = acquisitionFilter(f, 't.claimed_by_agent_id');
   const workerSource = `COALESCE((SELECT aa.source FROM agent_acquisition aa WHERE aa.agent_id = t.claimed_by_agent_id), 'unknown')`;
   const worker = await db.all<{
     source: string; claims: number; deliveries: number; acceptances: number;
@@ -274,22 +330,29 @@ export async function activityReport(db: DBAdapter, f: ReportFilters): Promise<A
        SUM(CASE WHEN t.settled_at >= ? AND t.settled_at < ? AND ${PAID_WHERE} THEN 1 ELSE 0 END) AS settled_payouts,
        COALESCE(SUM(CASE WHEN t.settled_at >= ? AND t.settled_at < ? AND ${PAID_WHERE} THEN CAST(t.bounty_amount AS INTEGER) ELSE 0 END), 0) AS paid_atomic
      FROM tasks t
-     WHERE t.claimed_by_agent_id IS NOT NULL${workerInternal.sql}
+     WHERE t.claimed_by_agent_id IS NOT NULL${workerInternal.sql}${workerAcq.sql}
      GROUP BY 1 HAVING claims + deliveries + acceptances + settled_payouts > 0
      ORDER BY source`,
-    f.from, f.to, f.from, f.to, f.from, f.to, f.from, f.to, f.from, f.to, ...workerInternal.params,
+    f.from, f.to, f.from, f.to, f.from, f.to, f.from, f.to, f.from, f.to,
+    ...workerInternal.params, ...workerAcq.params,
   );
 
   const buyerInternal = internalFilter(f, `COALESCE(t.creator_agent_id, t.creator_owner_id)`);
+  // Human buyers carry no acquisition record, so a campaign/interface filter
+  // narrows the buyer side to agent buyers with a matching record.
+  const buyerAcq = acquisitionFilter(f, 't.creator_agent_id');
   const buyerSource = `CASE WHEN t.creator_owner_id IS NOT NULL THEN 'human_buyer'
     ELSE COALESCE((SELECT aa.source FROM agent_acquisition aa WHERE aa.agent_id = t.creator_agent_id), 'unknown') END`;
-  const buyer = await db.all<{ source: string; funded_tasks: number }>(
+  const buyer = await db.all<{ source: string; funded_tasks: number; paid_at_accept_tasks: number }>(
     `SELECT ${buyerSource} AS source,
-       COUNT(*) AS funded_tasks
+       SUM(CASE WHEN t.escrow_funded_at >= ? AND t.escrow_funded_at < ? THEN 1 ELSE 0 END) AS funded_tasks,
+       SUM(CASE WHEN t.settled_at >= ? AND t.settled_at < ? AND ${PAID_AT_ACCEPT} THEN 1 ELSE 0 END) AS paid_at_accept_tasks
      FROM tasks t
-     WHERE t.escrow_funded_at >= ? AND t.escrow_funded_at < ?${buyerInternal.sql}
+     WHERE ((t.escrow_funded_at >= ? AND t.escrow_funded_at < ?)
+         OR (t.settled_at >= ? AND t.settled_at < ? AND ${PAID_AT_ACCEPT}))${buyerInternal.sql}${buyerAcq.sql}
      GROUP BY 1 ORDER BY source`,
-    f.from, f.to, ...buyerInternal.params,
+    f.from, f.to, f.from, f.to, f.from, f.to, f.from, f.to,
+    ...buyerInternal.params, ...buyerAcq.params,
   );
 
   const rows: ActivityRow[] = [
@@ -300,6 +363,7 @@ export async function activityReport(db: DBAdapter, f: ReportFilters): Promise<A
       deliveries: w.deliveries,
       acceptances: w.acceptances,
       funded_tasks: 0,
+      paid_at_accept_tasks: 0,
       settled_payouts: w.settled_payouts,
       settled_worker_usdc_atomic: String(w.paid_atomic),
       settled_worker_usdc: atomicToDisplay(String(w.paid_atomic)),
@@ -311,6 +375,7 @@ export async function activityReport(db: DBAdapter, f: ReportFilters): Promise<A
       deliveries: 0,
       acceptances: 0,
       funded_tasks: b.funded_tasks,
+      paid_at_accept_tasks: b.paid_at_accept_tasks,
       settled_payouts: 0,
       settled_worker_usdc_atomic: '0',
       settled_worker_usdc: '0.00',
