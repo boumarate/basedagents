@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { Component, lazy, Suspense, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { OwnerProvider, useOwner } from './state/session.js';
 import { rememberIntent } from './lib/intent.js';
@@ -66,53 +66,99 @@ function StaleTabBanner() {
   );
 }
 
+/**
+ * Recovery for a lazy page chunk that fails to load (network blip, or a
+ * redeploy swept the old hashed chunk this tab's bundle still points at).
+ * Without it the route throws and the console goes blank. Refresh refetches
+ * index.html, which repairs both causes; in-app navigation also clears the
+ * error (resetKey changes), so a transient blip recovers without a reload.
+ */
+class ChunkErrorBoundary extends Component<
+  { resetKey: string; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidUpdate(prev: { resetKey: string }): void {
+    if (this.state.failed && prev.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  render(): ReactNode {
+    if (this.state.failed) {
+      return (
+        <div className="boot" role="alert">
+          <span>This page didn&rsquo;t load — check your connection.</span>
+          <button className="btn btn-primary btn-sm" onClick={() => window.location.reload()}>
+            Refresh
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/** The boundary needs the location so a navigation retries after a failure. */
+function RoutedErrorBoundary({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  return <ChunkErrorBoundary resetKey={location.key}>{children}</ChunkErrorBoundary>;
+}
+
 export default function App() {
   return (
     <OwnerProvider>
       <StaleTabBanner />
       <BrowserRouter>
-        <Suspense fallback={<div className="boot">Loading…</div>}>
-          <Routes>
-            {/* Public pages (no session yet): sign in, get started, recover. Their
-                magic links land back on the same paths as /login#t=, /start#t=
-                and /recover#t=. */}
-            <Route path="/login" element={<Login />} />
-            <Route path="/start" element={<Start />} />
-            <Route path="/signup" element={<Navigate to="/start" replace />} />
-            <Route path="/recover" element={<Recover />} />
-            {/* Public audit intake: no account — every request is operator-
-                reviewed, so submission needs only an email (signed-in visitors
-                are redirected to the in-app form). */}
-            <Route path="/testing/request" element={<TestingIntake />} />
-            <Route path="/sign-wallet" element={<SignWallet />} />
-            <Route element={<Protected />}>
-              <Route path="/" element={<Navigate to="/home" replace />} />
-              <Route path="/home" element={<Home />} />
-              <Route path="/agents" element={<AgentsIndex />} />
-              <Route path="/agents/new" element={<AddAgent />} />
-              <Route path="/agents/:agentId" element={<AgentPage />} />
-              {/* The old manager page: connecting an agent by its id lives on /agents/new now. */}
-              <Route path="/delegations" element={<Navigate to="/agents/new" replace />} />
-              <Route path="/explore" element={<Explore />} />
-              <Route path="/tasks" element={<TasksPage />} />
-              <Route path="/tasks/new" element={<TaskNew />} />
-              <Route path="/tasks/:taskId" element={<TaskReview />} />
-              <Route path="/board" element={<BoardPage />} />
-              <Route path="/admin/feedback" element={<AdminFeedback />} />
-              {/* Agent Testing (customer + operator) */}
-              <Route path="/testing" element={<TestingAudits />} />
-              <Route path="/testing/new" element={<TestingIntake />} />
-              <Route path="/testing/requests/:requestId" element={<TestingRequestDetail />} />
-              <Route path="/testing/requests/:requestId/edit" element={<TestingIntake />} />
-              <Route path="/testing/orders/:orderId" element={<TestingOrder />} />
-              <Route path="/testing/reports/:reportId" element={<TestingReport />} />
-              <Route path="/testing/admin" element={<TestingAdminQueue />} />
-              <Route path="/testing/admin/requests/:requestId" element={<TestingAdminRequest />} />
-              <Route path="/testing/admin/orders/:orderId" element={<TestingAdminOrder />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/home" replace />} />
-          </Routes>
-        </Suspense>
+        <RoutedErrorBoundary>
+          <Suspense fallback={<div className="boot">Loading…</div>}>
+            <Routes>
+              {/* Public pages (no session yet): sign in, get started, recover. Their
+                  magic links land back on the same paths as /login#t=, /start#t=
+                  and /recover#t=. */}
+              <Route path="/login" element={<Login />} />
+              <Route path="/start" element={<Start />} />
+              <Route path="/signup" element={<Navigate to="/start" replace />} />
+              <Route path="/recover" element={<Recover />} />
+              {/* Public audit intake: no account — every request is operator-
+                  reviewed, so submission needs only an email (signed-in visitors
+                  are redirected to the in-app form). */}
+              <Route path="/testing/request" element={<TestingIntake />} />
+              <Route path="/sign-wallet" element={<SignWallet />} />
+              <Route element={<Protected />}>
+                <Route path="/" element={<Navigate to="/home" replace />} />
+                <Route path="/home" element={<Home />} />
+                <Route path="/agents" element={<AgentsIndex />} />
+                <Route path="/agents/new" element={<AddAgent />} />
+                <Route path="/agents/:agentId" element={<AgentPage />} />
+                {/* The old manager page: connecting an agent by its id lives on /agents/new now. */}
+                <Route path="/delegations" element={<Navigate to="/agents/new" replace />} />
+                <Route path="/explore" element={<Explore />} />
+                <Route path="/tasks" element={<TasksPage />} />
+                <Route path="/tasks/new" element={<TaskNew />} />
+                <Route path="/tasks/:taskId" element={<TaskReview />} />
+                <Route path="/board" element={<BoardPage />} />
+                <Route path="/admin/feedback" element={<AdminFeedback />} />
+                {/* Agent Testing (customer + operator) */}
+                <Route path="/testing" element={<TestingAudits />} />
+                <Route path="/testing/new" element={<TestingIntake />} />
+                <Route path="/testing/requests/:requestId" element={<TestingRequestDetail />} />
+                <Route path="/testing/requests/:requestId/edit" element={<TestingIntake />} />
+                <Route path="/testing/orders/:orderId" element={<TestingOrder />} />
+                <Route path="/testing/reports/:reportId" element={<TestingReport />} />
+                <Route path="/testing/admin" element={<TestingAdminQueue />} />
+                <Route path="/testing/admin/requests/:requestId" element={<TestingAdminRequest />} />
+                <Route path="/testing/admin/orders/:orderId" element={<TestingAdminOrder />} />
+              </Route>
+              <Route path="*" element={<Navigate to="/home" replace />} />
+            </Routes>
+          </Suspense>
+        </RoutedErrorBoundary>
       </BrowserRouter>
     </OwnerProvider>
   );
