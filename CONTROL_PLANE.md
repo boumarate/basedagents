@@ -134,3 +134,8 @@ cloud passport and billing were removed in September 2026 (migration
 `0048_retire_keyring.sql`); the marketplace had found users and the vault had
 not. Sections 3–7 above are the parts of that design that were always about
 the human account, and they carry over unchanged.
+
+
+## Example Usage
+
+Resolved parameter handling for issue #165.
